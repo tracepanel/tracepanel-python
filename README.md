@@ -10,8 +10,6 @@ if DEBUG:
     INSTALLED_APPS += ["tracepanel.django"]
 ```
 
-A Rust agent (tracepanel-agent, in development) will move analysis out of the Django process and forward data to the tracepanel cloud.
-
 ## Instrument your own code
 
 Requests, Celery tasks and management commands are traced on their own. To see your own steps in them, or to trace work that runs elsewhere (a script, a consumer, a scheduled job):
@@ -39,7 +37,7 @@ Keyword attributes go under `app.` (`cart_id` → `app.cart_id`); pass `attrs={"
 
 ## Services
 
-Every outgoing call records what it talks to, with OpenTelemetry attribute names: `db.system`, `db.namespace`, `cache.system`, `mail.system`, `messaging.system`, `server.address`, `server.port` (credentials are never kept). Each trace carries `service.name` (the `service` setting, the project directory's name by default) and `service.role` (web, worker, command). The console's Services page lists them with who calls them; the cloud draws a service map across services from the same attributes.
+Every outgoing call records what it talks to, with OpenTelemetry attribute names: `db.system`, `db.namespace`, `cache.system`, `mail.system`, `messaging.system`, `server.address`, `server.port` (credentials are never kept). Each trace carries `service.name` (the `service` setting, the project directory's name by default) and `service.role` (web, worker, command). The console's Services page lists them with who calls them.
 
 ## Supported versions
 
@@ -53,7 +51,7 @@ Every outgoing call records what it talks to, with OpenTelemetry attribute names
 | Path | Contents |
 | --- | --- |
 | `tracepanel/` | The package |
-| `schema/` | Event contract in JSON Schema: the source of truth for tracepanel-ui and tracepanel-agent |
+| `schema/` | Event contract in JSON Schema: the source of truth for tracepanel-ui |
 | `tests/` | pytest suite; every trace is validated against `schema/` |
 | `scripts/ui.py` | Installs the built UI from tracepanel-ui into `tracepanel/static/` |
 | `scripts/check_dist.py` | Fails a build whose wheel or sdist lacks the UI |
@@ -80,7 +78,7 @@ Without a web server to host the console (a Celery worker, management commands),
 
 Tests mirror the source (`tests/core/`, `tests/storage/`, `tests/console/`, `tests/django/`, `tests/integrations/`); `tests/project/` is the Django project they run against.
 
-Related private repositories: tracepanel-ui (widget and local UI), tracepanel-agent (Rust agent), tracepanel-examples (test projects). Nothing is published to PyPI or npm.
+Related private repositories: tracepanel-ui (widget and local UI), tracepanel-examples (test projects). Nothing is published to PyPI or npm.
 
 ## Development
 
