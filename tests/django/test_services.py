@@ -1,6 +1,6 @@
 import pytest
 from dirty_equals import IsInt
-from django.db import connection
+from django.db import connection, connections
 from django.test import Client
 from pytest_django.fixtures import Settings
 
@@ -54,15 +54,18 @@ def test_service_map(client: Client, traces: list[Trace], store: Store, settings
     result = store.list_services()
     peers = {node["id"] for node in result["services"]}
 
+    databases = [node for node in result["services"] if node["kind"] == "database"]
+
     assert result["apps"] == [{"service": "shop", "role": "web"}]
     assert [(node["kind"], node["system"]) for node in result["services"]] == [
         ("cache", "locmem"),
-        *[("database", connection.vendor)] * len([node for node in result["services"] if node["kind"] == "database"]),
+        *[("database", node["system"]) for node in databases],
         ("mail", "locmem"),
     ]
-    assert {alias for node in result["services"] if node["kind"] == "database" for alias in aliases(node)} == set(
-        DATABASES
-    )
+    # Each database node runs the engine of the aliases on it: with Postgres, `analytics` is still SQLite.
+    assert {(alias, node["system"]) for node in databases for alias in aliases(node)} == {
+        (alias, connections[alias].vendor) for alias in DATABASES
+    }
     assert {(edge["service"], edge["role"], edge["peer"], edge["direction"]) for edge in result["edges"]} == {
         ("shop", "web", peer, "out") for peer in peers
     }
