@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --locked --group celery --group channels --group strawberry --group django-tasks --group fastapi --group dramatiq --group rq --group ninja --group drf --group flask --group falcon
+      - run: uv run poe lint
+
+  test:
+    name: test (python ${{ matrix.python }}, django ${{ matrix.django }}, ${{ matrix.db }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
+        django: ["5.2", "6.0", "6.1"]
+        db: [sqlite]
+        exclude:
+          # Django 6.x requires Python 3.12+.
+          - { python: "3.11", django: "6.0" }
+          - { python: "3.11", django: "6.1" }
+        include:
+          - { python: "3.11", django: "5.2", db: postgres }
+          - { python: "3.14", django: "6.1", db: postgres }
+    services:
+      postgres:
+        image: ${{ matrix.db == 'postgres' && 'postgres:17' || '' }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tracepanel
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TRACEPANEL_TEST_DB: ${{ matrix.db }}
+      PGHOST: localhost
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync --locked --group celery --group channels --group strawberry --group django-tasks --group fastapi --group dramatiq --group rq --group ninja --group drf --group flask --group falcon ${{ matrix.db == 'postgres' && '--group postgres' || '' }}
+      - name: Pin Django ${{ matrix.django }}
+        run: uv pip install "django~=${{ matrix.django }}.0"
+      - run: uv run --no-sync python -c "import django, sys; print('django', django.get_version(), 'python', sys.version)"
+      - run: uv run --no-sync pytest
+

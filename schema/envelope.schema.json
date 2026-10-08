@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tracepanel.dev/schema/0.1/envelope.schema.json",
+  "title": "Envelope",
+  "description": "A batch of traces from one process, as sent to the agent or the cloud.",
+  "type": "object",
+  "required": ["schema_version", "sdk", "project", "environment", "release", "service", "host", "pid", "traces"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "sdk": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": { "name": { "type": "string" }, "version": { "type": "string" } }
+    },
+    "project": { "type": ["string", "null"], "description": "Cloud project slug; null in local mode." },
+    "environment": { "type": "string", "description": "\"local\" by default." },
+    "release": { "type": ["string", "null"] },
+    "service": { "type": "string", "description": "Process role: web, worker, beat, command." },
+    "host": { "type": "string" },
+    "pid": { "type": "integer" },
+    "traces": { "type": "array", "items": { "$ref": "trace.schema.json" } }
+  }
+}

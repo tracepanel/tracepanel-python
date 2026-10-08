@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.tracepanel/
+.DS_Store
+
+# Built UI, installed by `poe ui` or the build hook from tracepanel-ui.
+tracepanel/static/tracepanel/widget.js
+tracepanel/static/tracepanel/ui/
+.venv-matrix/
