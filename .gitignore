@@ -9,7 +9,8 @@ dist/
 .tracepanel/
 .DS_Store
 
-# Built UI, installed by `poe ui` or the build hook from tracepanel-ui.
+# Built UI from tracepanel-ui, copied in by `poe ui` before `uv build` (uv_build has no build hooks): not in git, but in
+# the wheel and sdist, which scripts/check_dist.py verifies.
 tracepanel/static/tracepanel/widget.js
 tracepanel/static/tracepanel/ui/
 .venv-matrix/
