@@ -9,7 +9,7 @@ import sys
 import sysconfig
 from contextvars import ContextVar
 from pathlib import Path
-from types import FrameType, TracebackType
+from types import CodeType, FrameType, TracebackType
 
 from tracepanel.core import conf
 from tracepanel.core.model import Frame
@@ -32,7 +32,9 @@ _repr.maxlist = _repr.maxtuple = _repr.maxset = _repr.maxdict = 10
 _repr.maxlevel = 3
 
 
+@functools.lru_cache(maxsize=8192)
 def is_in_app(filename: str, module: str) -> bool:
+    """Project code; cached, as every SQL statement walks the stack frame by frame."""
     if module.split(".", 1)[0] in _SKIP_MODULES:
         return False
     return _project_file(filename)
@@ -65,15 +67,30 @@ def _relative(filename: str, root: str) -> str:
 awaited_from: ContextVar[str | None] = ContextVar("tracepanel_awaited_from", default=None)
 
 
+# Code object -> whether it is project code. A code object belongs to one module for good: one dict lookup per frame
+# instead of reading the frame's globals. Bounded: code made at runtime (exec, templates) would grow it forever.
+_IN_APP_BY_CODE: dict[CodeType, bool] = {}
+_IN_APP_BY_CODE_MAX = 20_000
+
+
+def _code_in_app(frame: FrameType) -> bool:
+    code = frame.f_code
+    known = _IN_APP_BY_CODE.get(code)
+    if known is None:
+        if len(_IN_APP_BY_CODE) >= _IN_APP_BY_CODE_MAX:
+            _IN_APP_BY_CODE.clear()
+        known = _IN_APP_BY_CODE[code] = is_in_app(code.co_filename, frame.f_globals.get("__name__", ""))
+    return known
+
+
 def origin(skip: int = 2) -> str | None:
     """`path:line in function` of the innermost project frame calling into the current code."""
     frame: FrameType | None = sys._getframe(skip)  # noqa: SLF001
     while frame is not None:
-        code = frame.f_code
-        module = frame.f_globals.get("__name__", "")
-        if is_in_app(code.co_filename, module):
+        if _code_in_app(frame):
+            code = frame.f_code
             return f"{relative(code.co_filename)}:{frame.f_lineno} in {code.co_name}"
-        if module == "asgiref.sync" and awaited_from.get() is not None:
+        if awaited_from.get() is not None and frame.f_globals.get("__name__") == "asgiref.sync":
             # The thread sync_to_async() runs in: what lies further up belongs to whoever waits, not to this call.
             return awaited_from.get()
         frame = frame.f_back

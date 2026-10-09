@@ -12,6 +12,7 @@ from contextvars import ContextVar
 from inspect import iscoroutinefunction
 from typing import TYPE_CHECKING
 
+from django.db.models.signals import post_init, pre_init
 from django.dispatch import Signal
 
 from tracepanel.core.context import current_trace, start_span
@@ -21,7 +22,6 @@ if TYPE_CHECKING:
     from tracepanel.core.model import Attrs
 
 MARKER = "_tracepanel"
-SKIPPED = frozenset({"django.db.models.signals.pre_init", "django.db.models.signals.post_init"})
 
 Receiver = Callable[..., object]
 
@@ -110,8 +110,6 @@ def _span_attrs(signal: Signal, sender: object) -> "Attrs | None":
     if not signal.receivers or current_trace() is None:
         return None
     name = signal_name(signal)
-    if name in SKIPPED:
-        return None
     sync, asynchronous = _live_receivers(signal, sender)
     receivers = [receiver for receiver in [*sync, *asynchronous] if _project(receiver)]
     if not receivers:
@@ -135,6 +133,9 @@ def _unwrapped(responses: Responses) -> Responses:
 def _wrap(send: Callable[..., Responses]) -> Callable[..., Responses]:
     @functools.wraps(send)
     def traced(self: Signal, sender: object, **named: object) -> Responses:
+        # First and by identity: these two fire for every row a query loads.
+        if self is pre_init or self is post_init:
+            return send(self, sender, **named)
         attrs = _span_attrs(self, sender)
         if attrs is None:
             return send(self, sender, **named)

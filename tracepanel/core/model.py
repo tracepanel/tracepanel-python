@@ -18,6 +18,19 @@ class Span:
     status: str = "ok"
     attrs: Attrs = field(default_factory=dict)
 
+    def to_dict(self) -> dict[str, object]:
+        # By hand: a trace has many spans, and attrs hold plain values already.
+        return {
+            "id": self.id,
+            "parent_id": self.parent_id,
+            "kind": self.kind,
+            "name": self.name,
+            "start": self.start,
+            "duration": self.duration,
+            "status": self.status,
+            "attrs": self.attrs,
+        }
+
 
 @dataclass(slots=True)
 class Log:
@@ -29,6 +42,17 @@ class Log:
     exception: str | None = None
     # code.*, thread.*, process.*, log.template and extra.* (the record's `extra=` fields).
     attrs: Attrs = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "span_id": self.span_id,
+            "time": self.time,
+            "level": self.level,
+            "logger": self.logger,
+            "message": self.message,
+            "exception": self.exception,
+            "attrs": self.attrs,
+        }
 
 
 @dataclass(slots=True)
@@ -102,18 +126,26 @@ class Trace:
     issues: list[Issue] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
-        plain = _plain(self)
-        if not isinstance(plain, dict):
-            raise TypeError(plain)
-        return plain
+        """The trace as JSON-ready dicts, without copying values (it is serialized right away, never mutated)."""
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "name": self.name,
+            "start": self.start,
+            "duration": self.duration,
+            "status": self.status,
+            "attrs": self.attrs,
+            "spans": [span.to_dict() for span in self.spans],
+            "logs": [log.to_dict() for log in self.logs],
+            # Few and nested (frames, chains): the generic way.
+            "errors": _plain(self.errors),
+            "links": _plain(self.links),
+            "issues": _plain(self.issues),
+        }
 
 
 def _plain(value: object) -> object:
-    """Dataclasses to dicts, recursively, without copying the values.
-
-    dataclasses.asdict deep-copies everything, which made it most of the background writer's time; the result
-    here is serialized right away and never mutated.
-    """
+    """Dataclasses to dicts, recursively, without copying the values (dataclasses.asdict deep-copies everything)."""
     if isinstance(value, list):
         return [_plain(item) for item in value]
     fields = getattr(type(value), "__dataclass_fields__", None)

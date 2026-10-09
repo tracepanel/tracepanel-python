@@ -424,6 +424,9 @@ class Store:
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=5)
         db.row_factory = sqlite3.Row
+        # WAL with NORMAL sync: no fsync per commit (only at checkpoints), still never a corrupt file. A power cut
+        # may lose the last traces, which is fine for local debug data; the writer commits a batch at a time.
+        db.execute("PRAGMA synchronous=NORMAL")
         return db
 
     # ---------- writing ----------
