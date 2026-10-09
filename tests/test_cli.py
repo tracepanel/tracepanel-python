@@ -161,7 +161,16 @@ def test_mcp_answers_from_the_projects_store(tmp_path: Path) -> None:
     store.write([trace])
     store.stop()
     messages = [
-        {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}},
+        {
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1"},
+            },
+        },
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "find_traces", "arguments": {}}},
     ]
