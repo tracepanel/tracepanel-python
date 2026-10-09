@@ -152,3 +152,35 @@ def test_clear_deletes_the_store_after_asking(tmp_path: Path) -> None:
     cleared = tracepanel("clear", "--yes", cwd=tmp_path, env=env)
     store.stop()
     assert (cleared.returncode, cleared.stdout) == (0, "tracepanel: deleted 2 traces\n")
+
+
+def test_mcp_answers_from_the_projects_store(tmp_path: Path) -> None:
+    store = AgentStore.start(tmp_path / ".tracepanel")
+    with start_trace("http", "GET /orders/") as trace:
+        pass
+    store.write([trace])
+    store.stop()
+    messages = [
+        {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "find_traces", "arguments": {}}},
+    ]
+
+    result = subprocess.run(
+        [sys.executable, "-m", "tracepanel", "mcp"],
+        cwd=tmp_path,
+        env={**os.environ, "TRACEPANEL_ROOT": str(tmp_path)},
+        input="".join(json.dumps(message) + "\n" for message in messages),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    replies = [json.loads(line) for line in result.stdout.splitlines()]
+
+    assert (result.returncode, result.stderr) == (0, "")
+
+    assert [reply["id"] for reply in replies] == [0, 1]
+    assert replies[0]["result"]["serverInfo"]["name"] == "tracepanel"
+
+    text = replies[1]["result"]["content"][0]["text"]
+    assert text.startswith(f"traces (1, newest first):\n{trace.id}  http GET /orders/ · ")

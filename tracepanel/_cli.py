@@ -1,4 +1,4 @@
-"""CLI: tracepanel dev | run | config | clear | agent | version."""
+"""CLI: tracepanel dev | run | config | clear | mcp | agent | version."""
 
 import argparse
 import os
@@ -12,6 +12,7 @@ USAGE = """usage: tracepanel <command>
   run [--set name=value]... <command>   run a command with tracepanel on (uvicorn, celery, manage.py, ...)
   config                                the settings in effect, and where each one comes from
   clear [--yes]                         delete every stored trace, log, query, email and issue
+  mcp [--values]                        an MCP server for AI coding agents (stdio): what the traces say
   agent                                 the tracepanel agent
   version"""
 
@@ -33,6 +34,9 @@ def main() -> None:
         return
     if command == "agent":
         run_agent(args[1:])
+    if command == "mcp":
+        # The agent's: it reads the store and answers on stdin and stdout.
+        run_agent(["mcp", *args[1:]])
     if command == "dev":
         dev(args[1:])
     print(USAGE, file=sys.stderr)
