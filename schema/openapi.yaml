@@ -563,8 +563,8 @@ components:
     LogRow:
       type: object
       additionalProperties: false
-      required: [id, trace_id, time, level, logger, message, exception, attrs, trace_kind, trace_name, method, path,
-        http_status, user_id]
+      required: [id, trace_id, time, level, logger, message, exception, attrs, trace_kind, trace_htmx, trace_name, method,
+        path, http_status, user_id]
       properties:
         id: { type: integer }
         trace_id: { type: string }
@@ -575,6 +575,7 @@ components:
         exception: { type: [string, "null"] }
         attrs: { $ref: "#/components/schemas/Attrs" }
         trace_kind: { type: string, enum: [http, task, command, websocket] }
+        trace_htmx: { type: [string, "null"], enum: [request, boosted, null], description: As the trace's htmx. }
         trace_name: { type: string }
         method: { type: [string, "null"] }
         path: { type: [string, "null"] }
@@ -592,7 +593,8 @@ components:
     MailRow:
       type: object
       additionalProperties: false
-      required: [trace_id, span_id, time, subject, sender, recipients, sent, html, trace_kind, method, path, trace_name]
+      required: [trace_id, span_id, time, subject, sender, recipients, sent, html, trace_kind, trace_htmx, method, path,
+        trace_name]
       properties:
         trace_id: { type: string }
         span_id: { type: string }
@@ -603,6 +605,7 @@ components:
         sent: { type: [boolean, "null"], description: "False when the backend refused it; null when unknown." }
         html: { type: boolean }
         trace_kind: { type: string, enum: [http, task, command, websocket] }
+        trace_htmx: { type: [string, "null"], enum: [request, boosted, null], description: As the trace's htmx. }
         method: { type: [string, "null"] }
         path: { type: [string, "null"] }
         trace_name: { type: string }
@@ -804,8 +807,8 @@ components:
       additionalProperties: false
       required: [issues, errors, sections]
       properties:
-        issues: { type: integer, description: All issue groups. }
-        errors: { type: integer, description: Issue groups that are errors. }
+        issues: { type: integer, description: "Issue groups besides errors: N+1, duplicate and slow SQL, transactions, htmx." }
+        errors: { type: integer, description: Error groups. }
         sections:
           type: object
           description: Stored traces per entry point; the console hides entry points with none.

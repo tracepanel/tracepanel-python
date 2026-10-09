@@ -64,9 +64,11 @@ def response_attrs(request: Attrs, status: int, headers: Mapping[str, str], body
     if 300 <= status < 400 and (location := headers.get("location")):  # noqa: PLR2004
         # The browser follows it inside the XHR: htmx gets (and swaps) whatever the new URL answers.
         attrs["htmx.redirected_to"] = location
-    # A boosted link or a history restore asks for the whole page; anything else expects a fragment.
+    # A boosted link or a history restore asks for the whole page; anything else expects a fragment. htmx swaps only
+    # a 2xx by default: an error page (Django's debug 500) never lands in the target.
     page_expected = request.get("htmx.boosted") or request.get("htmx.history_restore")
-    if not page_expected and body is not None and _is_document(headers.get("content-type", ""), body):
+    swapped = 200 <= status < 300  # noqa: PLR2004
+    if swapped and not page_expected and body is not None and _is_document(headers.get("content-type", ""), body):
         attrs["htmx.full_page"] = True
     return attrs
 

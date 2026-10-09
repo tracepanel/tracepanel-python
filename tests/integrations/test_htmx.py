@@ -59,6 +59,14 @@ def test_request_attrs() -> None:
             {},
             id="boosted asks for a page",
         ),
+        pytest.param(
+            {"htmx.request": True},
+            500,
+            {"content-type": "text/html"},
+            b"<!DOCTYPE html><html><body>Traceback</body></html>",
+            {},
+            id="error page is not swapped",
+        ),
         pytest.param({}, 302, {"location": "/login/"}, b"", {}, id="not htmx"),
     ],
 )

@@ -174,7 +174,8 @@ def test_traces_overview(client: Client, recorded: Store) -> None:
             "max": IsPositiveInt,
             "avg_queries": IsPositiveFloat,
             "avg_db_time": IsPositiveInt,
-            "with_issues": 3,
+            # Findings only: the failing request counts in `errors`.
+            "with_issues": 2,
             "first_seen": IsPositiveInt,
             "last_seen": IsPositiveInt,
         },
@@ -244,7 +245,8 @@ def test_time_filter_errors(recorded: Store, query: str, message: str) -> None:
         ("path:/fixed/,/logs/", ["/fixed/", "/logs/"]),
         ("path:/n-*,/dup*", ["/duplicates/", "/n-plus-one/"]),
         ("path!=/fixed/,/logs/ status<500", ["/cache/", "/duplicates/", "/n-plus-one/"]),
-        ("status:200,500 has:issues", ["/duplicates/", "/error/", "/n-plus-one/"]),
+        # has:issues is findings; the failing request is has:error.
+        ("status:200,500 has:issues", ["/duplicates/", "/n-plus-one/"]),
         ("method:get,post route:/error/", ["/error/"]),
     ],
 )
@@ -328,9 +330,9 @@ def test_issues(client: Client, recorded: Store) -> None:
 
 @pytest.mark.django_db
 def test_counts(client: Client, recorded: Store) -> None:
-    # Two N+1 patterns on /n-plus-one/, one duplicate group, one exception.
+    # Two N+1 patterns on /n-plus-one/ and one duplicate group; the exception is an error, not an issue.
     counts = {
-        "issues": 4,
+        "issues": 3,
         "errors": 1,
         "sections": {"http": 6, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0},
     }

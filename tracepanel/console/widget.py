@@ -12,11 +12,16 @@ from dataclasses import dataclass
 from tracepanel.core.analysis import analyze
 from tracepanel.core.conf import Config
 from tracepanel.core.context import now_us
-from tracepanel.core.model import Trace
+from tracepanel.core.model import Issue, Trace
 
 EXPOSED_HEADERS = ("Tracepanel-Id", "Tracepanel-Name", "Tracepanel-Url", "Server-Timing")
 
 _HEAD = re.compile(r"<head(?:\s[^>]*)?>", re.IGNORECASE)
+
+
+def findings(issues: list[Issue]) -> int:
+    """Issues besides errors: an error shows as the request's status, not as one more issue."""
+    return sum(1 for issue in issues if issue.kind != "error")
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +36,7 @@ class Timing:
     @classmethod
     def of(cls, trace: Trace) -> "Timing":
         sql = [span for span in trace.spans if span.kind == "sql"]
-        return cls(trace.duration / 1000, sum(span.duration for span in sql) / 1000, len(sql), len(trace.issues))
+        return cls(trace.duration / 1000, sum(span.duration for span in sql) / 1000, len(sql), findings(trace.issues))
 
     @classmethod
     def live(cls, trace: Trace, config: Config) -> "Timing":
@@ -44,7 +49,7 @@ class Timing:
             long_transaction_ms=config.long_transaction_ms,
         )
         total = (now_us() - trace.start) / 1000
-        return cls(total, sum(span.duration for span in sql) / 1000, len(sql), len(issues))
+        return cls(total, sum(span.duration for span in sql) / 1000, len(sql), findings(issues))
 
 
 Headers = list[tuple[str, str]]

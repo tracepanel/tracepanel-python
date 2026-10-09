@@ -492,7 +492,8 @@ class Store:
                 attrs.get("user.id"),
                 len(sql_spans),
                 sum(span.duration for span in sql_spans),
-                len(trace.issues),
+                # Findings only: an error is counted in `errors` (and kept with the issues for grouping).
+                sum(1 for issue in trace.issues if issue.kind != "error"),
                 f",{','.join(kinds)}," if kinds else "",
                 len(trace.errors),
                 len(trace.logs),
@@ -720,8 +721,8 @@ class Store:
         with closing(self._connect()) as db:
             rows = db.execute(
                 "SELECT logs.id, logs.trace_id, logs.time, logs.level, logs.logger, logs.message, logs.exception,"  # noqa: S608 (constant SQL; values are bound)
-                " logs.attrs, traces.kind AS trace_kind, traces.name AS trace_name, traces.method, traces.path,"
-                " traces.http_status, traces.user_id"
+                " logs.attrs, traces.kind AS trace_kind, traces.htmx AS trace_htmx, traces.name AS trace_name,"
+                " traces.method, traces.path, traces.http_status, traces.user_id"
                 f" FROM logs JOIN traces ON traces.id = logs.trace_id WHERE {where}"
                 " ORDER BY logs.time DESC, logs.id DESC LIMIT ?",
                 [*params, limit + 1],
@@ -1183,8 +1184,8 @@ class Store:
             params.append(before)
         with closing(self._connect()) as db:
             rows = db.execute(
-                "SELECT mails.*, traces.kind AS trace_kind, traces.method, traces.path, traces.name AS trace_name"  # noqa: S608
-                " FROM mails"
+                "SELECT mails.*, traces.kind AS trace_kind, traces.htmx AS trace_htmx, traces.method, traces.path,"  # noqa: S608
+                " traces.name AS trace_name FROM mails"
                 f" JOIN traces ON traces.id = mails.trace_id WHERE {where} ORDER BY mails.time DESC LIMIT ?",
                 [*params, limit + 1],
             ).fetchall()
@@ -1355,7 +1356,8 @@ class Store:
                 "SELECT COUNT(*) FROM traces WHERE kind = 'http' AND name LIKE 'GraphQL %'"
             ).fetchone()
         return {
-            "issues": sum(kinds.values()),
+            # Two lists in the console: what failed, and what could be better.
+            "issues": sum(kinds.values()) - kinds.get("error", 0),
             "errors": kinds.get("error", 0),
             # Stored traces per entry point: the console hides the ones a project doesn't use.
             "sections": {

@@ -99,6 +99,7 @@ def test_mail_listing(client: Client, store: Store) -> None:
         "sent": True,
         "html": True,
         "trace_kind": "http",
+        "trace_htmx": None,
         "method": "GET",
         "path": "/welcome-email/",
         "trace_name": "GET /welcome-email/",
