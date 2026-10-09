@@ -5,10 +5,10 @@ from django.db import connection
 from django.test import Client
 from pytest_django.fixtures import Settings
 
+from tests.agentstore import AgentStore
 from tracepanel.core import explain as plans
 from tracepanel.core.model import Attrs, Scalar, Trace
 from tracepanel.django import explain
-from tracepanel.storage.store import Store
 
 SQLITE = pytest.mark.skipif(connection.vendor != "sqlite", reason="SQLite plan text")
 POSTGRES = pytest.mark.skipif(connection.vendor != "postgresql", reason="PostgreSQL plan text")
@@ -38,7 +38,7 @@ def test_parameters_can_be_left_out(client: Client, traces: list[Trace], users: 
 
 
 @pytest.mark.django_db
-def test_explain_api(client: Client, traces: list[Trace], users: list[User], store: Store) -> None:
+def test_explain_api(client: Client, traces: list[Trace], users: list[User], store: AgentStore) -> None:
     client.get("/n-plus-one/")
     store.write(traces)
     span = next(span for span in sql_spans(traces) if "db.params" in span)

@@ -1,57 +1,31 @@
-import json
 import re
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 from dirty_equals import IsInt, IsList, IsPartialDict, IsPositiveFloat, IsPositiveInt, IsStr
 from django.contrib.auth.models import User
 from django.test import Client
 
-from tracepanel.storage import search
-from tracepanel.storage.search import SearchError, Term, parse
-from tracepanel.storage.store import TRACE_SEARCH, Store
-from tracepanel.storage.transport import StoreWriter, set_writer
-
-SPEC = Path(__file__).resolve().parents[2] / "schema" / "search.json"
+from tests.agentstore import AgentStore, SearchError
+from tracepanel.storage.transport import set_writer
 
 
-def test_parse_free_text_and_filters() -> None:
-    assert parse('route:/api/* status>=500 "connection refused" slow') == [
-        Term("route", ":", "/api/*"),
-        Term("status", ">=", "500"),
-        Term(None, ":", "connection refused"),
-        Term(None, ":", "slow"),
-    ]
-
-
-def test_durations() -> None:
-    assert search.parse_duration_us("200ms") == 200_000
-    assert search.parse_duration_us("1.5s") == 1_500_000
-    assert search.parse_duration_us("300") == 300_000
-    with pytest.raises(ValueError, match="duration"):
-        search.parse_duration_us("fast")
-
-
-def test_unknown_filter_and_bad_values_are_explained() -> None:
+def test_unknown_filter_and_bad_values_are_explained(store: AgentStore) -> None:
     with pytest.raises(SearchError, match="Unknown filter 'colour'"):
-        search.compile_where("colour:red", TRACE_SEARCH)
+        store.search_traces("colour:red")
     with pytest.raises(SearchError, match="status expects a number"):
-        search.compile_where("status>=lots", TRACE_SEARCH)
+        store.search_traces("status>=lots")
     with pytest.raises(SearchError, match="has expects"):
-        search.compile_where("has:bugs", TRACE_SEARCH)
-
-
-def test_spec_file_matches_the_code() -> None:
-    # schema/search.json is the portable contract the cloud implements too.
-    assert json.loads(SPEC.read_text()) == search.spec()
+        store.search_traces("has:bugs")
+    with pytest.raises(SearchError, match="duration expects a duration"):
+        store.search_traces("duration>fast")
 
 
 @pytest.fixture
-def recorded(client: Client, users: list[User], store: Store) -> Store:
+def recorded(client: Client, users: list[User], store: AgentStore) -> AgentStore:
     """A few real requests written to the store."""
     store.max_traces = 100
-    writer = StoreWriter(store)
+    writer = store.writer()
     set_writer(writer)
     client.raise_request_exception = False
     try:
@@ -63,13 +37,13 @@ def recorded(client: Client, users: list[User], store: Store) -> Store:
     return store
 
 
-def names(store: Store, query: str) -> list[str]:
+def names(store: AgentStore, query: str) -> list[str]:
     items, _ = store.search_traces(query)
     return sorted(str(item["path"]) for item in items)
 
 
 @pytest.mark.django_db
-def test_trace_filters(recorded: Store) -> None:
+def test_trace_filters(recorded: AgentStore) -> None:
     assert names(recorded, "status>=500") == ["/error/"]
     assert names(recorded, "has:n+1") == ["/n-plus-one/"]
     assert names(recorded, "has:duplicates") == ["/duplicates/"]
@@ -81,7 +55,7 @@ def test_trace_filters(recorded: Store) -> None:
 
 
 @pytest.mark.django_db
-def test_trace_pagination(recorded: Store) -> None:
+def test_trace_pagination(recorded: AgentStore) -> None:
     first, cursor = recorded.search_traces("", limit=4)
     assert len(first) == 4
     assert cursor is not None
@@ -92,7 +66,7 @@ def test_trace_pagination(recorded: Store) -> None:
 
 
 @pytest.mark.django_db
-def test_log_search(recorded: Store) -> None:
+def test_log_search(recorded: AgentStore) -> None:
     logs, _ = recorded.search_logs("hello")
     assert [log["message"] for log in logs] == ["hello world"]
     assert logs[0]["path"] == "/logs/"
@@ -102,7 +76,7 @@ def test_log_search(recorded: Store) -> None:
 
 
 @pytest.mark.django_db
-def test_query_and_endpoint_aggregates(recorded: Store) -> None:
+def test_query_and_endpoint_aggregates(recorded: AgentStore) -> None:
     # The N+1 statement: the one called once per user (ties in total time make list order unreliable).
     n_plus_one = max(recorded.list_queries("table:auth_group"), key=lambda query: int(str(query["calls"])))
     assert n_plus_one == IsPartialDict(calls=5, most_per_trace=5, origin=IsStr(regex=r"tests/project/views\.py:.*"))
@@ -116,7 +90,7 @@ def test_query_and_endpoint_aggregates(recorded: Store) -> None:
 
 
 @pytest.mark.django_db
-def test_api(client: Client, recorded: Store) -> None:
+def test_api(client: Client, recorded: AgentStore) -> None:
     body = client.get("/__tracepanel__/api/traces", {"q": "has:n+1"}).json()
     assert [t["path"] for t in body["traces"]] == ["/n-plus-one/"]
     assert body["next"] is None
@@ -129,7 +103,7 @@ def test_api(client: Client, recorded: Store) -> None:
 
 
 @pytest.mark.django_db
-def test_endpoint_detail(client: Client, recorded: Store) -> None:
+def test_endpoint_detail(client: Client, recorded: AgentStore) -> None:
     detail = recorded.endpoint_detail("get", "/n-plus-one/")
     assert detail is not None
     summary = detail["summary"]
@@ -149,7 +123,7 @@ def test_endpoint_detail(client: Client, recorded: Store) -> None:
     assert sum(bucket["count"] for bucket in body["histogram"]) == 1
 
 
-def test_traces_overview(client: Client, recorded: Store) -> None:
+def test_traces_overview(client: Client, recorded: AgentStore) -> None:
     operation = {
         "kind": "http",
         "name": IsStr(regex=r"GET /.*"),
@@ -201,21 +175,7 @@ def test_traces_overview(client: Client, recorded: Store) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        ("90s", 1_000_000_000_000 - 90_000_000),
-        ("15m", 1_000_000_000_000 - 900_000_000),
-        ("2h", 1_000_000_000_000 - 7_200_000_000),
-        ("1d", 1_000_000_000_000 - 86_400_000_000),
-        ("2026-10-07T13:30:00+00:00", 1_791_379_800_000_000),
-    ],
-)
-def test_parse_time(value: str, expected: int) -> None:
-    assert search.parse_time_us(value, now_us=1_000_000_000_000) == expected
-
-
-def test_time_filters(recorded: Store) -> None:
+def test_time_filters(recorded: AgentStore) -> None:
     items, _ = recorded.search_traces()
     middle = sorted(int(str(item["start"])) for item in items)[3]
     moment = datetime.fromtimestamp(middle / 1_000_000, tz=UTC).isoformat()
@@ -233,7 +193,7 @@ def test_time_filters(recorded: Store) -> None:
         ("until:yesterday", "until expects a time like 15m, 2h, 1d or 2026-10-07T13:30, got 'yesterday'"),
     ],
 )
-def test_time_filter_errors(recorded: Store, query: str, message: str) -> None:
+def test_time_filter_errors(recorded: AgentStore, query: str, message: str) -> None:
     with pytest.raises(SearchError, match=re.escape(message)):
         recorded.search_traces(query)
 
@@ -250,12 +210,12 @@ def test_time_filter_errors(recorded: Store, query: str, message: str) -> None:
         ("method:get,post route:/error/", ["/error/"]),
     ],
 )
-def test_any_of_values(recorded: Store, query: str, expected: list[str]) -> None:
+def test_any_of_values(recorded: AgentStore, query: str, expected: list[str]) -> None:
     assert names(recorded, query) == expected
 
 
 @pytest.mark.django_db
-def test_any_of_levels(recorded: Store) -> None:
+def test_any_of_levels(recorded: AgentStore) -> None:
     logs, _ = recorded.search_logs("level:warning,error")
 
     assert sorted((log["level"], log["message"]) for log in logs) == [
@@ -269,7 +229,7 @@ def test_any_of_levels(recorded: Store) -> None:
 
 
 @pytest.mark.django_db
-def test_known_values(client: Client, recorded: Store) -> None:
+def test_known_values(client: Client, recorded: AgentStore) -> None:
     no_tasks: list[str] = []
     expected = {
         "route": ["/cache/", "/duplicates/", "/error/", "/fixed/", "/logs/", "/n-plus-one/"],
@@ -286,10 +246,11 @@ def test_known_values(client: Client, recorded: Store) -> None:
 
 
 @pytest.mark.django_db
-def test_overview_spans_the_searched_window(recorded: Store) -> None:
-    assert recorded.traces_overview("since:2h until:1h", buckets=4) == {
+def test_overview_spans_the_searched_window(recorded: AgentStore) -> None:
+    # The overview's 60 buckets span the window searched, here an empty one.
+    assert recorded.traces_overview("since:2h until:1h") == {
         "summary": None,
-        "series": [IsPartialDict(calls=0, errors=0, p50=None, p95=None)] * 4,
+        "series": [IsPartialDict(calls=0, errors=0, p50=None, p95=None)] * 60,
         "histogram": [],
         "slow_threshold": 500_000,
         "kinds": [],
@@ -299,7 +260,7 @@ def test_overview_spans_the_searched_window(recorded: Store) -> None:
 
 
 @pytest.mark.django_db
-def test_issues(client: Client, recorded: Store) -> None:
+def test_issues(client: Client, recorded: AgentStore) -> None:
     error = {
         "fingerprint": IsStr,
         "fingerprint_version": 1,
@@ -329,7 +290,7 @@ def test_issues(client: Client, recorded: Store) -> None:
 
 
 @pytest.mark.django_db
-def test_counts(client: Client, recorded: Store) -> None:
+def test_counts(client: Client, recorded: AgentStore) -> None:
     # Two N+1 patterns on /n-plus-one/ and one duplicate group; the exception is an error, not an issue.
     counts = {
         "issues": 3,
@@ -341,13 +302,13 @@ def test_counts(client: Client, recorded: Store) -> None:
 
 
 @pytest.mark.django_db
-def test_issue_detail(client: Client, recorded: Store) -> None:
+def test_issue_detail(client: Client, recorded: AgentStore) -> None:
     (error,) = recorded.list_issues("kind:error")
 
-    assert recorded.issue_detail(str(error["fingerprint"]), buckets=4) == {
+    assert recorded.issue_detail(str(error["fingerprint"])) == {
         **error,
-        # From the first event up to now: the only event opens the series.
-        "series": [IsPartialDict(calls=1, errors=1), *[IsPartialDict(calls=0)] * 3],
+        # 40 buckets from the first event up to now: the only event opens the series.
+        "series": [IsPartialDict(calls=1, errors=1), *[IsPartialDict(calls=0)] * 39],
         "traces": [IsPartialDict(id=error["last_trace_id"], path="/error/", http_status=500)],
     }
     assert recorded.issue_detail("nope") is None
@@ -357,7 +318,7 @@ def test_issue_detail(client: Client, recorded: Store) -> None:
 
 
 @pytest.mark.django_db
-def test_log_attrs(recorded: Store) -> None:
+def test_log_attrs(recorded: AgentStore) -> None:
     (log,) = recorded.search_logs("careful")[0]
 
     assert log == IsPartialDict(
@@ -387,12 +348,12 @@ def test_log_attrs(recorded: Store) -> None:
         ("user:nobody", []),
     ],
 )
-def test_log_extra_and_user_filters(recorded: Store, query: str, messages: list[str]) -> None:
+def test_log_extra_and_user_filters(recorded: AgentStore, query: str, messages: list[str]) -> None:
     assert [log["message"] for log in recorded.search_logs(query)[0]] == messages
 
 
 @pytest.mark.django_db
-def test_endpoints_and_queries_in_a_time_window(recorded: Store) -> None:
+def test_endpoints_and_queries_in_a_time_window(recorded: AgentStore) -> None:
     assert [len(recorded.list_endpoints(query)) for query in ("since:1h", "until:1h", "since:1h route:/error/")] == [
         6,
         0,

@@ -15,7 +15,6 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import TypeVar
 
 from tracepanel.core import conf
-from tracepanel.core.analysis import fingerprint
 from tracepanel.core.context import current_span, current_trace, now_us, record_span
 from tracepanel.core.frames import origin
 from tracepanel.core.model import Attrs, Scalar
@@ -23,8 +22,19 @@ from tracepanel.core.model import Attrs, Scalar
 T = TypeVar("T")
 Params = Sequence[object] | Mapping[str, object] | None
 
+_WHITESPACE = re.compile(r"\s+")
+_IN_LIST = re.compile(r"\bIN \((?:%s|\?)(?:, ?(?:%s|\?))*\)", re.IGNORECASE)
 _TABLE = re.compile(r'\b(?:FROM|INTO|UPDATE|JOIN)\s+[`"\[]?([\w.]+)', re.IGNORECASE)
 _COUNT = re.compile(r"^\s*SELECT\s+COUNT\(", re.IGNORECASE)
+
+
+def fingerprint(sql: str) -> str:
+    """Normalize a parametrized query so the same statement maps to one fingerprint.
+
+    It is the span's `db.fingerprint`: what the agent groups queries, and finds N+1 and duplicates, by.
+    """
+    sql = _WHITESPACE.sub(" ", sql).strip()
+    return _IN_LIST.sub("IN (...)", sql)
 
 
 @functools.lru_cache(maxsize=2048)

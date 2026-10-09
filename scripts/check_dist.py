@@ -1,4 +1,7 @@
-"""Fail if a built wheel or sdist in dist/ is missing the bundled UI (uv_build has no build hooks)."""
+"""Fail if a built wheel or sdist in dist/ holds what belongs to the agent: the console's UI, the store.
+
+tracepanel is the SDK only; the UI, widget.js and the store come with tracepanel-agent, which is closed.
+"""
 
 import sys
 import tarfile
@@ -6,12 +9,7 @@ import zipfile
 from pathlib import Path
 
 DIST = Path(__file__).resolve().parent.parent / "dist"
-REQUIRED = (
-    "tracepanel/static/tracepanel/widget.js",
-    "tracepanel/static/tracepanel/ui/index.html",
-    # Data files the code reads at import: the store's schema.
-    "tracepanel/storage/schema.sql",
-)
+FORBIDDEN = ("tracepanel/static/", ".sqlite3", "widget.js", "schema.sql")
 
 
 def names(path: Path) -> list[str]:
@@ -28,10 +26,10 @@ def main() -> None:
     if not artifacts:
         sys.exit("dist/ is empty: run `uv build` first")
     for artifact in artifacts:
-        missing = [path for path in REQUIRED if path not in names(artifact)]
-        if missing:
-            sys.exit(f"{artifact.name} is missing {', '.join(missing)}: run `poe ui` before building")
-        print(f"{artifact.name}: UI included", file=sys.stderr)  # noqa: T201
+        found = [name for name in names(artifact) if any(part in name for part in FORBIDDEN)]
+        if found:
+            sys.exit(f"{artifact.name} holds the agent's files: {', '.join(found[:5])}")
+        print(f"{artifact.name}: SDK only", file=sys.stderr)  # noqa: T201
 
 
 if __name__ == "__main__":

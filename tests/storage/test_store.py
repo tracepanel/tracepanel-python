@@ -2,16 +2,16 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
+from tests.agentstore import AgentStore
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Issue
-from tracepanel.storage.store import Store
-from tracepanel.storage.transport import StoreWriter, set_writer
+from tracepanel.storage.transport import set_writer
 
 pytestmark = pytest.mark.django_db
 
 
-def test_api_lists_and_reads_traces(client: Client, users: list[User], store: Store) -> None:
-    writer = StoreWriter(store)
+def test_api_lists_and_reads_traces(client: Client, users: list[User], store: AgentStore) -> None:
+    writer = store.writer()
     set_writer(writer)
     try:
         trace_id = client.get("/n-plus-one/")["Tracepanel-Id"]
@@ -38,7 +38,7 @@ def test_api_lists_and_reads_traces(client: Client, users: list[User], store: St
     assert client.get("/__tracepanel__/api/traces?limit=oops").status_code == 200
 
 
-def test_issue_occurrences_accumulate_and_old_traces_are_pruned(store: Store) -> None:
+def test_issue_occurrences_accumulate_and_old_traces_are_pruned(store: AgentStore) -> None:
     written: list[str] = []
     for _ in range(7):
         with start_trace("http", "GET /") as trace:

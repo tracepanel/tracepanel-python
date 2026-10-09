@@ -5,9 +5,9 @@ from django.test import Client
 from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
+from tests.agentstore import AgentStore, issues
 from tracepanel.core.model import Link, Trace
-from tracepanel.storage.store import Store
-from tracepanel.storage.transport import StoreWriter, set_writer
+from tracepanel.storage.transport import set_writer
 
 pytest.importorskip("celery")
 
@@ -98,7 +98,7 @@ def test_failed_task(traces: list[Trace]) -> None:
     assert [(error.type, error.message, error.handled) for error in task.errors] == [
         ("builtins.ValueError", "boom", False)
     ]
-    assert [issue.kind for issue in task.issues] == ["error"]
+    assert [issue.kind for issue in issues(task)] == ["error"]
 
 
 @pytest.mark.django_db
@@ -118,7 +118,7 @@ def test_issues_inside_a_task(traces: list[Trace], users: list[User]) -> None:
     jobs.groups_per_user.apply()
     (task,) = traces
 
-    assert [issue.kind for issue in task.issues] == ["n+1"]
+    assert [issue.kind for issue in issues(task)] == ["n+1"]
 
 
 @pytest.mark.django_db
@@ -132,8 +132,8 @@ def test_arguments_can_be_left_out(traces: list[Trace], users: list[User], setti
 
 
 @pytest.mark.django_db
-def test_tasks_listing_and_links(client: Client, users: list[User], store: Store) -> None:
-    writer = StoreWriter(store)
+def test_tasks_listing_and_links(client: Client, users: list[User], store: AgentStore) -> None:
+    writer = store.writer()
     set_writer(writer)
     try:
         client.get("/run-eager/")

@@ -12,20 +12,15 @@ from dataclasses import dataclass
 from tracepanel.core import runtime
 from tracepanel.core.conf import Config
 from tracepanel.core.context import now_us
-from tracepanel.core.model import Issue, Trace
-from tracepanel.storage import transport
+from tracepanel.core.model import Trace
+from tracepanel.storage import agent
 
 EXPOSED_HEADERS = ("Tracepanel-Id", "Tracepanel-Name", "Tracepanel-Url", "Server-Timing")
 
-# Issues not known yet (the agent finds them): the widget asks the console once the trace is stored.
+# Issues are found by the agent once the trace is stored: the widget asks the console for them.
 PENDING = "pending"
 
 _HEAD = re.compile(r"<head(?:\s[^>]*)?>", re.IGNORECASE)
-
-
-def findings(issues: list[Issue]) -> int:
-    """Issues besides errors: an error shows as the request's status, not as one more issue."""
-    return sum(1 for issue in issues if issue.kind != "error")
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,22 +30,18 @@ class Timing:
     total_ms: float
     db_ms: float
     queries: int
-    # None: found later, by the agent.
-    issues: int | None
 
     @classmethod
     def of(cls, trace: Trace) -> "Timing":
         sql = [span for span in trace.spans if span.kind == "sql"]
-        issues = None if transport.analyzes_later() else findings(trace.issues)
-        return cls(trace.duration / 1000, sum(span.duration for span in sql) / 1000, len(sql), issues)
+        return cls(trace.duration / 1000, sum(span.duration for span in sql) / 1000, len(sql))
 
     @classmethod
-    def live(cls, trace: Trace, config: Config) -> "Timing":
-        """For a trace still running (the response goes out before it ends): its time so far, its issues now."""
+    def live(cls, trace: Trace) -> "Timing":
+        """For a trace still running (the response goes out before it ends): its time so far."""
         sql = [span for span in trace.spans if span.kind == "sql"]
-        issues = None if transport.analyzes_later() else findings(transport.analysis(trace, config))
         total = (now_us() - trace.start) / 1000
-        return cls(total, sum(span.duration for span in sql) / 1000, len(sql), issues)
+        return cls(total, sum(span.duration for span in sql) / 1000, len(sql))
 
 
 Headers = list[tuple[str, str]]
@@ -98,7 +89,8 @@ def decorate(trace: Trace, page: Page, headers: Headers, body: bytes | None, con
     if body is None:
         return None
     html_page = "text/html" in (header(headers, "Content-Type") or "") and header(headers, "Content-Encoding") is None
-    if config.widget and html_page:
+    # The panel is the agent's: without one there is nothing to open.
+    if config.widget and html_page and agent.ensure_started(config):
         tag = script_tag(page.api, trace, page.method, page.status, page.timing)
         injected = inject(body.decode(page.charset, errors="replace"), tag)
         if injected is not None:
@@ -115,8 +107,8 @@ def server_timing(timing: Timing) -> str:
         f"app;dur={max(timing.total_ms - timing.db_ms, 0):.1f}",
         f"total;dur={timing.total_ms:.1f}",
     ]
-    if timing.issues is None or timing.issues:
-        metrics.append(f'tracepanel-issues;desc="{PENDING if timing.issues is None else timing.issues}"')
+    # The agent finds the issues once the trace is stored: the widget asks the console for them.
+    metrics.append(f'tracepanel-issues;desc="{PENDING}"')
     return ", ".join(metrics)
 
 
@@ -151,7 +143,7 @@ def script_tag(api: str, trace: Trace, method: str, status: int, timing: Timing)
         "total": f"{timing.total_ms:.1f}",
         "db": f"{timing.db_ms:.1f}",
         "queries": timing.queries,
-        "issues": PENDING if timing.issues is None else timing.issues,
+        "issues": PENDING,
         # What served the page: the panel shows it next to its logo.
         "runtime": runtime.label(),
     }

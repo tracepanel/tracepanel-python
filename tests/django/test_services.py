@@ -4,8 +4,8 @@ from django.db import connection, connections
 from django.test import Client
 from pytest_django.fixtures import Settings
 
+from tests.agentstore import AgentStore
 from tracepanel.core.model import Trace
-from tracepanel.storage.store import Store
 
 DATABASES = ["default", "analytics"]
 
@@ -46,7 +46,7 @@ def test_smtp_server(traces: list[Trace], settings: Settings) -> None:
 
 
 @pytest.mark.django_db(databases=DATABASES)
-def test_service_map(client: Client, traces: list[Trace], store: Store, settings: Settings) -> None:
+def test_service_map(client: Client, traces: list[Trace], store: AgentStore, settings: Settings) -> None:
     settings.TRACEPANEL = {"service": "shop"}
     client.get("/multi-backend/")
     client.get("/welcome-email/")

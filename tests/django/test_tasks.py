@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 pytest.importorskip("django_tasks_db")
@@ -10,9 +8,9 @@ from django.core.management import call_command
 from django.test import Client
 from jsonschema import Draft202012Validator
 
+from tests.agentstore import AgentStore
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Link, Span, Trace
-from tracepanel.storage.store import Store
 
 
 def by_kind(traces: list[Trace], kind: str) -> list[Trace]:
@@ -110,8 +108,7 @@ def _request(task_id: str) -> Trace:
 
 
 @pytest.mark.parametrize("run_first", [True, False])
-def test_store_links_runs_to_enqueues_in_any_order(tmp_path: Path, run_first: bool) -> None:  # noqa: FBT001
-    store = Store(tmp_path / "traces.sqlite3")
+def test_store_links_runs_to_enqueues_in_any_order(store: AgentStore, run_first: bool) -> None:  # noqa: FBT001
     run, request = _run("t-1"), _request("t-1")
     for trace in (run, request) if run_first else (request, run):
         store.write([trace])

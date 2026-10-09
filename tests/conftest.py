@@ -6,13 +6,13 @@ import pytest
 from django.contrib.auth.models import Group, User
 from jsonschema import Draft202012Validator
 
+from tests.agentstore import AGENT_SCHEMAS, AgentStore
 from tracepanel.core import conf
 from tracepanel.core.model import Trace
-from tracepanel.storage import store as store_module
 from tracepanel.storage import transport
-from tracepanel.storage.store import Store
 
-SCHEMA = Path(__file__).resolve().parents[1] / "schema" / "trace.schema.json"
+# What an SDK sends the agent: the agent's schema/trace.schema.json.
+SCHEMA = AGENT_SCHEMAS / "trace.schema.json"
 
 
 class Collector:
@@ -41,10 +41,15 @@ def validator() -> Draft202012Validator:
 
 
 @pytest.fixture
-def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Store:
-    store = Store(tmp_path / "traces.sqlite3", max_traces=5)
-    monkeypatch.setattr(store_module, "_store", store)
-    return store
+def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[AgentStore, None, None]:
+    """The project's store: an agent of its own, which the app's console (/__tracepanel__/) forwards to."""
+    directory = tmp_path / ".tracepanel"
+    running = AgentStore.start(directory)
+    monkeypatch.setenv("TRACEPANEL_DIR", str(directory))
+    monkeypatch.setenv("TRACEPANEL_AGENT", "auto")
+    conf.reset()
+    yield running
+    running.stop()
 
 
 @pytest.fixture

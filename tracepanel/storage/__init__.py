@@ -1,1 +1,1 @@
-"""The local store (SQLite in .tracepanel/), its search language and the background writer."""
+"""The background writer, and the agent it sends to: finding it, starting it, sending."""

@@ -7,12 +7,12 @@ from django.core.management import call_command
 from django.test import Client
 
 import tracepanel
+from tests.agentstore import AgentStore
 from tracepanel.core.model import Trace
-from tracepanel.storage.store import Store
 
 
 @pytest.mark.django_db
-def test_jobs_are_commands_and_custom_traces(traces: list[Trace], store: Store, users: list[User]) -> None:
+def test_jobs_are_commands_and_custom_traces(traces: list[Trace], store: AgentStore, users: list[User]) -> None:
     call_command("showmigrations", "auth", verbosity=0)
     with tracepanel.trace("sync-prices"):
         User.objects.count()
@@ -43,7 +43,7 @@ def test_jobs_are_commands_and_custom_traces(traces: list[Trace], store: Store, 
 
 
 @pytest.mark.django_db
-def test_any_group_is_a_search(client: Client, traces: list[Trace], store: Store, users: list[User]) -> None:
+def test_any_group_is_a_search(client: Client, traces: list[Trace], store: AgentStore, users: list[User]) -> None:
     client.get("/n-plus-one/")
     client.get("/n-plus-one/")
     client.get("/health/")

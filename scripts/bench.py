@@ -3,7 +3,6 @@
     uv run python scripts/bench.py              # everything
     uv run python scripts/bench.py overhead     # time per request, with and without tracepanel
     uv run python scripts/bench.py memory       # many requests: does memory or internal state grow?
-    uv run python scripts/bench.py store        # console API timings on a full store, store file size
 
 Each mode runs in its own process (tracepanel patches Django at startup), on the test project (tests/) with an
 in-memory database and a throwaway .tracepanel/ directory.
@@ -187,47 +186,12 @@ def memory(total: int, step: int) -> dict[str, object]:
     return {"checkpoints": checkpoints, "top growth after the first step": growth}
 
 
-def store_timings(repeat: int) -> dict[str, object]:
-    from django.test import Client  # noqa: PLC0415
-
-    from tracepanel.storage import transport  # noqa: PLC0415
-    from tracepanel.storage.store import get_store  # noqa: PLC0415
-
-    client = Client()
-    paths = [*VIEWS.values()]
-    # Fill past the limit (2000): the store rotates while the timings run on a full table.
-    for index in range(3000):
-        client.get(paths[index % len(paths)])
-    transport.get_writer().flush()
-    store = get_store()
-    calls: dict[str, Callable[[], object]] = {
-        "counts (menu, every refresh)": store.counts,
-        "traces overview": lambda: store.traces_overview(""),
-        "search traces": lambda: store.search_traces("kind:http"),
-        "endpoints": lambda: store.list_endpoints(""),
-        "queries": lambda: store.list_queries(""),
-        "issues": lambda: store.list_issues(""),
-        "logs": lambda: store.search_logs(""),
-        "services": lambda: store.list_services(""),
-        "group summary": lambda: store.summary("route:/n-plus-one/"),
-        "known values": store.known_values,
-    }
-    timings = {name: round(statistics.median(timed(call, repeat, warmup=2)) / 1000, 1) for name, call in calls.items()}
-    with store._connect() as db:  # noqa: SLF001
-        tables = ("traces", "logs", "sql", "issue_traces", "peers")
-        rows = {table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in tables}  # noqa: S608
-    size = sum(path.stat().st_size for path in store.path.parent.glob(f"{store.path.name}*"))
-    return {"ms (median)": timings, "rows": rows, "store size MiB (with WAL)": round(size / 2**20, 1)}
-
-
 def child(mode: str, tracepanel: bool) -> None:  # noqa: FBT001
     setup(tracepanel=tracepanel)
     if mode == "overhead":
         result: object = overhead(repeat=int(os.environ.get("BENCH_REPEAT", "1000")))
-    elif mode == "memory":
-        result = memory(total=int(os.environ.get("BENCH_TOTAL", "12000")), step=3000)
     else:
-        result = store_timings(repeat=20)
+        result = memory(total=int(os.environ.get("BENCH_TOTAL", "12000")), step=3000)
     print(json.dumps(result))
 
 
@@ -246,7 +210,7 @@ def main() -> None:
         child(mode, tracepanel=tracepanel == "1")
         return
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("modes", nargs="*", default=["overhead", "memory", "store"])
+    parser.add_argument("modes", nargs="*", default=["overhead", "memory"])
     args = parser.parse_args()
     if "overhead" in args.modes:
         off = run_child("overhead", tracepanel=False)
@@ -266,9 +230,6 @@ def main() -> None:
             result = run_child("memory", tracepanel=tracepanel)
             print(f"\nMemory over many requests (tracepanel {'on' if tracepanel else 'off'})")
             print(json.dumps(result, indent=2))
-    if "store" in args.modes:
-        print("\nStore: console API on a full store")
-        print(json.dumps(run_child("store", tracepanel=True), indent=2))
 
 
 if __name__ == "__main__":

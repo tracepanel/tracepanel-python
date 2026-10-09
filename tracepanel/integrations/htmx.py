@@ -2,15 +2,14 @@
 
 The request's HX-* headers say what sent it, the response's HX-* headers what the server told htmx. Two answers only
 show up as a broken page: a redirect (htmx follows it and swaps where it lands) and a whole page instead of a fragment.
+They are recorded here (`htmx.redirected_to`, `htmx.full_page`); the agent turns them into issues.
 
-Framework-neutral: the framework integrations pass header mappings with lower-case names; importing this module
-registers its check with core.analysis.
+Framework-neutral: the framework integrations pass header mappings with lower-case names.
 """
 
 from collections.abc import Mapping
 
-from tracepanel.core import analysis
-from tracepanel.core.model import Attrs, Issue, Trace
+from tracepanel.core.model import Attrs
 
 # Request header -> attribute. https://htmx.org/reference/#request_headers
 REQUEST = {
@@ -78,47 +77,3 @@ def _is_document(content_type: str, body: bytes) -> bool:
         return False
     head = body[:SNIFF].lstrip().lower()
     return head.startswith((b"<!doctype html", b"<html"))
-
-
-REDIRECT_HINT = (
-    "The browser follows a redirect inside htmx's request, and htmx swaps the page it lands on into the target. "
-    "Answer an htmx request with an `HX-Redirect` (or `HX-Location`) header to navigate the browser, or with a 4xx "
-    "the page shows."
-)
-FULL_PAGE_HINT = (
-    "htmx swaps the response into its target element, so a whole page ends up nested in this one. Render a fragment "
-    "when the `HX-Request` header is set, or let the link load the page (`hx-boost`)."
-)
-
-
-def issues(trace: Trace) -> list[Issue]:
-    """A redirect, or a whole HTML page, answering a request htmx swaps into the page."""
-    attrs = trace.attrs
-    if not attrs.get("htmx.request"):
-        return []
-    method = str(attrs.get("http.method") or "GET")
-    route = str(attrs.get("http.route") or attrs.get("http.path") or "")
-    view = attrs.get("code.view")
-    found: list[tuple[str, str, str]] = []
-    location = attrs.get("htmx.redirected_to")
-    if isinstance(location, str):
-        status = attrs.get("http.status_code")
-        found.append(("redirect", f"htmx request redirected · {status} to {location}", REDIRECT_HINT))
-    if attrs.get("htmx.full_page"):
-        found.append(("full-page", f"Whole page sent to htmx · {method} {route}", FULL_PAGE_HINT))
-    return [
-        Issue(
-            fingerprint=analysis.issue_key("htmx", what, method, route),
-            fingerprint_version=analysis.FINGERPRINT_VERSION,
-            kind="htmx",
-            title=title,
-            culprit=view if isinstance(view, str) else None,
-            hint=hint,
-            count=1,
-            span_ids=[],
-        )
-        for what, title, hint in found
-    ]
-
-
-analysis.register_check(issues)

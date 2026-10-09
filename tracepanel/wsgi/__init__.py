@@ -9,10 +9,13 @@ Tracepanel-Id only. The console is served under `/__tracepanel__/`. Settings are
 Django's TRACEPANEL dict); TRACEPANEL_* variables override them.
 """
 
+import http
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
+from urllib.parse import parse_qsl
 
 from tracepanel import _setup
+from tracepanel.console import app as console
 from tracepanel.console import widget
 from tracepanel.core import conf, errors
 from tracepanel.core.context import current_trace, start_trace
@@ -70,9 +73,7 @@ class TracepanelMiddleware:
         config = conf.get_config()
         path = str(environ.get("PATH_INFO", "/"))
         if path.startswith(config.prefix):
-            from tracepanel.console import server  # noqa: PLC0415
-
-            return server.wsgi({**environ, "PATH_INFO": path.removeprefix(config.prefix)}, start_response)
+            return _console(environ, path.removeprefix(config.prefix), start_response)
         if not config.enabled or conf.matches(path, config.ignore_paths) or current_trace() is not None:
             # Already traced by an app this one is mounted in: its framework module adds to that trace.
             return self.app(environ, start_response)
@@ -152,7 +153,7 @@ def _api(environ: dict[str, Any], config: conf.Config) -> str:
 def _decorate(environ: dict[str, Any], response: _Response, trace: Trace, config: conf.Config, body: bytes) -> bytes:
     method = str(environ.get("REQUEST_METHOD", "GET"))
     # The trace ends after the response is made: its time so far, its issues now.
-    timing = widget.Timing.live(trace, config)
+    timing = widget.Timing.live(trace)
     page = widget.Page(method, response.code, host(environ), _api(environ, config), timing)
     decorated = widget.decorate(trace, page, response.headers, body, config)
     return body if decorated is None else decorated
@@ -165,3 +166,16 @@ def install(app: WSGIApp, **settings: object) -> WSGIApp:
         return app
     _setup.started("WSGI app")
     return TracepanelMiddleware(app)
+
+
+def _console(environ: dict[str, Any], path: str, start_response: StartResponse) -> Iterable[bytes]:
+    """The console under the prefix (the agent's, forwarded; EXPLAIN needs a framework, so not here)."""
+    request = console.Request(
+        method=str(environ.get("REQUEST_METHOD", "GET")),
+        path=path.lstrip("/"),
+        query=dict(parse_qsl(str(environ.get("QUERY_STRING", "")))),
+    )
+    response = console.dispatch(request)
+    status = f"{response.status} {http.HTTPStatus(response.status).phrase}"
+    start_response(status, [("Content-Type", response.content_type), *response.headers.items()])
+    return [response.body]

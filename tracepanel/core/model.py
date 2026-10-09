@@ -1,4 +1,4 @@
-"""Event model matching schema/trace.schema.json."""
+"""The trace model: what tracepanel records and sends the agent (the agent's schema/trace.schema.json)."""
 
 from dataclasses import dataclass, field
 

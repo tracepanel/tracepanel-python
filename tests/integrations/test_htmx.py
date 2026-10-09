@@ -1,6 +1,7 @@
 import pytest
+from dirty_equals import IsStr
 
-from tracepanel.core import analysis
+from tests.agentstore import issues
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Attrs
 from tracepanel.integrations import htmx
@@ -80,15 +81,8 @@ def test_redirect_and_full_page_are_issues() -> None:
     with start_trace("http", "GET /p/", {"htmx.request": True, "http.method": "GET", "http.route": "/p/"}) as trace:
         trace.attrs.update({"http.status_code": 302, "htmx.redirected_to": "/login/", "htmx.full_page": True})
 
-    issues = [(issue.kind, issue.title, issue.hint) for issue in analysis.analyze(trace)]
-
-    assert issues == [
-        ("htmx", "htmx request redirected · 302 to /login/", htmx.REDIRECT_HINT),
-        ("htmx", "Whole page sent to htmx · GET /p/", htmx.FULL_PAGE_HINT),
+    # What this module records, the agent turns into issues.
+    assert [(issue.kind, issue.title, issue.hint) for issue in issues(trace)] == [
+        ("htmx", "htmx request redirected · 302 to /login/", IsStr(regex=".*HX-Redirect.*")),
+        ("htmx", "Whole page sent to htmx · GET /p/", IsStr(regex=".*fragment.*")),
     ]
-
-
-def test_registered_once() -> None:
-    analysis.register_check(htmx.issues)
-
-    assert analysis.CHECKS.count(htmx.issues) == 1

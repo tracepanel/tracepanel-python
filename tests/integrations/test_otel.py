@@ -8,7 +8,7 @@ otel_trace = pytest.importorskip("opentelemetry.trace")
 from opentelemetry.sdk.trace import TracerProvider  # noqa: E402 (optional test group)
 from opentelemetry.trace import SpanKind, Status, StatusCode  # noqa: E402
 
-from tracepanel.core import services  # noqa: E402
+from tests.agentstore import AgentStore  # noqa: E402
 from tracepanel.core.context import start_span, start_trace  # noqa: E402
 from tracepanel.core.model import Span, Trace  # noqa: E402
 from tracepanel.integrations import otel  # noqa: E402
@@ -100,7 +100,7 @@ def test_a_provider_set_before_install_is_joined_too() -> None:
     assert provider._active_span_processor._span_processors == (otel.PROCESSOR,)  # noqa: SLF001
 
 
-def test_services_they_call_are_on_the_map(tracer: otel_trace.Tracer) -> None:
+def test_services_they_call_are_on_the_map(tracer: otel_trace.Tracer, store: AgentStore) -> None:
     with start_trace("http", "GET /orders/") as trace:
         with tracer.start_as_current_span("GET", kind=SpanKind.CLIENT) as call:
             call.set_attributes(
@@ -109,7 +109,11 @@ def test_services_they_call_are_on_the_map(tracer: otel_trace.Tracer) -> None:
         with tracer.start_as_current_span("HGET", kind=SpanKind.CLIENT) as command:
             command.set_attributes({"db.system": "redis", "server.address": "cache.local", "server.port": 6379})
 
-    assert [(peer.kind, peer.system, peer.address, peer.port) for peer, _ in services.dependencies(trace)] == [
-        ("http", "https", "api.example.com", None),
+    store.write([trace])
+
+    assert [
+        (node["kind"], node["system"], node["address"], node["port"]) for node in store.list_services()["services"]
+    ] == [
         ("database", "redis", "cache.local", 6379),
+        ("http", "https", "api.example.com", None),
     ]

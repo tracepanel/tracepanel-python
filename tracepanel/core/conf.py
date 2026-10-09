@@ -34,16 +34,16 @@ class Config:
     widget: bool = True
     # URL prefix for the UI, widget.js and the JSON API.
     prefix: str = "/__tracepanel__/"
-    # Directory for the local store, relative to `root`.
+    # The project's store directory (the agent's), relative to `root`.
     dir: str = ".tracepanel"
-    # Where traces go: "auto" sends them to `tracepanel agent` when it runs for this store (else the process writes
-    # the store itself), "off" always writes the store, or the agent's address (`unix:/path`).
+    # Where traces go: "auto" to the project's agent (started on demand), the address of one elsewhere
+    # (`tcp:host.docker.internal:7701`, its console at `console_url`), or "off": traces aren't kept.
     agent: str = "auto"
-    # Where `tracepanel console` serves the console: the terminal line after each task or command links to it.
+    # The console of an agent named in `agent` (elsewhere), and where terminal lines link without an agent of ours.
     console_url: str = "http://127.0.0.1:8765/"
     # A line in the terminal after each task run and management command, with a link to its trace.
     terminal_summary: bool = True
-    # Traces kept in the local store; older ones are deleted.
+    # Traces the agent keeps; older ones are deleted.
     max_traces: int = 2000
     # Similar queries with different parameters reported as N+1.
     n_plus_one_threshold: int = 3
@@ -53,13 +53,13 @@ class Config:
     long_transaction_ms: int = 500
     # Keep repr() of local variables in project frames of errors (development only, masked).
     capture_locals: bool = True
-    # Keep the text and HTML of sent emails (development only; never forwarded to the cloud).
+    # Keep the text and HTML of sent emails (development only; they never leave this machine).
     capture_mail_body: bool = True
-    # Keep SQL parameter values so the console can run EXPLAIN (development only; never forwarded to the cloud).
+    # Keep SQL parameter values so the console can run EXPLAIN (development only; they never leave this machine).
     capture_sql_params: bool = True
     # Let the widget log in as another user (development only, from this machine).
     user_switch: bool = True
-    # Keep repr() of Celery task arguments and results (development only, masked; never forwarded to the cloud).
+    # Keep repr() of Celery task arguments and results (development only, masked; they never leave this machine).
     capture_task_args: bool = True
     # Integrations, each on when its library is installed; `false` leaves the library unpatched. Read at startup.
     celery_enabled: bool = True

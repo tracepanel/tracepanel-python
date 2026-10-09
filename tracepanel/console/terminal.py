@@ -1,10 +1,10 @@
 """Lines in the terminal: one as a server starts, one after each task run and management command.
 
     tracepanel ▸ on (DEBUG) · Django · logging, SQLAlchemy, Celery, DRF → console at /__tracepanel__/
-    tracepanel ▸ task blog.tasks.send_digest · success · 230 ms · 14 queries · n+1 → http://127.0.0.1:8765/#/t/01M4…
+    tracepanel ▸ task blog.tasks.send_digest · success · 230 ms · 14 queries → http://127.0.0.1:52811/#/t/01M4…
 
-The first says that tracepanel is on, why, and what it traces; the others link to the trace in the console
-(`tracepanel console`, or `console_url`), where there is no page for the widget. Turned off with `terminal_summary`.
+The first says that tracepanel is on, why, and what it traces; the others link to the trace (and its issues, which
+the agent finds) in the agent's console, where there is no page for the widget. Turned off with `terminal_summary`.
 """
 
 import os
@@ -28,15 +28,12 @@ def _duration(us: int) -> str:
 
 def line(trace: Trace, console_url: str) -> str:
     sql = sum(1 for span in trace.spans if span.kind == "sql")
-    # Found by the agent after this line is out: found here too, for the line.
-    issues = trace.issues or transport.analysis(trace)
     state = trace.attrs.get("task.state")
     parts = [
         f"{trace.kind} {trace.name.removeprefix('manage.py ')}",
         *([str(state).lower()] if state else ["failed"] if trace.status == "error" else []),
         _duration(trace.duration),
         f"{sql} {'query' if sql == 1 else 'queries'}",
-        *([", ".join(dict.fromkeys(issue.kind for issue in issues))] if issues else []),
     ]
     return f"tracepanel ▸ {' · '.join(parts)} → {console_url.rstrip('/')}/#/t/{trace.id}"
 

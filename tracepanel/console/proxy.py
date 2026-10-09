@@ -1,10 +1,12 @@
-"""The console's API from the project's agent: an app's console (Django's /__tracepanel__/) forwards to it.
+"""The console from the project's agent: an app's console (Django's /__tracepanel__/) forwards to it.
 
-Same origin and address for the UI; what only the framework can do (EXPLAIN, switching the user) stays in the app.
-Without an agent, or when it doesn't answer, the console answers from the store itself.
+The UI, widget.js and the API (tracepanel-agent's schema/openapi.yaml) come from the agent at the app's own address:
+the same origin for the widget's calls and the user's cookies. What only the framework can do stays in the app.
 """
 
+import email.message
 import http
+import json
 import time
 import urllib.error
 import urllib.request
@@ -18,20 +20,22 @@ TIMEOUT_S = 10.0
 # The widget asks for a trace as soon as its response arrives: the agent may not have written it yet.
 TRACE_WAIT_S = 1.0
 TRACE_POLL_S = 0.05
+# The agent's headers the browser needs: built assets are cached for good, the page and widget.js never.
+PASSED = ("Cache-Control",)
 
 
 def forward(request: Request, path: str) -> Response | None:
-    """The agent's answer to `api/<path>`, or None without an agent that answers."""
+    """The agent's answer to `<path>` under the console, or None without an agent that answers."""
     config = conf.get_config()
     if not agent.ensure_started(config) or (base := agent.console_url(config)) is None:
         return None
-    url = f"{base}api/{path}" + (f"?{urlencode(dict(request.query))}" if request.query else "")
+    url = f"{base}{path}" + (f"?{urlencode(dict(request.query))}" if request.query else "")
     response = _fetch(url, request.method)
     if (
         response is not None
         and response.status == http.HTTPStatus.NOT_FOUND
         and request.method == "GET"
-        and path.startswith("traces/")
+        and path.startswith("api/traces/")
     ):
         # This process's own traces may still be in its queue, then in the agent's: send them, wait a little.
         transport.get_writer().flush(timeout=TRACE_WAIT_S)
@@ -42,12 +46,27 @@ def forward(request: Request, path: str) -> Response | None:
     return response
 
 
+def trace(trace_id: str) -> dict[str, object] | None:
+    """A stored trace as the API gives it (EXPLAIN reads its statement), or None."""
+    response = forward(Request(method="GET", path=f"api/traces/{trace_id}"), f"api/traces/{trace_id}")
+    if response is None or response.status != http.HTTPStatus.OK:
+        return None
+    document = json.loads(response.body)
+    return document if isinstance(document, dict) else None
+
+
 def _fetch(url: str, method: str) -> Response | None:
     try:
         with urllib.request.urlopen(urllib.request.Request(url, method=method), timeout=TIMEOUT_S) as answer:  # noqa: S310 (the agent's local address)
-            return Response(status=answer.status, content_type=answer.headers.get_content_type(), body=answer.read())
+            return _response(answer.status, answer.headers, answer.read())
     except urllib.error.HTTPError as error:
-        return Response(status=error.code, content_type=error.headers.get_content_type(), body=error.read())
+        return _response(error.code, error.headers, error.read())
     except OSError:
-        # A stale address file, or the agent stopping: the console answers itself.
+        # A stale address file, or the agent stopping.
         return None
+
+
+def _response(status: int, headers: email.message.Message, body: bytes) -> Response:
+    passed = {name: value for name in PASSED if (value := headers.get(name)) is not None}
+    content_type = headers.get("Content-Type") or "application/octet-stream"
+    return Response(status=status, content_type=content_type, body=body, headers=passed)

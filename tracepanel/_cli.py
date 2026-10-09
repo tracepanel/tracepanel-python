@@ -1,4 +1,4 @@
-"""CLI: tracepanel dev | run | console | config | clear | agent | version."""
+"""CLI: tracepanel dev | run | config | clear | agent | version."""
 
 import argparse
 import os
@@ -10,7 +10,6 @@ USAGE = """usage: tracepanel <command>
 
   dev [--port 8765]                     the agent in the foreground: receives traces, serves the console
   run [--set name=value]... <command>   run a command with tracepanel on (uvicorn, celery, manage.py, ...)
-  console [--port 8765]                 the console on its own, from this project's store
   config                                the settings in effect, and where each one comes from
   clear [--yes]                         delete every stored trace, log, query, email and issue
   agent                                 the tracepanel agent
@@ -22,9 +21,6 @@ def main() -> None:
     command = args[0] if args else None
     if command in ("version", "--version"):
         print(f"tracepanel {__version__}")
-        return
-    if command == "console":
-        console(args[1:])
         return
     if command == "run":
         run(args[1:])
@@ -67,21 +63,6 @@ def dev(argv: list[str]) -> None:
     run_agent(["--serve", f"{options.host}:{options.port}"])
 
 
-def console(argv: list[str]) -> None:
-    parser = argparse.ArgumentParser(
-        prog="tracepanel console", description="Serve the tracepanel console from this project's store, without Django."
-    )
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--dir", help="the store directory (default: .tracepanel in the current directory)")
-    options = parser.parse_args(argv)
-    if options.dir:
-        os.environ["TRACEPANEL_DIR"] = options.dir
-    from tracepanel.console import server  # noqa: PLC0415 (only this command needs it)
-
-    server.serve(options.host, options.port)
-
-
 def clear(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(
         prog="tracepanel clear", description="Delete every stored trace, log, query, email and issue of this project."
@@ -91,14 +72,23 @@ def clear(argv: list[str]) -> None:
     options = parser.parse_args(argv)
     if options.dir:
         os.environ["TRACEPANEL_DIR"] = options.dir
-    from tracepanel.storage.store import get_store  # noqa: PLC0415 (only this command needs it)
+    import json  # noqa: PLC0415 (only this command needs it)
+    import urllib.request  # noqa: PLC0415
 
-    store = get_store()
+    from tracepanel.core import conf  # noqa: PLC0415
+    from tracepanel.storage import agent  # noqa: PLC0415
+
+    config = conf.get_config()
     if not options.yes:
-        answer = input(f"Delete everything in {store.path}? This can't be undone. [y/N] ")
+        answer = input(f"Delete everything in {agent.store_dir(config)}? This can't be undone. [y/N] ")
         if answer.strip().lower() not in {"y", "yes"}:
             sys.exit("tracepanel clear: nothing deleted")
-    deleted = store.clear()
+    # The agent holds the store: it deletes, as the console's button does.
+    if not agent.ensure_started(config) or (base := agent.console_url(config)) is None:
+        sys.exit(f"tracepanel clear: {agent.unavailable(config)}")
+    request = urllib.request.Request(f"{base}api/store", method="DELETE")  # noqa: S310 (the agent's local address)
+    with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310 (the agent's local address)
+        deleted = int(json.loads(response.read())["deleted"])
     sys.stdout.write(f"tracepanel: deleted {deleted} {'trace' if deleted == 1 else 'traces'}\n")
 
 

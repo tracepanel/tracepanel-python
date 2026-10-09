@@ -248,7 +248,7 @@ class _Responder:
         _name(trace, self.scope, str(self.scope.get("method", "GET")))
         method = str(self.scope.get("method", "GET"))
         # complete() analyses the trace once it ends; the badge needs the issue count now.
-        timing = widget.Timing.live(trace, config)
+        timing = widget.Timing.live(trace)
         page = widget.Page(method, int(start["status"]), self.origin, self.api, timing)
         headers = [(key.decode("latin-1"), value.decode("latin-1")) for key, value in start.get("headers", [])]
         decorated = widget.decorate(trace, page, headers, body, config)

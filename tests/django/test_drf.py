@@ -12,6 +12,7 @@ from django.core.cache import cache
 from django.test import Client
 from jsonschema import Draft202012Validator
 
+from tests.agentstore import issues
 from tracepanel.core.model import Span, Trace
 
 
@@ -74,7 +75,7 @@ def test_queries_while_serializing_are_the_n_plus_one(client: Client, traces: li
     client.get("/drf/users/")
     (trace,) = traces
     serialize = span(trace, "drf serialize UserSerializer(many=True)")
-    (issue,) = trace.issues
+    (issue,) = issues(trace)
 
     # The users themselves are read there too: the queryset is lazy until the serializer iterates it.
     assert [s.name for s in trace.spans if s.kind == "sql" and s.parent_id == serialize.id] == [

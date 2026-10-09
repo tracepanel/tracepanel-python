@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, text  # noqa: E402 (optional test group)
 from sqlalchemy.orm import Session  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
+from tests.agentstore import issues  # noqa: E402
 from tracepanel.core.context import start_trace  # noqa: E402
 from tracepanel.core.model import Trace  # noqa: E402
 from tracepanel.integrations import sqlalchemy as integration  # noqa: E402
@@ -107,6 +108,6 @@ def test_long_transaction_gets_a_sqlalchemy_hint(traces: list[Trace]) -> None:
             time.sleep(0.55)
 
     trace = traced(work)
-    (issue,) = [issue for issue in trace.issues if issue.kind == "long-transaction"]
+    (issue,) = [issue for issue in issues(trace) if issue.kind == "long-transaction"]
 
     assert issue.hint == IsStr(regex=r".*commit first, or do it before the `with session.begin\(\)`.*")

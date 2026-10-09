@@ -2,7 +2,7 @@
 
 **See what your Django app is really doing.**
 
-`pip install tracepanel` is all you need in development: tracepanel collects requests, SQL, cache calls, logs and errors, finds N+1 queries, duplicates and slow SQL in-process, stores traces in `.tracepanel/` and shows them in a widget on your pages and at `/__tracepanel__/`.
+`pip install tracepanel` is all you need in development: tracepanel collects requests, SQL, cache calls, logs and errors, and the tracepanel agent it installs and starts finds N+1 queries, duplicates and slow SQL, keeps the traces in `.tracepanel/` and shows them in a widget on your pages and at `/__tracepanel__/`.
 
 ```python
 # settings.py
@@ -51,21 +51,19 @@ Every outgoing call records what it talks to, with OpenTelemetry attribute names
 | Path | Contents |
 | --- | --- |
 | `tracepanel/` | The package |
-| `schema/` | Event contract in JSON Schema: the source of truth for tracepanel-ui |
-| `tests/` | pytest suite; every trace is validated against `schema/` |
-| `scripts/ui.py` | Installs the built UI from tracepanel-ui into `tracepanel/static/` |
-| `scripts/check_dist.py` | Fails a build whose wheel or sdist lacks the UI |
+| `tests/` | pytest suite; every trace is validated against the agent's trace schema, and the agent is checked through the console's API |
+| `scripts/check_dist.py` | Fails a build whose wheel or sdist holds the agent's files (the UI, the store) |
 
-Package layout. Django is the framework tracepanel is built for; ASGI apps (`tracepanel.asgi`: Starlette, FastAPI, any other) and WSGI apps (`tracepanel.wsgi`: Flask, Falcon, any other) are covered too. Only these packages know their framework: the core, the store and the console are framework-neutral (import-linter checks this in `poe lint`). Imports use full paths.
+Package layout. Django is the framework tracepanel is built for; ASGI apps (`tracepanel.asgi`: Starlette, FastAPI, any other) and WSGI apps (`tracepanel.wsgi`: Flask, Falcon, any other) are covered too. Only these packages know their framework: the core, the transport and the console are framework-neutral (import-linter checks this in `poe lint`). Imports use full paths.
 
-Without a web server to host the console (a Celery worker, management commands), `tracepanel console` serves it from the project's store on http://127.0.0.1:8765/, and each task run and command prints one line with a link to its trace.
+tracepanel records and sends; the tracepanel agent (a dependency, started on the first trace and gone after 30 minutes unused) keeps the traces, finds their issues and serves the console, which `/__tracepanel__/` forwards to. Without a web server to host it (a Celery worker, management commands), each task run and command prints one line with a link to its trace in the agent's console; `tracepanel dev` runs the agent in the foreground on http://127.0.0.1:8765/.
 
 | Module | Contents |
 | --- | --- |
 | `tracepanel/__init__.py`, `api.py` | Public API: `span`, `traced`, `trace`, `set_attr`, `event` |
-| `tracepanel/core/` | Trace model, context, configuration, frames, errors, analysis, SQL spans and EXPLAIN plans, service attributes; `registry` (every integration: its library, its setting, where its code is) and `patching` (every monkeypatch: once, remembered, undoable) |
-| `tracepanel/storage/` | SQLite store, search language, background writer |
-| `tracepanel/console/` | Console app (static files and JSON API, as a plain Request → Response), widget markup, `tracepanel console` (the console on its own, from the store), the terminal line after tasks and commands |
+| `tracepanel/core/` | Trace model, context, configuration, frames, errors, SQL spans (and their fingerprints) and EXPLAIN plans, service attributes; `registry` (every integration: its library, its setting, where its code is) and `patching` (every monkeypatch: once, remembered, undoable) |
+| `tracepanel/storage/` | The background writer and the agent: finding it, starting it, sending to it |
+| `tracepanel/console/` | The console under the prefix (forwarded to the agent, as a plain Request → Response), widget markup, the terminal line after tasks and commands |
 | `tracepanel/django/` | The Django integration: `INSTALLED_APPS` app, middleware, collectors (ORM via execute wrappers, cache, mail, signals, views and templates, transactions, commands, auth), console adapter, user switching, EXPLAIN runner, Channels, Django Tasks, Django Ninja, Django REST framework |
 | `tracepanel/asgi/` | Any ASGI app: `tracepanel.asgi.install(app)` and the middleware (requests, the widget, the console under the prefix); Starlette and FastAPI add the route's template and endpoints as view spans, mounts included |
 | `tracepanel/fastapi/` | `tracepanel.fastapi.install(app)`: tracepanel.asgi under the name FastAPI users look for |
@@ -83,21 +81,20 @@ Related private repositories: tracepanel-ui (widget and local UI), tracepanel-ex
 ## Development
 
 ```bash
-uv sync
-uv run poe ui      # built UI from $TRACEPANEL_UI_DIST or a sibling ../tracepanel-ui checkout
+uv sync --all-groups   # builds the agent from a ../tracepanel-agent checkout until it is on the package index
 uv run poe test    # pytest on SQLite; TRACEPANEL_TEST_DB=postgres for Postgres (PG* variables)
 uv run poe fmt     # ruff check --fix + ruff format
 uv run poe lint    # ruff (ALL) + ruff format --check + pyrefly (strict)
 ```
 
-Builds use `uv_build`, which has no build hooks: `uv run poe build` installs the UI, runs `uv build` and checks that the wheel and sdist contain it.
+`uv run poe build` runs `uv build` and checks that the wheel and sdist hold the SDK only.
 
 ## Contract with tracepanel-ui
 
 The widget and the UI depend on:
 
-- response headers `Tracepanel-Id`, `Tracepanel-Url`, `Server-Timing` (`db`, `app`, `total`, `tracepanel-issues`);
+- response headers `Tracepanel-Id`, `Tracepanel-Url`, `Server-Timing` (`db`, `app`, `total`, `tracepanel-issues;desc="pending"`: the agent finds them, the widget asks the console);
 - `data-tracepanel-*` attributes on the injected `<script>`: `api`, `id`, `method`, `status`, `total`, `db`, `queries`, `issues`;
-- the JSON API under `/__tracepanel__/api/`: `traces` (rows with `method`, `path`, `issue_kinds`), `traces/{id}`, `issues`, returning documents shaped by `schema/`.
+- the console under `/__tracepanel__/`: the agent's, forwarded, but for `api/explain` and `api/users*`, which the app serves.
 
 Changing any of these needs a matching change in tracepanel-ui.

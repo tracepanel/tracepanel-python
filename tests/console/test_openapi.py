@@ -1,9 +1,8 @@
-"""Every API response matches schema/openapi.yaml, the contract the console, the agent and the cloud share."""
+"""Every API response matches the console's contract (tracepanel-agent's schema/openapi.yaml), through the app."""
 
 import importlib.util
 import json
 from collections.abc import Callable
-from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -15,14 +14,13 @@ from jsonschema import Draft202012Validator
 from referencing import Registry
 from referencing.jsonschema import DRAFT202012
 
+from tests.agentstore import AGENT_SCHEMAS, AgentStore
 from tracepanel.console import app
-from tracepanel.storage.store import Store
-from tracepanel.storage.transport import StoreWriter, set_writer
+from tracepanel.storage.transport import set_writer
 
-SCHEMAS = Path(__file__).resolve().parents[2] / "schema"
 BASE = "https://tracepanel.dev/schema/0.1/"
-OPENAPI = yaml.safe_load((SCHEMAS / "openapi.yaml").read_text())
-TRACE = json.loads((SCHEMAS / "trace.schema.json").read_text())
+OPENAPI = yaml.safe_load((AGENT_SCHEMAS / "openapi.yaml").read_text())
+TRACE = json.loads((AGENT_SCHEMAS / "trace.schema.json").read_text())
 REGISTRY = Registry().with_resources(
     [
         (f"{BASE}openapi.yaml", DRAFT202012.create_resource(OPENAPI)),
@@ -44,10 +42,10 @@ def response_schema(template: str, status: int, method: str = "get") -> Draft202
 
 
 @pytest.fixture
-def data(client: Client, users: list[User], store: Store) -> Data:
+def data(client: Client, users: list[User], store: AgentStore) -> Data:
     """Requests of every kind in the store, and ids to ask the API about."""
     store.max_traces = 100
-    writer = StoreWriter(store)
+    writer = store.writer()
     set_writer(writer)
     client.raise_request_exception = False
     try:
@@ -136,15 +134,9 @@ def test_responses_match_the_contract(
     response_schema(template, status).validate(response.json())
 
 
-def test_every_route_is_in_the_contract() -> None:
-    assert {path.lstrip("/") for path in OPENAPI["paths"]} == {
-        *app.RESOURCES,
-        *app.WRITES,
-        *app.DELETES,
-        *app.EXTENSIONS,
-        "traces/{id}",
-        "traces/{id}/related",
-    }
+def test_what_the_app_serves_itself_is_in_the_contract() -> None:
+    # EXPLAIN and switching users; the agent serves the rest.
+    assert {*app.WRITES, *app.EXTENSIONS} <= {path.lstrip("/") for path in OPENAPI["paths"]}
 
 
 def test_every_documented_response_is_exercised() -> None:
@@ -160,8 +152,9 @@ def test_every_documented_response_is_exercised() -> None:
 
 
 @pytest.mark.django_db
-def test_clearing_the_store(client: Client, data: Data, store: Store) -> None:
-    assert client.get("/__tracepanel__/api/store").status_code == 404
+def test_clearing_the_store(client: Client, data: Data, store: AgentStore) -> None:
+    # Only DELETE: another site can't send one without a CORS preflight, and the console never allows one.
+    assert client.get("/__tracepanel__/api/store").status_code == 405
     assert client.post("/__tracepanel__/api/store").status_code == 405
     assert store.counts()["issues"] == IsPositiveInt
 

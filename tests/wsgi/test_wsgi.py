@@ -6,6 +6,7 @@ import pytest
 from dirty_equals import IsStr
 
 import tracepanel.wsgi
+from tests.agentstore import AgentStore, issues
 from tracepanel.core import conf
 from tracepanel.core.model import Trace
 
@@ -72,11 +73,13 @@ def test_any_wsgi_app(wrapped: tracepanel.wsgi.WSGIApp, traces: list[Trace]) -> 
         "Content-Length": "2",
         "Tracepanel-Id": trace.id,
         "Tracepanel-Url": f"http://127.0.0.1/__tracepanel__/#/t/{trace.id}",
-        "Server-Timing": IsStr(regex=r'db;dur=0\.0;desc="0 queries", app;dur=[\d.]+, total;dur=[\d.]+'),
+        "Server-Timing": IsStr(
+            regex=r'db;dur=0\.0;desc="0 queries", app;dur=[\d.]+, total;dur=[\d.]+, tracepanel-issues;desc="pending"'
+        ),
     }
 
 
-def test_widget_in_html_pages(wrapped: tracepanel.wsgi.WSGIApp, traces: list[Trace]) -> None:
+def test_widget_in_html_pages(wrapped: tracepanel.wsgi.WSGIApp, traces: list[Trace], store: AgentStore) -> None:
     _, headers, body = call(wrapped, "/page")
     page = body.decode()
 
@@ -112,7 +115,7 @@ def test_errors_through_to_the_server(wrapped: tracepanel.wsgi.WSGIApp, traces: 
     )
 
 
-def test_console_is_served(wrapped: tracepanel.wsgi.WSGIApp) -> None:
+def test_console_is_served(wrapped: tracepanel.wsgi.WSGIApp, store: AgentStore) -> None:
     status, headers, _ = call(wrapped, "/__tracepanel__/api/counts")
 
     assert (status, headers["Content-Type"]) == ("200 OK", IsStr(regex=r"application/json.*"))
@@ -135,4 +138,4 @@ def test_htmx_gets_a_whole_page(wrapped: tracepanel.wsgi.WSGIApp, traces: list[T
         "htmx.target": "rows",
         "htmx.full_page": True,
     }
-    assert [issue.title for issue in trace.issues] == ["Whole page sent to htmx · GET /page"]
+    assert [issue.title for issue in issues(trace)] == ["Whole page sent to htmx · GET /page"]

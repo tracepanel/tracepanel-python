@@ -9,6 +9,7 @@ from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
 import tracepanel
+from tests.agentstore import issues
 from tracepanel.core.model import Span, Trace
 
 
@@ -101,7 +102,7 @@ def test_failing_trace_is_stored_with_its_error(traces: list[Trace]) -> None:
         "error",
         [("builtins.ConnectionError", False)],
     )
-    assert [issue.kind for issue in trace.issues] == ["error"]
+    assert [issue.kind for issue in issues(trace)] == ["error"]
 
 
 @pytest.mark.django_db

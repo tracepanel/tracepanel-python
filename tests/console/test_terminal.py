@@ -8,7 +8,7 @@ from dirty_equals import IsStr
 from tracepanel.console import terminal
 from tracepanel.core import conf
 from tracepanel.core.ids import new_id
-from tracepanel.core.model import Attrs, Issue, Span, Trace
+from tracepanel.core.model import Attrs, Span, Trace
 
 
 def task(state: str | None = None) -> Trace:
@@ -20,21 +20,10 @@ def task(state: str | None = None) -> Trace:
 
 def test_line_links_to_the_console() -> None:
     trace = task("SUCCESS")
-    trace.issues = [
-        Issue(
-            fingerprint="x",
-            fingerprint_version=1,
-            kind="n+1",
-            title="N+1",
-            culprit=None,
-            hint=None,
-            count=3,
-            span_ids=[],
-        )
-    ]
 
+    # Its issues are the agent's, found once it is stored: the link leads to them.
     assert terminal.line(trace, "http://127.0.0.1:8765/") == (
-        f"tracepanel ▸ task blog.tasks.digest · success · 230 ms · 14 queries · n+1 → http://127.0.0.1:8765/#/t/{trace.id}"
+        f"tracepanel ▸ task blog.tasks.digest · success · 230 ms · 14 queries → http://127.0.0.1:8765/#/t/{trace.id}"
     )
 
 

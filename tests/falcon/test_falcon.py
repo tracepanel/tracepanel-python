@@ -9,6 +9,7 @@ import falcon
 import falcon.testing
 
 import tracepanel.falcon
+from tests.agentstore import AgentStore
 from tracepanel.core import conf
 from tracepanel.core.model import Trace
 
@@ -94,13 +95,13 @@ def test_http_errors_are_not_errors(client: falcon.testing.TestClient, traces: l
     assert (result.status_code, trace.name, trace.status, trace.errors) == (404, "GET /nowhere", "ok", [])
 
 
-def test_widget_in_html_pages(client: falcon.testing.TestClient, traces: list[Trace]) -> None:
+def test_widget_in_html_pages(client: falcon.testing.TestClient, traces: list[Trace], store: AgentStore) -> None:
     body = client.simulate_get("/page").text
 
     assert f'data-tracepanel-id="{traces[0].id}"' in body
 
 
-def test_console_is_served(client: falcon.testing.TestClient) -> None:
+def test_console_is_served(client: falcon.testing.TestClient, store: AgentStore) -> None:
     assert client.simulate_get("/__tracepanel__/api/counts").status_code == 200
 
 

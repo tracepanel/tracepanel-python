@@ -1,6 +1,6 @@
 """Bounded buffer and background batch writing.
 
-Traces go to tracepanel-agent when one runs for the project (see tracepanel.storage.agent), else to the local store.
+Traces go to the project's tracepanel-agent (see tracepanel.storage.agent), which keeps them and finds their issues.
 """
 
 import atexit
@@ -12,11 +12,8 @@ import time
 from collections.abc import Callable
 from typing import Protocol
 
-from tracepanel._compat import override
 from tracepanel.core import conf, errors, runtime
-from tracepanel.core.analysis import analyze
-from tracepanel.core.model import Issue, Trace
-from tracepanel.storage.store import Store, get_store
+from tracepanel.core.model import Trace
 
 QUEUE_SIZE = 1000
 BATCH_SIZE = 50
@@ -34,9 +31,6 @@ class BatchWriter:
 
     Never blocks the request: a full queue drops the trace and counts it.
     """
-
-    # Where traces go their issues are found (the agent): the app's processes don't analyze them.
-    analyzes_later = False
 
     def __init__(self) -> None:
         self.dropped = 0
@@ -89,18 +83,6 @@ class BatchWriter:
         done.wait(timeout)
 
 
-class StoreWriter(BatchWriter):
-    """Writes the project's local store itself."""
-
-    def __init__(self, store: Store) -> None:
-        self.store = store
-        super().__init__()
-
-    @override
-    def write(self, batch: list[Trace]) -> None:
-        self.store.write(batch)
-
-
 _writer: Writer | None = None
 
 
@@ -109,9 +91,7 @@ def get_writer() -> Writer:
     if _writer is None:
         from tracepanel.storage import agent  # noqa: PLC0415 (agent imports this module)
 
-        config = conf.get_config()
-        # With an agent (`tracepanel agent`) the traces go to it; without one, as before, to the local store.
-        _writer = StoreWriter(get_store()) if config.agent == "off" else agent.AgentWriter(config)
+        _writer = agent.AgentWriter(conf.get_config())
     return _writer
 
 
@@ -136,24 +116,8 @@ def on_complete(listener: Callable[[Trace], None]) -> None:
         _listeners.append(listener)
 
 
-def analysis(trace: Trace, config: conf.Config | None = None) -> list[Issue]:
-    """The trace's issues, found with the configured limits."""
-    config = config or conf.get_config()
-    return analyze(
-        trace,
-        n_plus_one_threshold=config.n_plus_one_threshold,
-        slow_sql_ms=config.slow_sql_ms,
-        long_transaction_ms=config.long_transaction_ms,
-    )
-
-
-def analyzes_later(writer: object | None = None) -> bool:
-    """Issues are found after the trace is handed over (by the agent): the response can't tell them."""
-    return bool(getattr(writer or get_writer(), "analyzes_later", False))
-
-
 def complete(trace: Trace) -> Trace:
-    """Analyse a finished trace and hand it to the writer: the last step for requests, tasks, commands, `trace()`."""
+    """Hand a finished trace to the writer: the last step for requests, tasks, commands, `trace()`."""
     # Only requests use it (a 5xx behind a logged exception); drop it for every trace.
     errors.pop_logged_exception(trace.id)
     config = conf.get_config()
@@ -161,10 +125,7 @@ def complete(trace: Trace) -> Trace:
     trace.attrs.setdefault("service.role", role(trace))
     for key, value in runtime.attrs().items():
         trace.attrs.setdefault(key, value)
-    writer = get_writer()
-    if not analyzes_later(writer):
-        trace.issues = analysis(trace, config)
-    writer.submit(trace)
+    get_writer().submit(trace)
     for listener in _listeners:
         # A listener (the terminal line) must never break the traced code.
         with contextlib.suppress(Exception):

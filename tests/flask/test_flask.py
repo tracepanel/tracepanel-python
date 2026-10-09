@@ -17,9 +17,9 @@ from werkzeug.test import Client  # noqa: E402
 
 import tracepanel.flask  # noqa: E402
 import tracepanel.wsgi  # noqa: E402
+from tests.agentstore import AgentStore, issues  # noqa: E402
 from tracepanel.core import conf  # noqa: E402
 from tracepanel.core.model import Trace  # noqa: E402
-from tracepanel.storage.store import Store  # noqa: E402
 
 
 class Base(DeclarativeBase):
@@ -116,7 +116,7 @@ def test_request_is_a_trace_named_after_its_rule(client: FlaskClient, traces: li
 
     (view,) = [span for span in trace.spans if span.kind == "view"]
     sql = [span for span in trace.spans if span.kind == "sql"]
-    (issue,) = trace.issues
+    (issue,) = issues(trace)
 
     assert view.name == "tests.flask.test_flask.make_app.<locals>.roster"
     assert [span.name for span in sql] == ["SELECT player", *["SELECT team"] * 5]
@@ -125,7 +125,7 @@ def test_request_is_a_trace_named_after_its_rule(client: FlaskClient, traces: li
 
     assert response.headers["Tracepanel-Id"] == trace.id
     assert response.headers["Server-Timing"] == IsStr(
-        regex=r'db;dur=[\d.]+;desc="6 queries".*tracepanel-issues;desc="1"'
+        regex=r'db;dur=[\d.]+;desc="6 queries".*tracepanel-issues;desc="pending"'
     )
 
 
@@ -167,7 +167,7 @@ def test_unknown_url_keeps_its_path(client: FlaskClient, traces: list[Trace]) ->
     assert (trace.name, trace.attrs["http.status_code"]) == ("GET /nowhere", 404)
 
 
-def test_widget_in_html_pages(client: FlaskClient, traces: list[Trace]) -> None:
+def test_widget_in_html_pages(client: FlaskClient, traces: list[Trace], store: AgentStore) -> None:
     response = client.get("/page")
     body = response.get_data(as_text=True)
 
@@ -176,11 +176,11 @@ def test_widget_in_html_pages(client: FlaskClient, traces: list[Trace]) -> None:
     assert response.headers["Content-Length"] == str(len(response.get_data()))
 
 
-def test_console_is_served(client: FlaskClient, store: Store) -> None:
+def test_console_is_served(client: FlaskClient, store: AgentStore) -> None:
     assert client.get("/__tracepanel__/api/counts").json == IsPartialDict(sections=IsPartialDict(http=0))
 
 
-def test_explain_runs_on_the_engine(client: FlaskClient, traces: list[Trace], store: Store) -> None:
+def test_explain_runs_on_the_engine(client: FlaskClient, traces: list[Trace], store: AgentStore) -> None:
     client.get("/players/1")
     store.write(traces)
     (trace,) = traces

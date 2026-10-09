@@ -16,9 +16,9 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 from strawberry.fastapi import GraphQLRouter  # noqa: E402
 
 import tracepanel.fastapi  # noqa: E402
+from tests.agentstore import AgentStore, issues  # noqa: E402
 from tracepanel.core import conf  # noqa: E402
 from tracepanel.core.model import Trace  # noqa: E402
-from tracepanel.storage.store import Store  # noqa: E402
 
 
 class Base(DeclarativeBase):
@@ -123,14 +123,14 @@ def test_request_is_a_trace_named_after_its_route(client: TestClient, traces: li
     (transaction,) = [span for span in trace.spans if span.kind == "transaction"]
     assert (transaction.parent_id, transaction.attrs["db.transaction.outcome"]) == (view.id, "rollback")
     assert {span.parent_id for span in sql} == {transaction.id}
-    (issue,) = trace.issues
+    (issue,) = issues(trace)
     assert (issue.kind, issue.count) == ("n+1", 5)
     # The fix in SQLAlchemy's words, not Django's select_related().
     assert issue.hint == IsStr(regex=r".*`joinedload\(\)`.*`selectinload\(\)`.*")
 
     assert response.headers["Tracepanel-Id"] == trace.id
     assert response.headers["Server-Timing"] == IsStr(
-        regex=r'db;dur=[\d.]+;desc="6 queries".*tracepanel-issues;desc="1"'
+        regex=r'db;dur=[\d.]+;desc="6 queries".*tracepanel-issues;desc="pending"'
     )
 
 
@@ -149,7 +149,7 @@ def test_unhandled_error(client: TestClient, traces: list[Trace]) -> None:
     assert [error.type for error in trace.errors] == ["builtins.ValueError"]
 
 
-def test_widget_in_html_pages(client: TestClient, traces: list[Trace]) -> None:
+def test_widget_in_html_pages(client: TestClient, traces: list[Trace], store: AgentStore) -> None:
     body = client.get("/page").text
 
     assert body.index("<head>") < body.index('<script src="/__tracepanel__/widget.js"') < body.index("<title>")
@@ -163,14 +163,14 @@ def test_strawberry_names_the_request(client: TestClient, traces: list[Trace]) -
     assert response.json()["data"]["roster"][0] == "player0 (team0)"
     assert trace.name == "GraphQL query Roster"
     assert response.headers["Tracepanel-Name"] == "GraphQL query Roster"
-    assert [issue.kind for issue in trace.issues] == ["n+1"]
+    assert [issue.kind for issue in issues(trace)] == ["n+1"]
 
 
-def test_console_is_served(client: TestClient, store: Store) -> None:
+def test_console_is_served(client: TestClient, store: AgentStore) -> None:
     assert client.get("/__tracepanel__/api/counts").json() == IsPartialDict(sections=IsPartialDict(http=0))
 
 
-def test_explain_runs_on_the_engine(client: TestClient, traces: list[Trace], store: Store) -> None:
+def test_explain_runs_on_the_engine(client: TestClient, traces: list[Trace], store: AgentStore) -> None:
     client.get("/players/1")
     store.write(traces)
     (trace,) = traces

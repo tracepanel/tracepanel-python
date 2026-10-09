@@ -10,11 +10,11 @@ from django.test import Client
 from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
+from tests.agentstore import AgentStore, issues
 from tracepanel.core import conf
 from tracepanel.core.conf import ConfigError
 from tracepanel.core.model import Trace
 from tracepanel.django.middleware import route_template
-from tracepanel.storage.store import Store
 
 pytestmark = pytest.mark.django_db
 
@@ -25,7 +25,7 @@ def only(traces: list[Trace]) -> Trace:
 
 
 def kinds(trace: Trace) -> set[str]:
-    return {issue.kind for issue in trace.issues}
+    return {issue.kind for issue in issues(trace)}
 
 
 def test_request_trace_matches_schema(
@@ -50,14 +50,14 @@ def test_request_trace_matches_schema(
 
 def test_n_plus_one_with_hints(client: Client, traces: list[Trace], users: list[User]) -> None:
     client.get("/n-plus-one/")
-    issues = {i.title.split(" · ")[1]: i for i in only(traces).issues if i.kind == "n+1"}
-    content_type = issues["SELECT django_content_type"]
+    found = {i.title.split(" · ")[1]: i for i in issues(only(traces)) if i.kind == "n+1"}
+    content_type = found["SELECT django_content_type"]
     assert content_type.count == 12
     assert content_type.hint is not None
     assert "select_related" in content_type.hint
     assert content_type.culprit is not None
     assert content_type.culprit.startswith("tests/project/views.py:")
-    groups_hint = issues["SELECT auth_group"].hint
+    groups_hint = found["SELECT auth_group"].hint
     assert groups_hint is not None
     assert "prefetch_related" in groups_hint
 
@@ -65,7 +65,7 @@ def test_n_plus_one_with_hints(client: Client, traces: list[Trace], users: list[
 def test_fixed_queries_have_no_issues(client: Client, traces: list[Trace], users: list[User]) -> None:
     client.get("/fixed/")
     trace = only(traces)
-    assert trace.issues == []
+    assert issues(trace) == []
     # permissions + content types in one JOIN, users, groups prefetch
     assert sum(1 for s in trace.spans if s.kind == "sql") == 3
 
@@ -133,7 +133,7 @@ def test_error(client: Client, traces: list[Trace], db: None, validator: Draft20
     assert error.type == "builtins.ZeroDivisionError"
     assert error.frames[-1].in_app
     assert error.frames[-1].function == "error"
-    issue = trace.issues[0]
+    issue = issues(trace)[0]
     assert issue.kind == "error"
     assert issue.culprit is not None
     assert issue.culprit.startswith("tests/project/views.py:")
@@ -160,7 +160,7 @@ def test_untouched_user_costs_no_queries(client: Client, traces: list[Trace], us
     assert not [s for s in trace.spans if s.kind == "sql"]
 
 
-def test_tracepanel_urls_are_not_traced(client: Client, traces: list[Trace], store: Store) -> None:
+def test_tracepanel_urls_are_not_traced(client: Client, traces: list[Trace], store: AgentStore) -> None:
     client.get("/__tracepanel__/api/traces")
     assert traces == []
 
@@ -223,7 +223,7 @@ def test_view_and_template_spans_nest_sql(client: Client, traces: list[Trace], u
     assert sum(1 for s in templates if s.name == "tests/badge.html") == len(users)
     group_queries = [s for s in trace.spans if s.kind == "sql" and s.name == "SELECT auth_group"]
     assert all(by_id[str(s.parent_id)].id == page.id for s in group_queries)
-    issue = next(i for i in trace.issues if i.kind == "n+1")
+    issue = next(i for i in issues(trace) if i.kind == "n+1")
     assert issue.culprit is not None
     assert issue.culprit.startswith("tests/users.html (rendered from tests/project/views.py:")
 
@@ -275,7 +275,7 @@ def test_a_500_behind_a_logged_exception_is_its_error(client: Client, traces: li
         "error",
         [("builtins.ZeroDivisionError", False)],
     )
-    assert [issue.kind for issue in failed.issues] == ["error"]
+    assert [issue.kind for issue in issues(failed)] == ["error"]
     assert (fine.status, fine.errors) == ("ok", [])
 
 

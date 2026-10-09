@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 pytest.importorskip("channels")
@@ -11,9 +9,9 @@ from dirty_equals import IsInt, IsList, IsPartialDict
 from django.contrib.auth.models import User
 from jsonschema import Draft202012Validator
 
+from tests.agentstore import AgentStore, issues
 from tests.project import sockets
 from tracepanel.core.model import Trace
-from tracepanel.storage.store import Store
 
 APP = URLRouter(sockets.urls)
 
@@ -99,7 +97,7 @@ def test_handler_error_is_recorded(traces: list[Trace]) -> None:
     assert [(error.type, error.message) for error in failed.errors] == [
         ("builtins.ValueError", "cannot post to this room")
     ]
-    assert [issue.kind for issue in failed.issues] == ["error"]
+    assert [issue.kind for issue in issues(failed)] == ["error"]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -122,8 +120,8 @@ def test_sync_consumer(traces: list[Trace], users: list[User]) -> None:
 
 
 @pytest.mark.django_db(transaction=True)
-def test_consumers_page(traces: list[Trace], tmp_path: Path, users: list[User]) -> None:
-    store = Store(tmp_path / "traces.sqlite3")
+def test_consumers_page(traces: list[Trace], store: AgentStore, users: list[User]) -> None:
+    store.max_traces = 100
     async_to_sync(chat)({"text": "hi"}, {"text": "again"})
     store.write(traces)
 

@@ -9,10 +9,10 @@ from django.test import Client
 from jsonschema import Draft202012Validator
 
 import tracepanel
+from tests.agentstore import AgentStore, issues
 from tests.project.graphql import schema
 from tracepanel.core.model import Trace
-from tracepanel.storage.store import Store
-from tracepanel.storage.transport import StoreWriter, set_writer
+from tracepanel.storage.transport import set_writer
 
 
 def post(client: Client, query: str, operation: str | None = None) -> dict[str, object]:
@@ -59,7 +59,7 @@ def test_operation_names_the_request(
 def test_n_plus_one_in_a_resolver_suggests_a_dataloader(client: Client, traces: list[Trace], users: list[User]) -> None:
     post(client, "{ users { groups } }")
     (trace,) = traces
-    (issue,) = trace.issues
+    (issue,) = issues(trace)
 
     assert (trace.name, issue.kind, issue.culprit) == (
         "GraphQL query { users }",
@@ -77,7 +77,7 @@ def test_resolver_error_comes_back_as_200(client: Client, traces: list[Trace]) -
     assert result == IsPartialDict({"data": None, "errors": [IsPartialDict(message="the reporting service is down")]})
     assert (trace.status, trace.attrs["http.status_code"], trace.attrs["graphql.errors"]) == ("error", 200, 1)
     assert [(error.type, error.handled) for error in trace.errors] == [("builtins.RuntimeError", False)]
-    assert [issue.kind for issue in trace.issues] == ["error"]
+    assert [issue.kind for issue in issues(trace)] == ["error"]
 
 
 @pytest.mark.django_db
@@ -94,7 +94,7 @@ def test_async_resolver(traces: list[Trace], users: list[User]) -> None:
 
 
 @pytest.mark.django_db
-def test_operations_page(client: Client, traces: list[Trace], store: Store, users: list[User]) -> None:
+def test_operations_page(client: Client, traces: list[Trace], store: AgentStore, users: list[User]) -> None:
     post(client, "query Team { users { username } }")
     post(client, "query Team { users { username } }")
     post(client, "query Report { broken }")
@@ -122,7 +122,7 @@ def test_operations_page(client: Client, traces: list[Trace], store: Store, user
 
 
 @pytest.mark.django_db
-def test_operation_detail(client: Client, traces: list[Trace], store: Store, users: list[User]) -> None:
+def test_operation_detail(client: Client, traces: list[Trace], store: AgentStore, users: list[User]) -> None:
     post(client, "query Team { users { username groups } }", "Team")
     post(client, "query Team { users { username groups } }", "Team")
     store.write(traces)
@@ -167,8 +167,8 @@ def test_unnamed_operation_is_named_after_its_root_fields(client: Client, traces
 
 
 @pytest.mark.django_db
-def test_http_overview_counts_graphql_as_one_endpoint(client: Client, store: Store) -> None:
-    writer = StoreWriter(store)
+def test_http_overview_counts_graphql_as_one_endpoint(client: Client, store: AgentStore) -> None:
+    writer = store.writer()
     set_writer(writer)
     try:
         post(client, "query Team { users { username } }")

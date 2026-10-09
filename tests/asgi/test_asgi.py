@@ -13,6 +13,7 @@ from starlette.routing import Mount, Route  # noqa: E402
 from starlette.testclient import TestClient  # noqa: E402
 
 import tracepanel.asgi  # noqa: E402
+from tests.agentstore import AgentStore, issues  # noqa: E402
 from tracepanel.core import conf  # noqa: E402
 from tracepanel.core.model import Trace  # noqa: E402
 
@@ -81,7 +82,7 @@ def test_routes_inside_a_mount(client: TestClient, traces: list[Trace]) -> None:
     assert response.headers["Tracepanel-Url"] == f"http://testserver/__tracepanel__/#/t/{trace.id}"
 
 
-def test_error_and_widget(client: TestClient, traces: list[Trace]) -> None:
+def test_error_and_widget(client: TestClient, traces: list[Trace], store: AgentStore) -> None:
     error = client.get("/boom")
     html = client.get("/page").text
 
@@ -103,7 +104,7 @@ async def bare(scope: dict[str, Any], receive: Any, send: Any) -> None:  # noqa:
     await send({"type": "http.response.body", "body": b"ok"})
 
 
-def test_any_asgi_app_is_wrapped(traces: list[Trace], restore: None) -> None:
+def test_any_asgi_app_is_wrapped(traces: list[Trace], restore: None, store: AgentStore) -> None:
     app = tracepanel.asgi.install(bare, enabled=True)
     response = TestClient(app).get("/orders/5")
     (trace,) = traces
@@ -136,4 +137,4 @@ def test_htmx_gets_a_whole_page(client: TestClient, traces: list[Trace]) -> None
         "htmx.trigger": "load",
         "htmx.full_page": True,
     }
-    assert [issue.title for issue in trace.issues] == ["Whole page sent to htmx · GET /page"]
+    assert [issue.title for issue in issues(trace)] == ["Whole page sent to htmx · GET /page"]

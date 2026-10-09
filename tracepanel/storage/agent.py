@@ -1,16 +1,17 @@
-"""Sending traces to tracepanel-agent, which writes the project's local store in place of each process.
+"""Sending traces to tracepanel-agent, which keeps the project's traces, finds their issues and serves the console.
 
-The agent (`tracepanel agent`) leaves its address in `<store dir>/agent.addr`. While it answers, a process only
-serializes its traces and sends them in batches; the SQLite work, and its share of the CPU, is the agent's. Without
-one (or one for another store version), the process writes the store itself, as it does without an agent, and looks
-for one again a few seconds later: starting or stopping the agent never loses traces.
+The agent leaves its address in `<store dir>/agent.addr`; the first trace starts one when none answers (see start()).
+A process only serializes its traces and sends them in batches. Without an agent (none for this platform, or it
+couldn't start) traces aren't kept: the terminal says why once, and the process looks for one again a few seconds
+later.
 
-The wire: a hello line, `{"protocol": 1, "store": "13", "max_traces": 2000}`, answered by `{"ok": true}` (or a refusal
-with its reason); then frames, a 4-byte big-endian length and a JSON array of `Trace.to_dict()`.
+The wire: a hello line, `{"protocol": 1, "max_traces": 2000, "thresholds": {...}}`, answered by `{"ok": true}` (or a
+refusal with its reason); then frames, a 4-byte big-endian length and a JSON array of `Trace.to_dict()`.
 """
 
 import json
 import os
+import platform
 import socket
 import struct
 import subprocess
@@ -23,14 +24,9 @@ from tracepanel._agent import AGENT, find_agent_bin
 from tracepanel._compat import override
 from tracepanel.core import conf
 from tracepanel.core.model import Trace
-from tracepanel.storage import transport
-from tracepanel.storage.store import STORE_VERSION, Store, get_store
 from tracepanel.storage.transport import BatchWriter
 
 PROTOCOL = 1
-# Issues are found by the agent, off the app's processes; True: this SDK finds them itself (the tests that compare
-# what the agent writes with what Python writes).
-ANALYZED = False
 ADDR_FILE = "agent.addr"
 # Where the agent serves the console (with --serve): an app's /__tracepanel__/ sends its API calls there.
 CONSOLE_FILE = "console.addr"
@@ -38,7 +34,7 @@ LOG_FILE = "agent.log"
 # An agent an SDK started exits after this long unused; how long the SDK waits for it to answer.
 IDLE_EXIT_S = 1800
 START_WAIT_S = 1.0
-# How long to wait for the agent to answer; the batch then goes to the local store.
+# How long to wait for the agent to answer.
 CONNECT_TIMEOUT_S = 0.5
 # A stuck agent must not hold the writer thread (and the queue behind it) for long.
 SEND_TIMEOUT_S = 2.0
@@ -106,9 +102,19 @@ def start(config: conf.Config) -> subprocess.Popen[bytes] | None:
 
 
 def _not_started(directory: Path) -> None:
-    sys.stderr.write(
-        f"tracepanel ▸ the agent didn't start (see {directory / LOG_FILE}): traces go to the store directly\n"
-    )
+    sys.stderr.write(f"tracepanel ▸ the agent didn't start (see {directory / LOG_FILE}): traces aren't kept\n")
+
+
+def unavailable(config: conf.Config) -> str:
+    """Why there is no agent, and what to do: the terminal's line, the console's page."""
+    if config.agent == "off":
+        return "the agent is off (the `agent` setting): traces aren't kept and there is no console."
+    if binary() is None:
+        return (
+            f"no tracepanel-agent for this platform ({sys.platform}, {platform.machine()}): traces aren't kept and "
+            "there is no console. Use an agent on another machine: TRACEPANEL_AGENT=tcp:HOST:PORT."
+        )
+    return f"the agent isn't running (see {store_dir(config) / LOG_FILE}): traces aren't kept until it is."
 
 
 _start_lock = threading.Lock()
@@ -156,18 +162,15 @@ def address(config: conf.Config) -> str | None:
 
 
 def connect(addr: str, max_traces: int, thresholds: dict[str, int] | None = None) -> socket.socket | None:
-    """A connection the agent accepted for this store version, or None."""
+    """A connection the agent accepted, or None."""
     sock = _open(addr)
     if sock is None:
         return None
     try:
-        # Traces come without their issues: the agent finds them, as for SDKs that never analyze (Go).
+        # The agent finds the issues, with this project's limits.
         hello = {
             "protocol": PROTOCOL,
-            "store": STORE_VERSION,
             "max_traces": max_traces,
-            "analyzed": ANALYZED,
-            # The limits issues are found with, should the agent analyze.
             **({"thresholds": thresholds} if thresholds else {}),
         }
         sock.sendall(json.dumps(hello).encode() + b"\n")
@@ -205,15 +208,14 @@ def _open(addr: str) -> socket.socket | None:
 
 
 class AgentWriter(BatchWriter):
-    """Batches to the agent while it answers; to the local store otherwise."""
+    """Batches to the agent while it answers; without one, the batches are dropped (and counted)."""
 
     def __init__(self, config: conf.Config) -> None:
         self.config = config
-        self.analyzes_later = not ANALYZED
         self.sent = 0
         self._sock: socket.socket | None = None
         self._retry_at = 0.0
-        self._store: Store | None = None
+        self._warned = False
         super().__init__()
 
     @override
@@ -244,17 +246,16 @@ class AgentWriter(BatchWriter):
             try:
                 self._sock.sendall(struct.pack(">I", len(data)) + data)
             except OSError:
-                # The agent went away: this batch, and the next ones until it is back, go to the local store.
+                # The agent went away: this batch is lost; the next ones go to it once it is back.
                 self._sock.close()
                 self._sock = None
                 self._retry_at = time.monotonic() + RETRY_S
             else:
                 self.sent += len(batch)
+                self._warned = False
                 return
-        if self._store is None:
-            self._store = get_store()
-        if self.analyzes_later:
-            # Without the agent the issues are found here, in this writer's thread, still off the request.
-            for trace in batch:
-                trace.issues = transport.analysis(trace, self.config)
-        self._store.write(batch)
+        self.dropped += len(batch)
+        # "off" is the user's choice: nothing to say about it.
+        if not self._warned and self.config.agent != "off":
+            self._warned = True
+            sys.stderr.write(f"tracepanel ▸ {unavailable(self.config)}\n")

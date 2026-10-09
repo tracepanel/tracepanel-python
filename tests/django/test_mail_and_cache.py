@@ -7,10 +7,10 @@ from django.test import Client
 from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
+from tests.agentstore import AgentStore
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Trace
-from tracepanel.storage.store import Store
-from tracepanel.storage.transport import StoreWriter, set_writer
+from tracepanel.storage.transport import set_writer
 
 
 def only(traces: list[Trace]) -> Trace:
@@ -56,9 +56,9 @@ def test_database_and_cache_aliases(client: Client, traces: list[Trace]) -> None
 
 
 @pytest.mark.django_db(databases=["default", "analytics"])
-def test_alias_and_mail_filters(client: Client, store: Store) -> None:
+def test_alias_and_mail_filters(client: Client, store: AgentStore) -> None:
     store.max_traces = 100
-    writer = StoreWriter(store)
+    writer = store.writer()
     set_writer(writer)
     try:
         for path in ("/multi-backend/", "/welcome-email/", "/duplicates/"):
@@ -80,8 +80,8 @@ def test_alias_and_mail_filters(client: Client, store: Store) -> None:
 
 
 @pytest.mark.django_db(databases=["default", "analytics"])
-def test_mail_listing(client: Client, store: Store) -> None:
-    writer = StoreWriter(store)
+def test_mail_listing(client: Client, store: AgentStore) -> None:
+    writer = store.writer()
     set_writer(writer)
     try:
         client.get("/welcome-email/")
