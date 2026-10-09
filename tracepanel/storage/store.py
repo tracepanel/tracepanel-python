@@ -705,7 +705,8 @@ class Store:
         with closing(self._connect()) as db:
             rows = db.execute(
                 "SELECT logs.id, logs.trace_id, logs.time, logs.level, logs.logger, logs.message, logs.exception,"  # noqa: S608 (constant SQL; values are bound)
-                " logs.attrs, traces.name AS trace_name, traces.method, traces.path, traces.http_status, traces.user_id"
+                " logs.attrs, traces.kind AS trace_kind, traces.name AS trace_name, traces.method, traces.path,"
+                " traces.http_status, traces.user_id"
                 f" FROM logs JOIN traces ON traces.id = logs.trace_id WHERE {where}"
                 " ORDER BY logs.time DESC, logs.id DESC LIMIT ?",
                 [*params, limit + 1],
@@ -1167,7 +1168,8 @@ class Store:
             params.append(before)
         with closing(self._connect()) as db:
             rows = db.execute(
-                "SELECT mails.*, traces.method, traces.path, traces.name AS trace_name FROM mails"  # noqa: S608
+                "SELECT mails.*, traces.kind AS trace_kind, traces.method, traces.path, traces.name AS trace_name"  # noqa: S608
+                " FROM mails"
                 f" JOIN traces ON traces.id = mails.trace_id WHERE {where} ORDER BY mails.time DESC LIMIT ?",
                 [*params, limit + 1],
             ).fetchall()

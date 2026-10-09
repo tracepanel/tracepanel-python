@@ -98,6 +98,7 @@ def test_mail_listing(client: Client, store: Store) -> None:
         "recipients": ["alice@example.com"],
         "sent": True,
         "html": True,
+        "trace_kind": "http",
         "method": "GET",
         "path": "/welcome-email/",
         "trace_name": "GET /welcome-email/",

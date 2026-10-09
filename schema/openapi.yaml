@@ -541,8 +541,8 @@ components:
     LogRow:
       type: object
       additionalProperties: false
-      required: [id, trace_id, time, level, logger, message, exception, attrs, trace_name, method, path, http_status,
-        user_id]
+      required: [id, trace_id, time, level, logger, message, exception, attrs, trace_kind, trace_name, method, path,
+        http_status, user_id]
       properties:
         id: { type: integer }
         trace_id: { type: string }
@@ -552,6 +552,7 @@ components:
         message: { type: string }
         exception: { type: [string, "null"] }
         attrs: { $ref: "#/components/schemas/Attrs" }
+        trace_kind: { type: string, enum: [http, task, command, websocket] }
         trace_name: { type: string }
         method: { type: [string, "null"] }
         path: { type: [string, "null"] }
@@ -569,7 +570,7 @@ components:
     MailRow:
       type: object
       additionalProperties: false
-      required: [trace_id, span_id, time, subject, sender, recipients, sent, html, method, path, trace_name]
+      required: [trace_id, span_id, time, subject, sender, recipients, sent, html, trace_kind, method, path, trace_name]
       properties:
         trace_id: { type: string }
         span_id: { type: string }
@@ -579,6 +580,7 @@ components:
         recipients: { type: array, description: To and cc., items: { type: string } }
         sent: { type: [boolean, "null"], description: "False when the backend refused it; null when unknown." }
         html: { type: boolean }
+        trace_kind: { type: string, enum: [http, task, command, websocket] }
         method: { type: [string, "null"] }
         path: { type: [string, "null"] }
         trace_name: { type: string }
