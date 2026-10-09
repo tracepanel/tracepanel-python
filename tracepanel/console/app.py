@@ -8,12 +8,12 @@ EXPLAIN on its databases). The API is described in schema/openapi.yaml.
 import json
 import mimetypes
 import re
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
-from typing import IO
 
+from tracepanel.console import proxy
+from tracepanel.console.messages import Request, Response
 from tracepanel.core import explain
 from tracepanel.storage import search, transport
 from tracepanel.storage.search import SearchError
@@ -30,28 +30,6 @@ TYPES = {
     ".woff2": "font/woff2",
     ".svg": "image/svg+xml",
 }
-
-
-@dataclass(frozen=True, slots=True)
-class Request:
-    method: str
-    # Below the prefix: "api/traces", "assets/index-abc.js", "" for the page.
-    path: str
-    query: Mapping[str, str] = field(default_factory=dict)
-    # The framework's own request, for the handlers an integration registers.
-    native: object = None
-
-
-@dataclass(slots=True)
-class Response:
-    status: int = 200
-    content_type: str = "application/json"
-    body: bytes = b""
-    # A static file, streamed.
-    file: IO[bytes] | None = None
-    headers: dict[str, str] = field(default_factory=dict)
-    # A response the framework built itself (it may set cookies): returned as is.
-    native: object = None
 
 
 Handler = Callable[[Request], Response]
@@ -275,6 +253,8 @@ def _trace(path: str) -> Response | None:
 def api(request: Request, path: str) -> Response:
     if handler := WRITES.get(path):
         return handler(request)
+    if path not in EXTENSIONS and (forwarded := proxy.forward(request, path)) is not None:
+        return forwarded
     if request.method == "DELETE" and (handler := DELETES.get(path)):
         return handler(request)
     if request.method != "GET":

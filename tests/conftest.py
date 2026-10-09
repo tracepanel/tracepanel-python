@@ -57,7 +57,12 @@ def users(db: None) -> list[User]:
 
 
 @pytest.fixture(autouse=True)
-def fresh_config() -> Generator[None, None, None]:
-    """Each test reads its own configuration (tracepanel caches it; variables set by a test must not leak)."""
+def fresh_config(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+    """Each test reads its own configuration (tracepanel caches it; variables set by a test must not leak).
+
+    No agent: one running for this checkout would get the tests' traces and answer their console calls.
+    """
+    monkeypatch.setenv("TRACEPANEL_AGENT", "off")
+    conf.reset()
     yield
     conf.reset()

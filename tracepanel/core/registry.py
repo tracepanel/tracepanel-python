@@ -42,8 +42,8 @@ class Integration:
         return enabled
 
     def install(self) -> None:
-        """Patch the library, unless the setting turns it off; its module checks that the library is there."""
-        if self.enabled:
+        """Patch the library when it is installed, unless the setting turns it off."""
+        if self.enabled and self.available:
             importlib.import_module(self.code).install()
 
 

@@ -459,3 +459,37 @@ def test_the_agents_console_answers_as_pythons(
     assert get(console + "api/counts")[1] == client.get("/__tracepanel__/api/counts").json()
     process.send_signal(signal.SIGTERM)
     process.wait(timeout=10)
+
+
+def test_the_apps_console_answers_from_the_agent(
+    agent_console: tuple[str, str, Path, subprocess.Popen[bytes]],
+    client: Client,
+    users: list[User],
+    store: Store,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, directory, process = agent_console
+    monkeypatch.setenv("TRACEPANEL_AGENT", "auto")
+    monkeypatch.setenv("TRACEPANEL_DIR", str(directory))
+    conf.reset()
+    # A trace only the agent's store has: this process's own store stays empty.
+    with start_trace("http", "GET /in-the-agent/") as trace:
+        pass
+    sock = agent.connect(agent.address(conf.get_config()) or "", 100)
+    assert sock is not None
+    with closing(sock):
+        data = json.dumps([trace.to_dict()]).encode()
+        sock.sendall(len(data).to_bytes(4, "big") + data)
+
+    response = client.get(f"/__tracepanel__/api/traces/{trace.id}")
+
+    assert (response.status_code, response.json()["name"]) == (200, "GET /in-the-agent/")
+
+    # What only the app can do stays in the app.
+    assert client.get("/__tracepanel__/api/users/me").status_code == 200
+
+    # The agent gone: the app's console answers from its own store.
+    process.send_signal(signal.SIGTERM)
+    process.wait(timeout=10)
+
+    assert client.get(f"/__tracepanel__/api/traces/{trace.id}").status_code == 404

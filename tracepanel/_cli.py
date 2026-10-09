@@ -1,14 +1,14 @@
-"""CLI: tracepanel run | console | config | clear | agent | version."""
+"""CLI: tracepanel dev | run | console | config | clear | agent | version."""
 
 import argparse
 import os
 import sys
 
 from tracepanel import __version__
-from tracepanel._agent import find_agent_bin
 
 USAGE = """usage: tracepanel <command>
 
+  dev [--port 8765]                     the agent in the foreground: receives traces, serves the console
   run [--set name=value]... <command>   run a command with tracepanel on (uvicorn, celery, manage.py, ...)
   console [--port 8765]                 the console on its own, from this project's store
   config                                the settings in effect, and where each one comes from
@@ -36,21 +36,35 @@ def main() -> None:
         clear(args[1:])
         return
     if command == "agent":
-        agent = find_agent_bin()
-        if agent is None:
-            sys.exit(
-                'tracepanel-agent not found: pip install "tracepanel[agent]" or use the tracepanel/agent Docker image'
-            )
-        argv = args[1:]
-        if "--dir" not in argv:
-            # The store this project's processes use: tracepanel.toml, TRACEPANEL_* and the current directory.
-            from tracepanel.core import conf  # noqa: PLC0415
-
-            config = conf.get_config()
-            argv = ["--dir", str(conf.project_root() / config.dir), *argv]
-        os.execv(agent, [agent, *argv])  # noqa: S606 (replaces this process with the agent)
+        run_agent(args[1:])
+    if command == "dev":
+        dev(args[1:])
     print(USAGE, file=sys.stderr)
     sys.exit(2)
+
+
+def run_agent(argv: list[str]) -> None:
+    """Replace this process with the agent, on the store this project's processes use."""
+    from tracepanel.core import conf  # noqa: PLC0415 (the CLI's commands load only what they use)
+    from tracepanel.storage import agent  # noqa: PLC0415
+
+    executable = agent.binary()
+    if executable is None:
+        sys.exit("tracepanel-agent not found: reinstall tracepanel, or set TRACEPANEL_AGENT_BIN")
+    if "--dir" not in argv:
+        # tracepanel.toml, TRACEPANEL_* and the current directory.
+        argv = ["--dir", str(agent.store_dir(conf.get_config())), *argv]
+    os.execv(executable, [executable, *argv])  # noqa: S606 (replaces this process with the agent)
+
+
+def dev(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="tracepanel dev", description="Run the agent in the foreground: it receives traces and serves the console."
+    )
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    options = parser.parse_args(argv)
+    run_agent(["--serve", f"{options.host}:{options.port}"])
 
 
 def console(argv: list[str]) -> None:
