@@ -4,6 +4,7 @@ Needs a built agent: $TRACEPANEL_AGENT_BIN, or the debug build of a sibling trac
 """
 
 import dataclasses
+import importlib.util
 import json
 import os
 import signal
@@ -274,9 +275,10 @@ def get(url: str) -> tuple[int, object]:
 
 
 def comparable(path: str, answer: tuple[int, object]) -> tuple[int, object]:
-    """An issue's events over time end now, which differs by milliseconds between the two: the counts compare."""
+    """An issue's events over time, and the overview's, end now (milliseconds apart in the two): the counts compare."""
     status, body = answer
-    if path.startswith("issues/detail") and isinstance(body, dict) and isinstance(body.get("series"), list):
+    now_dependent = path.startswith(("issues/detail", "traces/overview"))
+    if now_dependent and isinstance(body, dict) and isinstance(body.get("series"), list):
         body = {**body, "series": sum(bucket["calls"] for bucket in body["series"])}
     return status, body
 
@@ -290,11 +292,29 @@ def listed(url: str) -> int:
 def test_the_agents_console_answers_as_pythons(
     client: Client,
     requests: list[Trace],
+    traces: list[Trace],
     store: Store,
     agent_console: tuple[str, str, Path, subprocess.Popen[bytes]],
 ) -> None:
     # The same traces in tracepanel-python's store and in the agent's: the same answers from both consoles.
     addr, console, _, process = agent_console
+    # Groups of every kind: a job and, when Strawberry is there, a GraphQL operation.
+    if importlib.util.find_spec("strawberry"):
+        client.post("/graphql/", {"query": "query Team { users { username } }"}, content_type="application/json")
+    with start_trace("command", "manage.py seed", {"command.name": "seed"}, root_kind="command") as job:
+        record_span(
+            "sql",
+            "SELECT auth_user",
+            start=job.start,
+            duration=40,
+            attrs={
+                "db.fingerprint": "SELECT * FROM auth_user",
+                "db.params_hash": "a",
+                "db.alias": "default",
+            },
+        )
+    job.issues = analyze(job)
+    requests = [*requests, *[t for t in traces if t not in requests], job]
     store.max_traces = 100
     store.write(requests)
     writer = agent.AgentWriter(dataclasses.replace(conf.get_config(), agent=addr))
@@ -308,6 +328,9 @@ def test_the_agents_console_answers_as_pythons(
         time.sleep(0.05)
     # Something to compare: the request that queued a task has it among its related traces.
     assert any(store.related(trace.id)["enqueued"] for trace in requests)
+    assert store.summary("kind:command") is not None
+    if importlib.util.find_spec("strawberry"):
+        assert store.graphql_detail("query Team") is not None
 
     paths = [
         f"traces?ids={ids}",
@@ -393,6 +416,31 @@ def test_the_agents_console_answers_as_pythons(
         *(f"issues/detail?fingerprint={issue['fingerprint']}" for issue in store.list_issues(limit=100)),
         *(f"services?q={quote(query)}" for query in ("", "kind:database", "role:web", "default", "colour:red")),
         "values",
+        # Groups of traces: lists, details, summaries and the overview.
+        *(
+            f"endpoints?q={quote(query)}"
+            for query in ("", "method:get", "route:/n-*", "plus", "since:1h", "colour:red")
+        ),
+        "endpoints?limit=1",
+        "endpoints/detail?method=GET&route=/n-plus-one/",
+        "endpoints/detail?method=get&route=/n-plus-one/",
+        "endpoints/detail?route=/nope/",
+        *(f"tasks?q={quote(query)}" for query in ("", "task:send_*", "state:success", "queue:x", "colour:red")),
+        *(
+            f"jobs?q={quote(query)}"
+            for query in ("", "source:custom", "source:manage.py", "job:manage.py *", "colour:red")
+        ),
+        *(f"websockets?q={quote(query)}" for query in ("", "event:connect", "colour:red")),
+        *(f"graphql?q={quote(query)}" for query in ("", "type:query", "Team", "colour:red")),
+        "graphql/detail?operation=" + quote("query Team"),
+        "graphql/detail?operation=nope",
+        *(f"traces/summary?q={quote(query)}" for query in ("kind:http", "kind:task", "kind:websocket", "colour:red")),
+        *(
+            f"traces/overview?q={quote(query)}"
+            for query in ("", "kind:http", "since:1h", "since:2000-01-01 until:2000-01-02", "colour:red")
+        ),
+        "traces/overview?group=endpoint",
+        "traces/overview?group=nope",
         "traces?limit=3",
         "traces?limit=3&before=99999999999999999",
         "traces?limit=oops",
