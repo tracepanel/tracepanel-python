@@ -78,9 +78,17 @@ def start(config: conf.Config) -> subprocess.Popen[bytes] | None:
     directory = store_dir(config)
     directory.mkdir(parents=True, exist_ok=True)
     command = [executable, "--dir", str(directory), "--serve", "127.0.0.1:0", "--idle-exit", str(IDLE_EXIT_S)]
+    # Its own session (process group on Windows): Ctrl-C and reloads of the app don't reach it.
+    windows = sys.platform == "win32"
+    flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     with (directory / LOG_FILE).open("ab") as log:
         process = subprocess.Popen(  # noqa: S603 (tracepanel's own agent)
-            command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=not windows,
+            creationflags=flags if windows else 0,
         )
     deadline = time.monotonic() + START_WAIT_S
     while time.monotonic() < deadline:
@@ -123,9 +131,14 @@ def ensure_started(config: conf.Config) -> bool:
 
 
 def console_url(config: conf.Config) -> str | None:
-    """`http://127.0.0.1:PORT/` of the agent's console, when an agent serves this store's."""
+    """`http://127.0.0.1:PORT/` of the agent's console, when an agent serves this store's.
+
+    An agent named in the settings (`tcp:host.docker.internal:7701`) serves it at `console_url`.
+    """
     if config.agent == "off":
         return None
+    if config.agent != "auto":
+        return config.console_url
     try:
         return (store_dir(config) / CONSOLE_FILE).read_text().strip() or None
     except OSError:
@@ -144,12 +157,10 @@ def address(config: conf.Config) -> str | None:
 
 def connect(addr: str, max_traces: int, thresholds: dict[str, int] | None = None) -> socket.socket | None:
     """A connection the agent accepted for this store version, or None."""
-    if not addr.startswith("unix:"):
+    sock = _open(addr)
+    if sock is None:
         return None
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        sock.settimeout(CONNECT_TIMEOUT_S)
-        sock.connect(addr.removeprefix("unix:"))
         # Traces come without their issues: the agent finds them, as for SDKs that never analyze (Go).
         hello = {
             "protocol": PROTOCOL,
@@ -169,6 +180,28 @@ def connect(addr: str, max_traces: int, thresholds: dict[str, int] | None = None
         return None
     sock.settimeout(SEND_TIMEOUT_S)
     return sock
+
+
+def _open(addr: str) -> socket.socket | None:
+    """A connection to `unix:/path` or `tcp:host:port` (Windows; an agent outside the app's container)."""
+    try:
+        if addr.startswith("tcp:"):
+            host, _, port = addr.removeprefix("tcp:").rpartition(":")
+            sock = socket.create_connection((host.strip("[]"), int(port)), timeout=CONNECT_TIMEOUT_S)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            return sock
+        if addr.startswith("unix:") and hasattr(socket, "AF_UNIX"):
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(CONNECT_TIMEOUT_S)
+            try:
+                sock.connect(addr.removeprefix("unix:"))
+            except OSError:
+                sock.close()
+                raise
+            return sock
+    except (OSError, ValueError):
+        return None
+    return None
 
 
 class AgentWriter(BatchWriter):

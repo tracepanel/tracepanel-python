@@ -498,3 +498,30 @@ def test_the_apps_console_answers_from_the_agent(
     process.wait(timeout=10)
 
     assert client.get(f"/__tracepanel__/api/traces/{trace.id}").status_code == 404
+
+
+def test_the_agent_listens_on_tcp(tmp_path: Path, requests: list[Trace]) -> None:
+    # Windows has no unix sockets; an app in a container reaches the agent on its host over TCP.
+    directory = tmp_path / "tcp"
+    process = subprocess.Popen(  # noqa: S603 (the agent under test)
+        [AGENT_BIN, "--dir", directory, "--listen", "tcp:127.0.0.1:0"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    addr_file = directory / agent.ADDR_FILE
+    deadline = time.monotonic() + 10
+    while not addr_file.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    addr = addr_file.read_text().strip()
+
+    assert addr.startswith("tcp:127.0.0.1:")
+
+    writer = agent.AgentWriter(dataclasses.replace(conf.get_config(), agent=addr))
+    for trace in requests:
+        writer.submit(trace)
+    writer.flush()
+    process.send_signal(signal.SIGTERM)
+    process.wait(timeout=10)
+
+    assert writer.sent == len(requests)
+    with closing(sqlite3.connect(directory / f"traces.v{STORE_VERSION}.sqlite3")) as db:
+        assert db.execute("SELECT COUNT(*) FROM traces").fetchone() == (len(requests),)
+    assert not addr_file.exists()
