@@ -454,6 +454,16 @@ class Store:
         for table in ("logs", "sql", "issue_traces", "mails", "links", "peers", "task_enqueues", "task_runs"):
             db.execute(f"DELETE FROM {table} WHERE {orphan}")  # noqa: S608 (constant table names)
 
+    def clear(self) -> int:
+        """Delete every stored trace and what came with it (logs, queries, emails, issues); returns how many traces."""
+        with closing(self._connect()) as db, db:
+            (count,) = db.execute("SELECT COUNT(*) FROM traces").fetchone()
+            for table in TABLES:
+                if table == "meta" or (table == "logs_fts" and not self.fts):
+                    continue
+                db.execute(f"DELETE FROM {table}")  # noqa: S608 (constant table names)
+        return int(count)
+
     def _write_trace(self, db: sqlite3.Connection, trace: Trace) -> None:
         attrs = trace.attrs
         sql_spans = [span for span in trace.spans if span.kind == "sql"]

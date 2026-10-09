@@ -1,4 +1,4 @@
-"""CLI: tracepanel run | console | config | agent | version."""
+"""CLI: tracepanel run | console | config | clear | agent | version."""
 
 import argparse
 import os
@@ -12,6 +12,7 @@ USAGE = """usage: tracepanel <command>
   run [--set name=value]... <command>   run a command with tracepanel on (uvicorn, celery, manage.py, ...)
   console [--port 8765]                 the console on its own, from this project's store
   config                                the settings in effect, and where each one comes from
+  clear [--yes]                         delete every stored trace, log, query, email and issue
   agent                                 the tracepanel agent
   version"""
 
@@ -30,6 +31,9 @@ def main() -> None:
         return
     if command == "config":
         show_config()
+        return
+    if command == "clear":
+        clear(args[1:])
         return
     if command == "agent":
         agent = find_agent_bin()
@@ -55,6 +59,26 @@ def console(argv: list[str]) -> None:
     from tracepanel.console import server  # noqa: PLC0415 (only this command needs it)
 
     server.serve(options.host, options.port)
+
+
+def clear(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="tracepanel clear", description="Delete every stored trace, log, query, email and issue of this project."
+    )
+    parser.add_argument("--yes", "-y", action="store_true", help="don't ask for confirmation")
+    parser.add_argument("--dir", help="the store directory (default: .tracepanel in the current directory)")
+    options = parser.parse_args(argv)
+    if options.dir:
+        os.environ["TRACEPANEL_DIR"] = options.dir
+    from tracepanel.storage.store import get_store  # noqa: PLC0415 (only this command needs it)
+
+    store = get_store()
+    if not options.yes:
+        answer = input(f"Delete everything in {store.path}? This can't be undone. [y/N] ")
+        if answer.strip().lower() not in {"y", "yes"}:
+            sys.exit("tracepanel clear: nothing deleted")
+    deleted = store.clear()
+    sys.stdout.write(f"tracepanel: deleted {deleted} {'trace' if deleted == 1 else 'traces'}\n")
 
 
 def run(argv: list[str]) -> None:

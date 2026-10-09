@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 import pytest
 import yaml
+from dirty_equals import IsPositiveInt
 from django.contrib.auth.models import User
 from django.test import Client
 from jsonschema import Draft202012Validator
@@ -139,6 +140,7 @@ def test_every_route_is_in_the_contract() -> None:
     assert {path.lstrip("/") for path in OPENAPI["paths"]} == {
         *app.RESOURCES,
         *app.WRITES,
+        *app.DELETES,
         *app.EXTENSIONS,
         "traces/{id}",
         "traces/{id}/related",
@@ -155,3 +157,22 @@ def test_every_documented_response_is_exercised() -> None:
     }
 
     assert documented == {(template, status) for template, status, _ in CASES}
+
+
+@pytest.mark.django_db
+def test_clearing_the_store(client: Client, data: Data, store: Store) -> None:
+    assert client.get("/__tracepanel__/api/store").status_code == 404
+    assert client.post("/__tracepanel__/api/store").status_code == 405
+    assert store.counts()["issues"] == IsPositiveInt
+
+    response = client.delete("/__tracepanel__/api/store")
+
+    assert response.status_code == 200
+    response_schema("/store", 200, "delete").validate(response.json())
+    assert response.json() == {"deleted": IsPositiveInt}
+
+    assert store.search_traces("") == ([], None)
+    assert store.search_logs("") == ([], None)
+    assert store.list_mails() == ([], None)
+    assert store.list_queries() == []
+    assert store.list_issues() == []

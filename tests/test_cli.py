@@ -6,6 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from tracepanel.core.context import start_trace
+from tracepanel.storage.store import STORE_VERSION, Store
+
 pytest.importorskip("fastapi")
 
 # A FastAPI app with no tracepanel in its code: `tracepanel run` alone must trace it.
@@ -123,3 +126,26 @@ def test_run_help_is_the_usage(tmp_path: Path) -> None:
     result = tracepanel("run", "--help", cwd=tmp_path)
 
     assert (result.returncode, result.stdout) == (0, "usage: tracepanel run [--set name=value]... <command>\n")
+
+
+def test_clear_deletes_the_store_after_asking(tmp_path: Path) -> None:
+    store = Store(tmp_path / ".tracepanel" / f"traces.v{STORE_VERSION}.sqlite3", max_traces=10)
+    for name in ("GET /a/", "GET /b/"):
+        with start_trace("http", name) as trace:
+            pass
+        store.write([trace])
+    env = {"TRACEPANEL_ROOT": str(tmp_path)}
+
+    refused = subprocess.run(
+        [sys.executable, "-m", "tracepanel", "clear"],
+        cwd=tmp_path,
+        env={**os.environ, **env},
+        input="n\n",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (refused.returncode, refused.stderr) == (1, "tracepanel clear: nothing deleted\n")
+
+    cleared = tracepanel("clear", "--yes", cwd=tmp_path, env=env)
+    assert (cleared.returncode, cleared.stdout) == (0, "tracepanel: deleted 2 traces\n")

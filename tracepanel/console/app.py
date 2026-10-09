@@ -211,6 +211,14 @@ RESOURCES = {
     "values": _values,
 }
 
+
+def _clear(request: Request) -> Response:  # noqa: ARG001
+    return json_response({"deleted": get_store().clear()})
+
+
+# DELETE, not POST: another site can't send one without a CORS preflight, and the console never allows one.
+DELETES: dict[str, Handler] = {"store": _clear}
+
 # Registered by the framework integration: what needs the framework (sessions, its database connections).
 EXTENSIONS: dict[str, Handler] = {}
 # The only writes: everything else is read-only.
@@ -266,6 +274,8 @@ def _trace(path: str) -> Response | None:
 
 def api(request: Request, path: str) -> Response:
     if handler := WRITES.get(path):
+        return handler(request)
+    if request.method == "DELETE" and (handler := DELETES.get(path)):
         return handler(request)
     if request.method != "GET":
         return json_response({"error": "method not allowed"}, status=405)

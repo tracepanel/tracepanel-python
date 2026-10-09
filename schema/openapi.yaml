@@ -379,6 +379,24 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Counts" }
+  /store:
+    delete:
+      operationId: clearStore
+      summary: Delete every stored trace, log, query, email and issue.
+      description: >-
+        The local store only: a cloud project doesn't offer it. A DELETE, so another site can't send it without a CORS
+        preflight, which the console never allows.
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                additionalProperties: false
+                properties:
+                  deleted: { type: integer, description: How many traces were deleted. }
   /values:
     get:
       operationId: knownValues
