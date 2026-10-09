@@ -15,7 +15,7 @@ from typing import Protocol
 from tracepanel._compat import override
 from tracepanel.core import conf, errors, runtime
 from tracepanel.core.analysis import analyze
-from tracepanel.core.model import Trace
+from tracepanel.core.model import Issue, Trace
 from tracepanel.storage.store import Store, get_store
 
 QUEUE_SIZE = 1000
@@ -34,6 +34,9 @@ class BatchWriter:
 
     Never blocks the request: a full queue drops the trace and counts it.
     """
+
+    # Where traces go their issues are found (the agent): the app's processes don't analyze them.
+    analyzes_later = False
 
     def __init__(self) -> None:
         self.dropped = 0
@@ -133,6 +136,22 @@ def on_complete(listener: Callable[[Trace], None]) -> None:
         _listeners.append(listener)
 
 
+def analysis(trace: Trace, config: conf.Config | None = None) -> list[Issue]:
+    """The trace's issues, found with the configured limits."""
+    config = config or conf.get_config()
+    return analyze(
+        trace,
+        n_plus_one_threshold=config.n_plus_one_threshold,
+        slow_sql_ms=config.slow_sql_ms,
+        long_transaction_ms=config.long_transaction_ms,
+    )
+
+
+def analyzes_later(writer: object | None = None) -> bool:
+    """Issues are found after the trace is handed over (by the agent): the response can't tell them."""
+    return bool(getattr(writer or get_writer(), "analyzes_later", False))
+
+
 def complete(trace: Trace) -> Trace:
     """Analyse a finished trace and hand it to the writer: the last step for requests, tasks, commands, `trace()`."""
     # Only requests use it (a 5xx behind a logged exception); drop it for every trace.
@@ -142,13 +161,10 @@ def complete(trace: Trace) -> Trace:
     trace.attrs.setdefault("service.role", role(trace))
     for key, value in runtime.attrs().items():
         trace.attrs.setdefault(key, value)
-    trace.issues = analyze(
-        trace,
-        n_plus_one_threshold=config.n_plus_one_threshold,
-        slow_sql_ms=config.slow_sql_ms,
-        long_transaction_ms=config.long_transaction_ms,
-    )
-    get_writer().submit(trace)
+    writer = get_writer()
+    if not analyzes_later(writer):
+        trace.issues = analysis(trace, config)
+    writer.submit(trace)
     for listener in _listeners:
         # A listener (the terminal line) must never break the traced code.
         with contextlib.suppress(Exception):

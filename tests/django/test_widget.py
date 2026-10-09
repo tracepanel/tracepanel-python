@@ -4,6 +4,7 @@ from django.test import Client
 from pytest_django.fixtures import Settings
 
 from tracepanel.core.model import Trace
+from tracepanel.storage import transport
 
 pytestmark = pytest.mark.django_db
 
@@ -45,3 +46,18 @@ def test_json_is_not_touched(client: Client, traces: list[Trace], db: None) -> N
 def test_widget_can_be_disabled(client: Client, traces: list[Trace], db: None, settings: Settings) -> None:
     settings.TRACEPANEL = {"widget": False}
     assert b"<script" not in client.get("/html/").content
+
+
+def test_issues_the_agent_finds_are_pending(
+    client: Client, traces: list[Trace], users: list[User], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Where traces go their issues are found later: the app doesn't look for them, the widget asks the console.
+    monkeypatch.setattr(type(transport.get_writer()), "analyzes_later", True, raising=False)
+
+    response = client.get("/n-plus-one/")
+    body = client.get("/html/").content.decode()
+
+    assert 'tracepanel-issues;desc="pending"' in response["Server-Timing"]
+    assert traces[0].issues == []
+
+    assert 'data-tracepanel-issues="pending"' in body

@@ -124,9 +124,14 @@ def rows(path: Path) -> dict[str, list[tuple[object, ...]]]:
 
 
 def test_the_agent_writes_what_python_writes(
-    tmp_path: Path, requests: list[Trace], running_agent: tuple[str, Path, subprocess.Popen[bytes]]
+    tmp_path: Path,
+    requests: list[Trace],
+    running_agent: tuple[str, Path, subprocess.Popen[bytes]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     addr, directory, process = running_agent
+    # Traces with their issues, as Python found them: the agent keeps them.
+    monkeypatch.setattr(agent, "ANALYZED", True)
     python_store = tmp_path / "python" / f"traces.v{STORE_VERSION}.sqlite3"
     Store(python_store).write(requests)
 

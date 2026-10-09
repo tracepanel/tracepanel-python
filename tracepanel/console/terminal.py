@@ -13,7 +13,7 @@ from typing import TextIO
 
 from tracepanel.core import conf, registry
 from tracepanel.core.model import Trace
-from tracepanel.storage import transport
+from tracepanel.storage import agent, transport
 
 KINDS = frozenset({"task", "command"})
 
@@ -28,13 +28,15 @@ def _duration(us: int) -> str:
 
 def line(trace: Trace, console_url: str) -> str:
     sql = sum(1 for span in trace.spans if span.kind == "sql")
+    # Found by the agent after this line is out: found here too, for the line.
+    issues = trace.issues or transport.analysis(trace)
     state = trace.attrs.get("task.state")
     parts = [
         f"{trace.kind} {trace.name.removeprefix('manage.py ')}",
         *([str(state).lower()] if state else ["failed"] if trace.status == "error" else []),
         _duration(trace.duration),
         f"{sql} {'query' if sql == 1 else 'queries'}",
-        *([", ".join(dict.fromkeys(issue.kind for issue in trace.issues))] if trace.issues else []),
+        *([", ".join(dict.fromkeys(issue.kind for issue in issues))] if issues else []),
     ]
     return f"tracepanel ▸ {' · '.join(parts)} → {console_url.rstrip('/')}/#/t/{trace.id}"
 
@@ -44,7 +46,9 @@ def summarize(trace: Trace, out: TextIO | None = None) -> None:
     if trace.kind not in KINDS or not config.terminal_summary:
         return
     stream = out or sys.stderr
-    stream.write(line(trace, config.console_url) + "\n")
+    # The agent's console when it serves this store (on a port of its own; the first command may start it).
+    served = agent.console_url(config) if agent.ensure_started(config) else None
+    stream.write(line(trace, served or config.console_url) + "\n")
     stream.flush()
 
 

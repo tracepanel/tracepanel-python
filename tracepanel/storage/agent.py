@@ -23,12 +23,14 @@ from tracepanel._agent import AGENT, find_agent_bin
 from tracepanel._compat import override
 from tracepanel.core import conf
 from tracepanel.core.model import Trace
+from tracepanel.storage import transport
 from tracepanel.storage.store import STORE_VERSION, Store, get_store
 from tracepanel.storage.transport import BatchWriter
 
 PROTOCOL = 1
-# This SDK finds issues itself (tests turn it off to check the agent's analysis against it).
-ANALYZED = True
+# Issues are found by the agent, off the app's processes; True: this SDK finds them itself (the tests that compare
+# what the agent writes with what Python writes).
+ANALYZED = False
 ADDR_FILE = "agent.addr"
 # Where the agent serves the console (with --serve): an app's /__tracepanel__/ sends its API calls there.
 CONSOLE_FILE = "console.addr"
@@ -148,7 +150,7 @@ def connect(addr: str, max_traces: int, thresholds: dict[str, int] | None = None
     try:
         sock.settimeout(CONNECT_TIMEOUT_S)
         sock.connect(addr.removeprefix("unix:"))
-        # Traces come analyzed (their issues with them): the agent only analyzes those of SDKs that don't.
+        # Traces come without their issues: the agent finds them, as for SDKs that never analyze (Go).
         hello = {
             "protocol": PROTOCOL,
             "store": STORE_VERSION,
@@ -174,6 +176,7 @@ class AgentWriter(BatchWriter):
 
     def __init__(self, config: conf.Config) -> None:
         self.config = config
+        self.analyzes_later = not ANALYZED
         self.sent = 0
         self._sock: socket.socket | None = None
         self._retry_at = 0.0
@@ -217,4 +220,8 @@ class AgentWriter(BatchWriter):
                 return
         if self._store is None:
             self._store = get_store()
+        if self.analyzes_later:
+            # Without the agent the issues are found here, in this writer's thread, still off the request.
+            for trace in batch:
+                trace.issues = transport.analysis(trace, self.config)
         self._store.write(batch)

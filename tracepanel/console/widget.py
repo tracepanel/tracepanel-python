@@ -10,12 +10,15 @@ import urllib.parse
 from dataclasses import dataclass
 
 from tracepanel.core import runtime
-from tracepanel.core.analysis import analyze
 from tracepanel.core.conf import Config
 from tracepanel.core.context import now_us
 from tracepanel.core.model import Issue, Trace
+from tracepanel.storage import transport
 
 EXPOSED_HEADERS = ("Tracepanel-Id", "Tracepanel-Name", "Tracepanel-Url", "Server-Timing")
+
+# Issues not known yet (the agent finds them): the widget asks the console once the trace is stored.
+PENDING = "pending"
 
 _HEAD = re.compile(r"<head(?:\s[^>]*)?>", re.IGNORECASE)
 
@@ -32,25 +35,22 @@ class Timing:
     total_ms: float
     db_ms: float
     queries: int
-    issues: int
+    # None: found later, by the agent.
+    issues: int | None
 
     @classmethod
     def of(cls, trace: Trace) -> "Timing":
         sql = [span for span in trace.spans if span.kind == "sql"]
-        return cls(trace.duration / 1000, sum(span.duration for span in sql) / 1000, len(sql), findings(trace.issues))
+        issues = None if transport.analyzes_later() else findings(trace.issues)
+        return cls(trace.duration / 1000, sum(span.duration for span in sql) / 1000, len(sql), issues)
 
     @classmethod
     def live(cls, trace: Trace, config: Config) -> "Timing":
         """For a trace still running (the response goes out before it ends): its time so far, its issues now."""
         sql = [span for span in trace.spans if span.kind == "sql"]
-        issues = analyze(
-            trace,
-            n_plus_one_threshold=config.n_plus_one_threshold,
-            slow_sql_ms=config.slow_sql_ms,
-            long_transaction_ms=config.long_transaction_ms,
-        )
+        issues = None if transport.analyzes_later() else findings(transport.analysis(trace, config))
         total = (now_us() - trace.start) / 1000
-        return cls(total, sum(span.duration for span in sql) / 1000, len(sql), findings(issues))
+        return cls(total, sum(span.duration for span in sql) / 1000, len(sql), issues)
 
 
 Headers = list[tuple[str, str]]
@@ -115,8 +115,8 @@ def server_timing(timing: Timing) -> str:
         f"app;dur={max(timing.total_ms - timing.db_ms, 0):.1f}",
         f"total;dur={timing.total_ms:.1f}",
     ]
-    if timing.issues:
-        metrics.append(f'tracepanel-issues;desc="{timing.issues}"')
+    if timing.issues is None or timing.issues:
+        metrics.append(f'tracepanel-issues;desc="{PENDING if timing.issues is None else timing.issues}"')
     return ", ".join(metrics)
 
 
@@ -151,7 +151,7 @@ def script_tag(api: str, trace: Trace, method: str, status: int, timing: Timing)
         "total": f"{timing.total_ms:.1f}",
         "db": f"{timing.db_ms:.1f}",
         "queries": timing.queries,
-        "issues": timing.issues,
+        "issues": PENDING if timing.issues is None else timing.issues,
         # What served the page: the panel shows it next to its logo.
         "runtime": runtime.label(),
     }
