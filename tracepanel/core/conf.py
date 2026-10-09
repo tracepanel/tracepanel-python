@@ -36,6 +36,9 @@ class Config:
     prefix: str = "/__tracepanel__/"
     # Directory for the local store, relative to `root`.
     dir: str = ".tracepanel"
+    # Where traces go: "auto" sends them to `tracepanel agent` when it runs for this store (else the process writes
+    # the store itself), "off" always writes the store, or the agent's address (`unix:/path`).
+    agent: str = "auto"
     # Where `tracepanel console` serves the console: the terminal line after each task or command links to it.
     console_url: str = "http://127.0.0.1:8765/"
     # A line in the terminal after each task run and management command, with a link to its trace.

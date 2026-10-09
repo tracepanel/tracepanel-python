@@ -1,6 +1,6 @@
 """Bounded buffer and background batch writing.
 
-Events go to the local store by default, and to the agent (unix socket / TCP) when TRACEPANEL_AGENT is set.
+Traces go to tracepanel-agent when one runs for the project (see tracepanel.storage.agent), else to the local store.
 """
 
 import atexit
@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 from typing import Protocol
 
+from tracepanel._compat import override
 from tracepanel.core import conf, errors
 from tracepanel.core.analysis import analyze
 from tracepanel.core.model import Trace
@@ -28,11 +29,13 @@ class Writer(Protocol):
     def flush(self, timeout: float = 5.0) -> None: ...
 
 
-class StoreWriter:
-    """Never blocks the request: a full queue drops the trace and counts it."""
+class BatchWriter:
+    """A bounded queue and a thread that writes it in batches; subclasses say where a batch goes (`write`).
 
-    def __init__(self, store: Store) -> None:
-        self.store = store
+    Never blocks the request: a full queue drops the trace and counts it.
+    """
+
+    def __init__(self) -> None:
         self.dropped = 0
         self._start()
         atexit.register(self.flush)
@@ -61,12 +64,15 @@ class StoreWriter:
                 except queue.Empty:
                     break
             try:
-                self.store.write(batch)
+                self.write(batch)
             except Exception:  # noqa: BLE001 (the writer thread must survive storage errors)
                 self.dropped += len(batch)
             finally:
                 for _ in batch:
                     self._queue.task_done()
+
+    def write(self, batch: list[Trace]) -> None:
+        raise NotImplementedError
 
     def flush(self, timeout: float = 5.0) -> None:
         """Wait until queued traces are written (used at exit and in tests)."""
@@ -80,13 +86,29 @@ class StoreWriter:
         done.wait(timeout)
 
 
+class StoreWriter(BatchWriter):
+    """Writes the project's local store itself."""
+
+    def __init__(self, store: Store) -> None:
+        self.store = store
+        super().__init__()
+
+    @override
+    def write(self, batch: list[Trace]) -> None:
+        self.store.write(batch)
+
+
 _writer: Writer | None = None
 
 
 def get_writer() -> Writer:
     global _writer  # noqa: PLW0603 (lazy process-wide singleton)
     if _writer is None:
-        _writer = StoreWriter(get_store())
+        from tracepanel.storage import agent  # noqa: PLC0415 (agent imports this module)
+
+        config = conf.get_config()
+        # With an agent (`tracepanel agent`) the traces go to it; without one, as before, to the local store.
+        _writer = StoreWriter(get_store()) if config.agent == "off" else agent.AgentWriter(config)
     return _writer
 
 

@@ -41,7 +41,14 @@ def main() -> None:
             sys.exit(
                 'tracepanel-agent not found: pip install "tracepanel[agent]" or use the tracepanel/agent Docker image'
             )
-        os.execv(agent, [agent, *args[1:]])  # noqa: S606 (replaces this process with the agent)
+        argv = args[1:]
+        if "--dir" not in argv:
+            # The store this project's processes use: tracepanel.toml, TRACEPANEL_* and the current directory.
+            from tracepanel.core import conf  # noqa: PLC0415
+
+            config = conf.get_config()
+            argv = ["--dir", str(conf.project_root() / config.dir), *argv]
+        os.execv(agent, [agent, *argv])  # noqa: S606 (replaces this process with the agent)
     print(USAGE, file=sys.stderr)
     sys.exit(2)
 

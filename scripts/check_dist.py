@@ -6,7 +6,12 @@ import zipfile
 from pathlib import Path
 
 DIST = Path(__file__).resolve().parent.parent / "dist"
-REQUIRED = ("tracepanel/static/tracepanel/widget.js", "tracepanel/static/tracepanel/ui/index.html")
+REQUIRED = (
+    "tracepanel/static/tracepanel/widget.js",
+    "tracepanel/static/tracepanel/ui/index.html",
+    # Data files the code reads at import: the store's schema.
+    "tracepanel/storage/schema.sql",
+)
 
 
 def names(path: Path) -> list[str]:
@@ -25,7 +30,7 @@ def main() -> None:
     for artifact in artifacts:
         missing = [path for path in REQUIRED if path not in names(artifact)]
         if missing:
-            sys.exit(f"{artifact.name} is missing the UI ({', '.join(missing)}): run `poe ui` before building")
+            sys.exit(f"{artifact.name} is missing {', '.join(missing)}: run `poe ui` before building")
         print(f"{artifact.name}: UI included", file=sys.stderr)  # noqa: T201
 
 
