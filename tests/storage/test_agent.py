@@ -16,6 +16,7 @@ import urllib.request
 from collections.abc import Generator
 from contextlib import closing
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 from dirty_equals import IsPartialDict, IsPositiveInt
@@ -308,6 +309,46 @@ def test_the_agents_console_answers_as_pythons(
         "nope",
         *(f"traces/{trace.id}" for trace in requests),
         *(f"traces/{trace.id}/related" for trace in requests),
+        "search",
+        # Searching traces: every kind of filter, pages, and the messages of queries the user can fix.
+        *(
+            f"traces?q={quote(query)}"
+            for query in (
+                "",
+                "status>=500",
+                "status:200,404",
+                "status!=200",
+                "has:n+1",
+                "has:error",
+                "has:logs",
+                "route:/n-*",
+                "route!=/n-*",
+                "method:get",
+                "duration>1ms",
+                "duration<=5s",
+                "queries>3",
+                "kind:http,task",
+                "kind:task state:success",
+                "task:send_*",
+                "since:1h",
+                "until:2000-01-01",
+                "db:default",
+                "cache:default",
+                f"trace:{requests[0].id}",
+                "plus one",
+                '"n-plus"',
+                "colour:red",
+                "status:abc",
+                "has:everything",
+                "has>1",
+                "route>/a",
+                "since:yesterday",
+                "since>1h",
+            )
+        ),
+        "traces?limit=3",
+        "traces?limit=3&before=99999999999999999",
+        "traces?limit=oops",
     ]
     for path in paths:
         python = client.get(f"/__tracepanel__/api/{path}")
