@@ -17,6 +17,7 @@ from tracepanel.console import widget
 from tracepanel.core import conf, errors
 from tracepanel.core.context import current_trace, start_trace
 from tracepanel.core.model import Trace
+from tracepanel.integrations import htmx
 from tracepanel.storage.transport import complete
 
 StartResponse = Callable[..., Any]
@@ -77,7 +78,8 @@ class TracepanelMiddleware:
             return self.app(environ, start_response)
         method = str(environ.get("REQUEST_METHOD", "GET"))
         response = _Response()
-        with start_trace("http", f"{method} {path}", {"http.method": method, "http.path": path}) as trace:
+        attrs = {"http.method": method, "http.path": path, **htmx.request_attrs(_request_headers(environ))}
+        with start_trace("http", f"{method} {path}", attrs) as trace:
             try:
                 result = self.app(environ, response.start_response)
                 chunks = iter(result)
@@ -100,6 +102,8 @@ class TracepanelMiddleware:
             trace.attrs["http.status_code"] = response.code
             if response.code >= 500:  # noqa: PLR2004
                 trace.status = "error"
+            headers = {name.lower(): value for name, value in response.headers}
+            trace.attrs.update(htmx.response_attrs(trace.attrs, response.code, headers, body))
             widget.set_header(response.headers, "Tracepanel-Id", trace.id)
             if body is not None:
                 body = _decorate(environ, response, trace, config, body)
@@ -110,6 +114,11 @@ class TracepanelMiddleware:
             return [body]
         # Streamed: the body goes out as the app makes it; the timing isn't known in advance.
         return _Streamed([*response.written, *first], chunks, result)
+
+
+def _request_headers(environ: dict[str, Any]) -> dict[str, str]:
+    """HTTP_HX_REQUEST -> hx-request: the request's headers by lower-case name."""
+    return {key[5:].lower().replace("_", "-"): str(value) for key, value in environ.items() if key.startswith("HTTP_")}
 
 
 def _first(chunks: Iterator[bytes]) -> Iterator[bytes]:

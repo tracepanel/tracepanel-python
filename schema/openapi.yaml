@@ -523,13 +523,13 @@ components:
       minimum: 0
     IssueKind:
       type: string
-      enum: [n+1, duplicates, slow-sql, error, long-transaction, in-transaction]
+      enum: [n+1, duplicates, slow-sql, error, long-transaction, in-transaction, htmx]
     TraceSummary:
       type: object
       description: A trace without its document, as in lists.
       additionalProperties: false
       required: [id, kind, name, start, duration, status, http_status, method, path, route, view, user_id, queries,
-        db_time, issues, errors, logs, mails, issue_kinds, db_aliases, cache_aliases, task_state]
+        db_time, issues, errors, logs, mails, issue_kinds, db_aliases, cache_aliases, task_state, htmx]
       properties:
         id: { type: string }
         kind: { type: string, enum: [http, task, command, websocket] }
@@ -556,6 +556,10 @@ components:
           type: [string, "null"]
           enum: [success, failure, retry, null]
           description: How a Celery task run ended; null for requests and commands.
+        htmx:
+          type: [string, "null"]
+          enum: [request, boosted, null]
+          description: Sent by htmx (HX-Request); boosted when a boosted link or form loaded a whole page.
     LogRow:
       type: object
       additionalProperties: false

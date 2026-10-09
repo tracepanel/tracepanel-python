@@ -6,6 +6,7 @@ The Rust agent implements the same rules; both are checked against the same fixt
 import hashlib
 import re
 from collections import Counter, defaultdict
+from collections.abc import Callable
 
 from tracepanel.core.model import Issue, Span, Trace
 
@@ -292,9 +293,24 @@ def _transaction_issues(trace: Trace, long_transaction_ms: int) -> list[Issue]:
     return issues
 
 
+# Checks an integration adds (a library's own mistakes, htmx's), run after the built-in ones.
+Check = Callable[[Trace], list[Issue]]
+CHECKS: list[Check] = []
+
+
+def register_check(check: Check) -> None:
+    """Add an integration's check; registering the same function again does nothing."""
+    if check not in CHECKS:
+        CHECKS.append(check)
+
+
 def analyze(
     trace: Trace, *, n_plus_one_threshold: int = 3, slow_sql_ms: int = 100, long_transaction_ms: int = 500
 ) -> list[Issue]:
     """Detect issues in a finished trace; errors first, then by occurrence count."""
-    found = _sql_issues(trace, n_plus_one_threshold, slow_sql_ms) + _transaction_issues(trace, long_transaction_ms)
+    found = (
+        _sql_issues(trace, n_plus_one_threshold, slow_sql_ms)
+        + _transaction_issues(trace, long_transaction_ms)
+        + [issue for check in CHECKS for issue in check(trace)]
+    )
     return _error_issues(trace) + sorted(found, key=lambda i: -i.count)

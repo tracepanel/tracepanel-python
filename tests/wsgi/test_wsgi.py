@@ -42,8 +42,10 @@ def wrapped(traces: list[Trace]) -> Generator[tracepanel.wsgi.WSGIApp, None, Non
     conf.use_source(previous)
 
 
-def call(wsgi: tracepanel.wsgi.WSGIApp, path: str) -> tuple[str, dict[str, str], bytes]:
-    environ: dict[str, Any] = {"PATH_INFO": path}
+def call(
+    wsgi: tracepanel.wsgi.WSGIApp, path: str, environ: dict[str, Any] | None = None
+) -> tuple[str, dict[str, str], bytes]:
+    environ = {"PATH_INFO": path, **(environ or {})}
     setup_testing_defaults(environ)
     started: dict[str, Any] = {}
 
@@ -122,3 +124,15 @@ def test_off_unless_enabled(traces: list[Trace]) -> None:
     assert tracepanel.wsgi.install(app) is app
 
     conf.use_source(previous)
+
+
+def test_htmx_gets_a_whole_page(wrapped: tracepanel.wsgi.WSGIApp, traces: list[Trace]) -> None:
+    call(wrapped, "/page", {"HTTP_HX_REQUEST": "true", "HTTP_HX_TARGET": "rows"})
+    (trace,) = traces
+
+    assert {key: value for key, value in trace.attrs.items() if key.startswith("htmx.")} == {
+        "htmx.request": True,
+        "htmx.target": "rows",
+        "htmx.full_page": True,
+    }
+    assert [issue.title for issue in trace.issues] == ["Whole page sent to htmx · GET /page"]

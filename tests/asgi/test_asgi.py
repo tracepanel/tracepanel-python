@@ -125,3 +125,15 @@ def test_one_trace_for_a_starlette_app_mounted_in_another(traces: list[Trace], r
     (trace,) = traces
 
     assert (trace.name, views(trace)) == ("GET /v1/items/{item_id}", ["tests.asgi.test_asgi.item"])
+
+
+def test_htmx_gets_a_whole_page(client: TestClient, traces: list[Trace]) -> None:
+    client.get("/page", headers={"HX-Request": "true", "HX-Trigger": "load"})
+    (trace,) = traces
+
+    assert {key: value for key, value in trace.attrs.items() if key.startswith("htmx.")} == {
+        "htmx.request": True,
+        "htmx.trigger": "load",
+        "htmx.full_page": True,
+    }
+    assert [issue.title for issue in trace.issues] == ["Whole page sent to htmx · GET /page"]

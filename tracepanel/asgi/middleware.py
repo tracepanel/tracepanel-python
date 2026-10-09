@@ -17,6 +17,7 @@ from tracepanel.console import widget
 from tracepanel.core import conf, errors
 from tracepanel.core.context import current_trace, start_span, start_trace
 from tracepanel.core.model import Trace
+from tracepanel.integrations import htmx
 from tracepanel.storage.transport import complete
 
 Scope = MutableMapping[str, Any]
@@ -136,7 +137,8 @@ class TracepanelMiddleware:
             wrap_routes(self.routes())
         method = str(scope.get("method", "GET"))
         failure: Exception | None = None
-        with start_trace("http", f"{method} {path}", {"http.method": method, "http.path": path}) as trace:
+        attrs = {"http.method": method, "http.path": path, **htmx.request_attrs(_headers(scope))}
+        with start_trace("http", f"{method} {path}", attrs) as trace:
             responder = _Responder(scope, send, trace, config)
             try:
                 await self.app(scope, receive, responder.send)
@@ -207,6 +209,7 @@ class _Responder:
             return
         self.body.append(message.get("body", b""))
         if message.get("more_body") and len(self.body) == 1:
+            self._htmx(None)
             # Streaming: send what we have, with the id only (the timing isn't known yet).
             _set_header(self.start, "Tracepanel-Id", self.trace.id)
             self.sent = True
@@ -217,6 +220,11 @@ class _Responder:
         if message.get("more_body"):
             return
         await self._flush()
+
+    def _htmx(self, body: bytes | None) -> None:
+        if self.start is not None:
+            status, headers = int(self.start["status"]), _headers(self.start)
+            self.trace.attrs.update(htmx.response_attrs(self.trace.attrs, status, headers, body))
 
     async def error(self) -> None:
         """The plain 500 Starlette sends, with tracepanel's headers; nothing if the response already started."""
@@ -235,6 +243,7 @@ class _Responder:
         if start is None:
             return
         body = b"".join(self.body)
+        self._htmx(body)
         trace, config = self.trace, self.config
         _name(trace, self.scope, str(self.scope.get("method", "GET")))
         method = str(self.scope.get("method", "GET"))

@@ -422,7 +422,8 @@
             "slow-sql",
             "error",
             "long-transaction",
-            "in-transaction"
+            "in-transaction",
+            "htmx"
           ]
         },
         "title": {

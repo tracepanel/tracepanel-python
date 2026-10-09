@@ -179,7 +179,9 @@ FIELDS: dict[str, dict[str, Field]] = {
         "duration": Field("duration", "Total time: duration>200ms"),
         "queries": Field("number", "SQL queries: queries>20"),
         "user": Field("text", "User id"),
-        "has": Field("has", "n+1, duplicates, slow-sql, long-transaction, in-transaction, error, issues, logs, mail"),
+        "has": Field(
+            "has", "n+1, duplicates, slow-sql, long-transaction, in-transaction, htmx, error, issues, logs, mail"
+        ),
         "db": Field("text", "Used this database alias: db:replica"),
         "cache": Field("text", "Used this cache alias: cache:sessions"),
         "query": Field("text", "Contains this SQL statement (id from Queries)"),
@@ -257,7 +259,7 @@ FIELDS: dict[str, dict[str, Field]] = {
         "until": Field("time", "Calls before: until:5m"),
     },
     "issues": {
-        "kind": Field("text", "error, n+1, duplicates, slow-sql, long-transaction, in-transaction"),
+        "kind": Field("text", "error, n+1, duplicates, slow-sql, long-transaction, in-transaction, htmx"),
         "route": Field("text", "Route of a request it happened in, * wildcards"),
         "since": Field("time", "Last seen at or after: since:15m"),
         "until": Field("time", "Last seen before: until:5m"),

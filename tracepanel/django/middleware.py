@@ -7,12 +7,13 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from asgiref.sync import iscoroutinefunction, markcoroutinefunction, sync_to_async
-from django.http import HttpRequest
+from django.http import HttpRequest, HttpResponse
 from django.http.response import HttpResponseBase
 from django.utils.functional import SimpleLazyObject, empty
 
 from tracepanel.core import conf, errors
 from tracepanel.django import console, widget
+from tracepanel.integrations import htmx
 
 if TYPE_CHECKING:
     from django.contrib.auth.base_user import AbstractBaseUser
@@ -91,6 +92,8 @@ def finish(trace: Trace, request: HttpRequest, response: HttpResponseBase) -> No
         # One URL serves every GraphQL operation: the operation names the request.
         trace.name = f"GraphQL {operation}"
     trace.attrs["http.status_code"] = response.status_code
+    body = response.content if isinstance(response, HttpResponse) else None
+    trace.attrs.update(htmx.response_attrs(trace.attrs, response.status_code, response.headers, body))
     if not trace.attrs.get("user.logged_out"):
         # After logout() request.user is anonymous: the user who left was recorded by the signal.
         trace.attrs.update(user_attrs(request))
@@ -102,7 +105,7 @@ def finish(trace: Trace, request: HttpRequest, response: HttpResponseBase) -> No
 
 
 def _attrs(request: HttpRequest) -> Attrs:
-    return {"http.method": request.method, "http.path": request.path}
+    return {"http.method": request.method, "http.path": request.path, **htmx.request_attrs(request.headers)}
 
 
 class TracepanelMiddleware:

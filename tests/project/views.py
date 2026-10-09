@@ -9,8 +9,8 @@ from django.core.mail import send_mail
 from django.db import IntegrityError, transaction
 from django.db.models.signals import post_save
 from django.dispatch import Signal, receiver
-from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import render
+from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
+from django.shortcuts import redirect, render
 
 logger = logging.getLogger(__name__)
 
@@ -253,3 +253,15 @@ def html_page(request: HttpRequest) -> HttpResponse:
         '<!doctype html><html><head><title>App</title><script src="/app.js"></script></head>'
         "<body><h1>hi</h1></body></html>"
     )
+
+
+def htmx_row(request: HttpRequest) -> HttpResponse:
+    # A fragment for htmx, with an event for the page.
+    response = HttpResponse("<tr><td>row</td></tr>")
+    response["HX-Trigger"] = "rowSaved"
+    return response
+
+
+def htmx_login_needed(request: HttpRequest) -> HttpResponseRedirect:
+    # What login_required does: htmx follows it and swaps the login page in.
+    return redirect("/html-page/")

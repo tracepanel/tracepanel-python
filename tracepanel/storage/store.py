@@ -22,7 +22,7 @@ from tracepanel.core.model import Trace
 from tracepanel.storage import search
 from tracepanel.storage.search import Param, Term
 
-STORE_VERSION = "12"
+STORE_VERSION = "13"
 TABLES = (
     "meta",
     "traces",
@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS traces (
     db_aliases TEXT NOT NULL,
     cache_aliases TEXT NOT NULL,
     task_state TEXT,
+    htmx TEXT,
     doc TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS traces_start ON traces (start DESC);
@@ -159,7 +160,7 @@ FTS_SCHEMA = "CREATE VIRTUAL TABLE IF NOT EXISTS logs_fts USING fts5(message, lo
 
 LISTING = (
     "id, kind, name, start, duration, status, http_status, method, path, route, view, user_id, "
-    "queries, db_time, issues, issue_kinds, errors, logs, mails, db_aliases, cache_aliases, task_state"
+    "queries, db_time, issues, issue_kinds, errors, logs, mails, db_aliases, cache_aliases, task_state, htmx"
 )
 
 
@@ -194,9 +195,12 @@ def _has(term: Term) -> tuple[str, list[Param]]:
         return "issues > 0", []
     if term.value == "mail":
         return "mails > 0", []
-    if term.value in {"n+1", "duplicates", "slow-sql", "long-transaction", "in-transaction"}:
+    if term.value in {"n+1", "duplicates", "slow-sql", "long-transaction", "in-transaction", "htmx"}:
         return "issue_kinds LIKE ?", [f"%,{term.value},%"]
-    msg = "has expects one of: n+1, duplicates, slow-sql, long-transaction, in-transaction, error, issues, logs, mail"
+    msg = (
+        "has expects one of: n+1, duplicates, slow-sql, long-transaction, in-transaction, htmx, error, issues, logs, "
+        "mail"
+    )
     raise search.SearchError(msg)
 
 
@@ -472,7 +476,7 @@ class Store:
         cache_spans = [span for span in trace.spans if span.kind == "cache"]
         cache_aliases = {str(span.attrs.get("cache.alias") or "default") for span in cache_spans}
         db.execute(
-            f"INSERT OR REPLACE INTO traces ({LISTING}, doc) VALUES ({', '.join('?' * 23)})",  # noqa: S608
+            f"INSERT OR REPLACE INTO traces ({LISTING}, doc) VALUES ({', '.join('?' * 24)})",  # noqa: S608
             (
                 trace.id,
                 trace.kind,
@@ -496,6 +500,7 @@ class Store:
                 _alias_list(db_aliases),
                 _alias_list(cache_aliases),
                 str(attrs["task.state"]).lower() if attrs.get("task.state") else None,
+                ("boosted" if attrs.get("htmx.boosted") else "request") if attrs.get("htmx.request") else None,
                 json.dumps(trace.to_dict(), separators=(",", ":")),
             ),
         )
