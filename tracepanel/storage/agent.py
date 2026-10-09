@@ -21,6 +21,8 @@ from tracepanel.storage.store import STORE_VERSION, Store, get_store
 from tracepanel.storage.transport import BatchWriter
 
 PROTOCOL = 1
+# This SDK finds issues itself (tests turn it off to check the agent's analysis against it).
+ANALYZED = True
 ADDR_FILE = "agent.addr"
 # How long to wait for the agent to answer; the batch then goes to the local store.
 CONNECT_TIMEOUT_S = 0.5
@@ -40,7 +42,7 @@ def address(config: conf.Config) -> str | None:
         return None
 
 
-def connect(addr: str, max_traces: int) -> socket.socket | None:
+def connect(addr: str, max_traces: int, thresholds: dict[str, int] | None = None) -> socket.socket | None:
     """A connection the agent accepted for this store version, or None."""
     if not addr.startswith("unix:"):
         return None
@@ -48,7 +50,15 @@ def connect(addr: str, max_traces: int) -> socket.socket | None:
     try:
         sock.settimeout(CONNECT_TIMEOUT_S)
         sock.connect(addr.removeprefix("unix:"))
-        hello = {"protocol": PROTOCOL, "store": STORE_VERSION, "max_traces": max_traces}
+        # Traces come analyzed (their issues with them): the agent only analyzes those of SDKs that don't.
+        hello = {
+            "protocol": PROTOCOL,
+            "store": STORE_VERSION,
+            "max_traces": max_traces,
+            "analyzed": ANALYZED,
+            # The limits issues are found with, should the agent analyze.
+            **({"thresholds": thresholds} if thresholds else {}),
+        }
         sock.sendall(json.dumps(hello).encode() + b"\n")
         answer = json.loads(sock.makefile("rb").readline() or b"{}")
     except (OSError, ValueError):
@@ -83,7 +93,12 @@ class AgentWriter(BatchWriter):
     def write(self, batch: list[Trace]) -> None:
         if self._sock is None and time.monotonic() >= self._retry_at:
             addr = address(self.config)
-            self._sock = connect(addr, self.config.max_traces) if addr else None
+            thresholds = {
+                "n_plus_one": self.config.n_plus_one_threshold,
+                "slow_sql_ms": self.config.slow_sql_ms,
+                "long_transaction_ms": self.config.long_transaction_ms,
+            }
+            self._sock = connect(addr, self.config.max_traces, thresholds) if addr else None
             if self._sock is None:
                 self._retry_at = time.monotonic() + RETRY_S
         if self._sock is not None:

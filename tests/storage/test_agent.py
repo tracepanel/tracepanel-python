@@ -20,7 +20,8 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from tracepanel.core import conf
-from tracepanel.core.context import record_span, start_trace
+from tracepanel.core.analysis import analyze
+from tracepanel.core.context import record_span, start_span, start_trace
 from tracepanel.core.model import Trace
 from tracepanel.storage import agent
 from tracepanel.storage.store import STORE_VERSION, TABLES, Store
@@ -33,7 +34,11 @@ AGENT_BIN = Path(
 )
 pytestmark = [
     pytest.mark.django_db,
-    pytest.mark.skipif(not AGENT_BIN.is_file(), reason="no tracepanel-agent build (set TRACEPANEL_AGENT_BIN)"),
+    # Skipped without a build, unless a build was named (CI): then a missing one fails the tests.
+    pytest.mark.skipif(
+        not AGENT_BIN.is_file() and "TRACEPANEL_AGENT_BIN" not in os.environ,
+        reason="no tracepanel-agent build (set TRACEPANEL_AGENT_BIN)",
+    ),
 ]
 # Columns holding JSON, compared parsed: Python writes it with spaces, Rust without.
 JSON_COLUMNS = {("traces", "doc"), ("logs", "attrs")}
@@ -143,6 +148,74 @@ def test_the_agent_writes_what_python_writes(
     assert writer.sent == len(requests)
     assert rows(directory / f"traces.v{STORE_VERSION}.sqlite3") == expected
     assert not (directory / agent.ADDR_FILE).exists()
+
+
+@pytest.fixture
+def with_issues(client: Client, requests: list[Trace], traces: list[Trace]) -> list[Trace]:
+    """Every kind of issue, as tracepanel-python finds them.
+
+    The requests' own, and a slow query and an email in a long transaction (a test's own transaction makes a view's
+    a savepoint, which is no issue).
+    """
+    client.get("/same-group/")
+    client.get("/htmx/login-needed/", headers={"HX-Request": "true"}, follow=True)
+    with start_trace("http", "POST /reports/") as slow:
+        with start_span("transaction", "transaction default", {"db.alias": "default"}) as outer:
+            assert outer is not None
+            record_span(
+                "sql",
+                "SELECT reports",
+                start=slow.start,
+                duration=250_500,
+                attrs={
+                    "db.fingerprint": "SELECT * FROM reports",
+                    "db.params_hash": "a",
+                    "db.alias": "default",
+                    "code.origin": "app/views.py:9 in report",
+                },
+            )
+            record_span(
+                "mail",
+                "Report ready",
+                start=slow.start,
+                duration=900,
+                attrs={"mail.subject": "Report ready", "code.origin": "app/views.py:12 in report"},
+            )
+        outer.duration = 700_000
+    slow.issues = analyze(slow)
+    return [*requests, *[t for t in traces if t not in requests], slow]
+
+
+def test_the_agent_finds_the_issues_python_finds(
+    tmp_path: Path,
+    with_issues: list[Trace],
+    running_agent: tuple[str, Path, subprocess.Popen[bytes]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An SDK that leaves the analysis to the agent (Go) sends traces without issues.
+    addr, directory, process = running_agent
+    python_store = tmp_path / "python" / f"traces.v{STORE_VERSION}.sqlite3"
+    Store(python_store).write(with_issues)
+    monkeypatch.setattr(agent, "ANALYZED", False)
+
+    writer = agent.AgentWriter(dataclasses.replace(conf.get_config(), agent=addr))
+    for trace in with_issues:
+        writer.submit(dataclasses.replace(trace, issues=[]))
+    writer.flush()
+    process.send_signal(signal.SIGTERM)
+    process.wait(timeout=10)
+
+    expected = rows(python_store)
+    assert {row[2] for row in expected["issues"]} == {
+        "n+1",
+        "duplicates",
+        "slow-sql",
+        "long-transaction",
+        "in-transaction",
+        "error",
+        "htmx",
+    }
+    assert rows(directory / f"traces.v{STORE_VERSION}.sqlite3") == expected
 
 
 def test_without_an_agent_the_process_writes_the_store(tmp_path: Path, requests: list[Trace], store: Store) -> None:

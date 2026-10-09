@@ -16,7 +16,8 @@ DUPLICATES_MIN = 2
 
 _WHITESPACE = re.compile(r"\s+")
 _IN_LIST = re.compile(r"\bIN \((?:%s|\?)(?:, ?(?:%s|\?))*\)", re.IGNORECASE)
-_BY_PK = re.compile(r'WHERE [`"]?\w+[`"]?\.[`"]?id[`"]? = (?:%s|\?)', re.IGNORECASE)
+# A lookup by primary key: `WHERE table.id = ?`, or `WHERE id = ?` (a hand-written query); %s, ? or $1.
+_BY_PK = re.compile(r'WHERE (?:[`"]?\w+[`"]?\.)?[`"]?id[`"]? = (?:%s|\?|\$\d+)', re.IGNORECASE)
 
 SELECT_RELATED = (
     "Load the related object in the same query: add `select_related()` for this ForeignKey "
@@ -128,7 +129,10 @@ def _sql_issues(trace: Trace, n_plus_one_threshold: int, slow_sql_ms: int) -> li
     for (alias, statement), spans in groups.items():
         key = statement if alias == "default" else f"{alias}|{statement}"
         culprit = _culprit(spans)
-        by_params = Counter(s.attrs.get("db.params_hash") for s in spans)
+        # An SDK that can't see the parameters (Go's database/sql through OpenTelemetry) sends no hash: then only
+        # the shape tells (a by-key lookup looped from one line), and repeats can't be called duplicates.
+        params_known = all(s.attrs.get("db.params_hash") is not None for s in spans)
+        by_params = Counter(s.attrs.get("db.params_hash") for s in spans) if params_known else Counter()
         by_pk = bool(_BY_PK.search(statement))
         select = statement.upper().startswith("SELECT")
         # Only actionable patterns: reads that project code triggers. Django internals
@@ -159,7 +163,7 @@ def _sql_issues(trace: Trace, n_plus_one_threshold: int, slow_sql_ms: int) -> li
                     span_ids=[s.id for s in spans][:50],
                 )
             )
-        elif actionable and by_params.most_common(1)[0][1] >= DUPLICATES_MIN:
+        elif actionable and params_known and by_params.most_common(1)[0][1] >= DUPLICATES_MIN:
             repeated = [s for s in spans if by_params[s.attrs.get("db.params_hash")] >= DUPLICATES_MIN]
             issues.append(
                 Issue(

@@ -106,3 +106,17 @@ def test_same_related_object_in_a_loop_is_an_n_plus_one(client: Client, traces: 
 )
 def test_error_titles_are_one_line_cut_at_a_word(message: str, title: str) -> None:
     assert headline(message) == title
+
+
+def test_sql_without_parameters_from_another_sdk() -> None:
+    # Go's database/sql through OpenTelemetry: no parameter hash, plain `WHERE id = ?`.
+    def go_sql(statement: str) -> Span:
+        attrs: Attrs = {"db.fingerprint": statement, "code.origin": "app.go:54 in (*App).listBooks"}
+        return Span(id=new_id(), parent_id=None, kind="sql", name="SELECT authors", start=0, duration=10, attrs=attrs)
+
+    lookups = _trace(*(go_sql("SELECT name FROM authors WHERE id = ?") for _ in range(20)))
+    counts = _trace(*(go_sql("SELECT COUNT(*) FROM books WHERE author_id = ?") for _ in range(3)))
+
+    assert [(i.kind, i.count) for i in analyze(lookups)] == [("n+1", 20)]
+    # Without the parameters, repeats can't be called duplicates: they may be a loop over different rows.
+    assert analyze(counts) == []
