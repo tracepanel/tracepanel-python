@@ -13,7 +13,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from tracepanel._compat import override
-from tracepanel.core import conf, errors
+from tracepanel.core import conf, errors, runtime
 from tracepanel.core.analysis import analyze
 from tracepanel.core.model import Trace
 from tracepanel.storage.store import Store, get_store
@@ -140,6 +140,8 @@ def complete(trace: Trace) -> Trace:
     config = conf.get_config()
     trace.attrs.setdefault("service.name", config.service)
     trace.attrs.setdefault("service.role", role(trace))
+    for key, value in runtime.attrs().items():
+        trace.attrs.setdefault(key, value)
     trace.issues = analyze(
         trace,
         n_plus_one_threshold=config.n_plus_one_threshold,

@@ -9,6 +9,7 @@ import re
 import urllib.parse
 from dataclasses import dataclass
 
+from tracepanel.core import runtime
 from tracepanel.core.analysis import analyze
 from tracepanel.core.conf import Config
 from tracepanel.core.context import now_us
@@ -151,6 +152,8 @@ def script_tag(api: str, trace: Trace, method: str, status: int, timing: Timing)
         "db": f"{timing.db_ms:.1f}",
         "queries": timing.queries,
         "issues": timing.issues,
+        # What served the page: the panel shows it next to its logo.
+        "runtime": runtime.label(),
     }
     attrs = " ".join(f'data-tracepanel-{name}="{html.escape(str(value))}"' for name, value in values.items())
     return f'<script src="{html.escape(api)}widget.js" {attrs}></script>'

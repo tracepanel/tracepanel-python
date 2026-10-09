@@ -24,6 +24,8 @@ def test_script_injected_into_html(client: Client, traces: list[Trace], db: None
     body = client.get("/html/").content.decode()
     assert '<script src="/__tracepanel__/widget.js"' in body
     assert f'data-tracepanel-id="{traces[0].id}"' in body
+    # What served the page, for the panel's runtime chip.
+    assert 'data-tracepanel-runtime="Python ' in body
     assert body.index("<script") < body.index("</body>")
 
 

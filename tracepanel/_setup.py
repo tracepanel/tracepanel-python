@@ -23,9 +23,10 @@ def started(framework: str, *, debug: str = "debug mode", django: bool = False, 
     """The framework is set up: install the integrations, register EXPLAIN, and say so in the terminal."""
     from tracepanel.console import app as app_console  # noqa: PLC0415 (only once an app installs tracepanel)
     from tracepanel.console import terminal  # noqa: PLC0415
-    from tracepanel.core import registry  # noqa: PLC0415
+    from tracepanel.core import registry, runtime  # noqa: PLC0415
     from tracepanel.integrations import sqlalchemy  # noqa: PLC0415
 
+    runtime.set_framework(framework)
     registry.install(django=django)
     # EXPLAIN in the console runs on the SQLAlchemy engine a query came from (Django's own runs on its connection).
     if not django:

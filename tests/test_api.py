@@ -73,7 +73,16 @@ def test_trace_stores_a_trace_of_its_own(traces: list[Trace], users: list[User])
     (trace,) = traces
 
     assert (trace.kind, trace.name, trace.status) == ("command", "sync-prices", "ok")
-    assert trace.attrs == {"app.source": "erp", "app.batch": 3, "service.name": IsStr, "service.role": "command"}
+    assert trace.attrs == {
+        "app.source": "erp",
+        "app.batch": 3,
+        "service.name": IsStr,
+        "service.role": "command",
+        "telemetry.sdk.language": "python",
+        "process.runtime.name": "cpython",
+        "process.runtime.version": IsStr,
+        "tracepanel.framework": IsStr(regex=r"Django \d+\.\d+.*"),
+    }
     assert shape(trace) == [
         ("function", "tests.test_api.test_trace_stores_a_trace_of_its_own.<locals>.count", "sync-prices"),
         ("sql", "SELECT COUNT auth_user", "tests.test_api.test_trace_stores_a_trace_of_its_own.<locals>.count"),
