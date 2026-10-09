@@ -273,6 +273,14 @@ def get(url: str) -> tuple[int, object]:
         return error.code, json.loads(error.read())
 
 
+def comparable(path: str, answer: tuple[int, object]) -> tuple[int, object]:
+    """An issue's events over time end now, which differs by milliseconds between the two: the counts compare."""
+    status, body = answer
+    if path.startswith("issues/detail") and isinstance(body, dict) and isinstance(body.get("series"), list):
+        body = {**body, "series": sum(bucket["calls"] for bucket in body["series"])}
+    return status, body
+
+
 def listed(url: str) -> int:
     _, body = get(url)
     traces = body.get("traces") if isinstance(body, dict) else None
@@ -346,12 +354,60 @@ def test_the_agents_console_answers_as_pythons(
                 "since>1h",
             )
         ),
+        # Logs and SQL statements.
+        *(
+            f"logs?q={quote(query)}"
+            for query in (
+                "",
+                "level>=warning",
+                "level:error",
+                "logger:tests.*",
+                "hello",
+                "extra.order_id:42",
+                "level:loud",
+            )
+        ),
+        "logs?limit=1",
+        *(f"queries?q={quote(query)}" for query in ("", "table:auth_user", "db:default", "SELECT", "colour:red")),
+        "queries?limit=2",
+        # Emails, issues, the service map and the menus' values.
+        *(
+            f"mails?q={quote(query)}"
+            for query in ("", "to:alice@example.com", "to:alice@*", "from:x@y.z", "Welcome", "subject:x")
+        ),
+        *(
+            f"issues?q={quote(query)}"
+            for query in (
+                "",
+                "kind:error",
+                "kind!=error",
+                "kind:n+1,duplicates",
+                "route:/n-*",
+                "SELECT",
+                "since:1h",
+                "colour:red",
+            )
+        ),
+        "issues/detail?fingerprint=0000000000000000",
+        "issues/detail",
+        *(f"issues/detail?fingerprint={issue['fingerprint']}" for issue in store.list_issues(limit=100)),
+        *(f"services?q={quote(query)}" for query in ("", "kind:database", "role:web", "default", "colour:red")),
+        "values",
         "traces?limit=3",
         "traces?limit=3&before=99999999999999999",
         "traces?limit=oops",
     ]
     for path in paths:
         python = client.get(f"/__tracepanel__/api/{path}")
-        assert get(console + "api/" + path) == (python.status_code, python.json()), path
+        assert comparable(path, get(console + "api/" + path)) == comparable(
+            path, (python.status_code, python.json())
+        ), path
+
+    # Clearing: both delete the same traces.
+    python_cleared = client.delete("/__tracepanel__/api/store")
+    request = urllib.request.Request(console + "api/store", method="DELETE")  # noqa: S310 (the agent under test)
+    with urllib.request.urlopen(request, timeout=5) as response:  # noqa: S310
+        assert (response.status, json.loads(response.read())) == (python_cleared.status_code, python_cleared.json())
+    assert get(console + "api/counts")[1] == client.get("/__tracepanel__/api/counts").json()
     process.send_signal(signal.SIGTERM)
     process.wait(timeout=10)
