@@ -4,7 +4,7 @@ import pytest
 from django.contrib.auth.models import User
 from django.test import Client
 
-from tracepanel.core.analysis import analyze, fingerprint, issue_key
+from tracepanel.core.analysis import analyze, fingerprint, headline, issue_key
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Span, Trace
 from tracepanel.core.sql import span_name
@@ -86,3 +86,23 @@ def test_same_related_object_in_a_loop_is_an_n_plus_one(client: Client, traces: 
     (trace,) = traces
 
     assert [(issue.kind, issue.count) for issue in trace.issues] == [("n+1", 5)]
+
+
+@pytest.mark.parametrize(
+    ("message", "title"),
+    [
+        ("division by zero", "division by zero"),
+        # A driver's message: the first line is the error, the rest is detail per connection attempt.
+        (
+            (
+                'connection failed: FATAL:  password authentication failed for user "shop"\n'
+                "Multiple connection attempts failed. All failures were:\n- host: '127.0.0.1'"
+            ),
+            'connection failed: FATAL: password authentication failed for user "shop"',
+        ),
+        ("\n\n  first line after blanks\nsecond", "first line after blanks"),
+        ("word " * 60, ("word " * 39).strip() + "…"),
+    ],
+)
+def test_error_titles_are_one_line_cut_at_a_word(message: str, title: str) -> None:
+    assert headline(message) == title

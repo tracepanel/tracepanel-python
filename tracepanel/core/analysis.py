@@ -190,6 +190,23 @@ def _sql_issues(trace: Trace, n_plus_one_threshold: int, slow_sql_ms: int) -> li
     return issues
 
 
+TITLE_LIMIT = 200
+
+
+def headline(message: str, limit: int = TITLE_LIMIT) -> str:
+    """An error's message as an issue title: its first line (drivers add details below it), on one line, cut at a word.
+
+    The full message stays on the error itself.
+    """
+    first = next((line for line in message.splitlines() if line.strip()), "")
+    text = _WHITESPACE.sub(" ", first).strip()
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    space = cut.rfind(" ")
+    return f"{(cut[:space] if space > limit // 2 else cut).rstrip(' ,.:;')}…"
+
+
 def _error_issues(trace: Trace) -> list[Issue]:
     issues: list[Issue] = []
     for error in trace.errors:
@@ -201,7 +218,7 @@ def _error_issues(trace: Trace) -> list[Issue]:
                 fingerprint=issue_key("error", error.type, location),
                 fingerprint_version=FINGERPRINT_VERSION,
                 kind="error",
-                title=f"{error.type.removeprefix('builtins.')}: {error.message}"[:200],
+                title=headline(f"{error.type.removeprefix('builtins.')}: {error.message}"),
                 culprit=culprit,
                 hint=None,
                 count=1,
