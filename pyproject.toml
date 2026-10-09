@@ -8,7 +8,17 @@ version = "0.0.1"
 description = "See what your app is really doing: Django, FastAPI, Flask and more."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+# The agent stores, analyzes and serves the console; released together with this package, at the same version. It
+# is a closed binary with wheels for these platforms only (no sdist): elsewhere tracepanel installs without it.
+dependencies = [
+    """tracepanel-agent==0.0.1; \
+    (sys_platform == "linux" and (platform_machine == "x86_64" or platform_machine == "aarch64" \
+        or platform_machine == "armv7l" or platform_machine == "armv6l" or platform_machine == "i686" \
+        or platform_machine == "ppc64le" or platform_machine == "s390x" or platform_machine == "riscv64")) \
+    or sys_platform == "darwin" \
+    or (sys_platform == "win32" and (platform_machine == "AMD64" or platform_machine == "ARM64" \
+        or platform_machine == "x86"))""",
+]
 classifiers = [
     "Framework :: FastAPI",
     "Framework :: Flask",
@@ -105,6 +115,10 @@ flask = [
 falcon = [
     "falcon>=4.2",
 ]
+
+[tool.uv.sources]
+# Unpublished: built from the tracepanel-agent checkout next to this one (Rust; its scripts/schema.sh and ui.sh first).
+tracepanel-agent = { path = "../tracepanel-agent" }
 
 [tool.uv.build-backend]
 module-name = "tracepanel"

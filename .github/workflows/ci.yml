@@ -9,13 +9,46 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+# tracepanel requires tracepanel-agent, built from its checkout next to this one (uv.lock expects ../tracepanel-agent)
+# until it is on the package index. That repository is private: the TRACEPANEL_AGENT_TOKEN secret (read access to
+# tracepanel/tracepanel-agent) is required. The agent compiles in this checkout's store schema; the tests don't need
+# the console's pages, so its UI stays empty.
+env:
+  AGENT_TOKEN: ${{ secrets.TRACEPANEL_AGENT_TOKEN }}
+  GROUPS: >-
+    --group celery --group channels --group strawberry --group django-tasks --group fastapi --group dramatiq
+    --group rq --group ninja --group drf --group flask --group falcon --group otel
+
 jobs:
   lint:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tracepanel-python
     steps:
-      - uses: actions/checkout@v5
+      - name: Require the token
+        if: env.AGENT_TOKEN == ''
+        working-directory: .
+        run: |
+          echo "::error::Set the TRACEPANEL_AGENT_TOKEN secret: read access to tracepanel/tracepanel-agent."
+          exit 1
+      - uses: actions/checkout@v7
+        with:
+          path: tracepanel-python
+      - uses: actions/checkout@v7
+        with:
+          repository: tracepanel/tracepanel-agent
+          token: ${{ env.AGENT_TOKEN }}
+          path: tracepanel-agent
+      - name: The agent's sources
+        run: ../tracepanel-agent/scripts/schema.sh && mkdir -p ../tracepanel-agent/ui-dist
       - uses: astral-sh/setup-uv@v7
-      - run: uv sync --locked --group celery --group channels --group strawberry --group django-tasks --group fastapi --group dramatiq --group rq --group ninja --group drf --group flask --group falcon --group otel
+        with:
+          working-directory: tracepanel-python
+      - run: uv sync --locked $GROUPS
       - run: uv run poe lint
 
   test:
@@ -46,14 +79,35 @@ jobs:
     env:
       TRACEPANEL_TEST_DB: ${{ matrix.db }}
       PGHOST: localhost
+    defaults:
+      run:
+        working-directory: tracepanel-python
     steps:
-      - uses: actions/checkout@v5
+      - name: Require the token
+        if: env.AGENT_TOKEN == ''
+        working-directory: .
+        run: |
+          echo "::error::Set the TRACEPANEL_AGENT_TOKEN secret: read access to tracepanel/tracepanel-agent."
+          exit 1
+      - uses: actions/checkout@v7
+        with:
+          path: tracepanel-python
+      - uses: actions/checkout@v7
+        with:
+          repository: tracepanel/tracepanel-agent
+          token: ${{ env.AGENT_TOKEN }}
+          path: tracepanel-agent
+      - name: The agent's sources
+        run: ../tracepanel-agent/scripts/schema.sh && mkdir -p ../tracepanel-agent/ui-dist
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python }}
-      - run: uv sync --locked --group celery --group channels --group strawberry --group django-tasks --group fastapi --group dramatiq --group rq --group ninja --group drf --group flask --group falcon --group otel ${{ matrix.db == 'postgres' && '--group postgres' || '' }}
+          working-directory: tracepanel-python
+      - run: uv sync --locked $GROUPS ${{ matrix.db == 'postgres' && '--group postgres' || '' }}
       - name: Pin Django ${{ matrix.django }}
         run: uv pip install "django~=${{ matrix.django }}.0"
       - run: uv run --no-sync python -c "import django, sys; print('django', django.get_version(), 'python', sys.version)"
+      # The agent uv built is the one the tests compare with (tests/storage/test_agent.py).
       - run: uv run --no-sync pytest
-
+        env:
+          TRACEPANEL_AGENT_BIN: ${{ github.workspace }}/tracepanel-python/.venv/bin/tracepanel-agent
