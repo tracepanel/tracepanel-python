@@ -7,9 +7,12 @@ import dataclasses
 import json
 import os
 import signal
+import socket
 import sqlite3
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Generator
 from contextlib import closing
 from pathlib import Path
@@ -237,3 +240,77 @@ def test_the_agent_refuses_another_store_version(
     # A process of another tracepanel version writes its own store file.
     monkeypatch.setattr(agent, "STORE_VERSION", "0")
     assert agent.connect(addr, 100) is None
+
+
+@pytest.fixture
+def agent_console(tmp_path: Path) -> Generator[tuple[str, str, Path, subprocess.Popen[bytes]], None, None]:
+    """An agent that also serves the console: (its socket address, the console's URL, its store dir, the process)."""
+    directory = tmp_path / "served"
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    process = subprocess.Popen(  # noqa: S603 (the agent under test)
+        [AGENT_BIN, "--dir", directory, "--serve", f"127.0.0.1:{port}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    addr_file = directory / agent.ADDR_FILE
+    deadline = time.monotonic() + 10
+    while not addr_file.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if not addr_file.exists():
+        process.kill()
+        pytest.fail(f"agent did not start: {process.communicate()[1].decode()}")
+    yield addr_file.read_text().strip(), f"http://127.0.0.1:{port}/", directory, process
+    if process.poll() is None:
+        process.kill()
+
+
+def get(url: str) -> tuple[int, object]:
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310 (the agent under test)
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        return error.code, json.loads(error.read())
+
+
+def listed(url: str) -> int:
+    _, body = get(url)
+    traces = body.get("traces") if isinstance(body, dict) else None
+    return len(traces) if isinstance(traces, list) else 0
+
+
+def test_the_agents_console_answers_as_pythons(
+    client: Client,
+    requests: list[Trace],
+    store: Store,
+    agent_console: tuple[str, str, Path, subprocess.Popen[bytes]],
+) -> None:
+    # The same traces in tracepanel-python's store and in the agent's: the same answers from both consoles.
+    addr, console, _, process = agent_console
+    store.max_traces = 100
+    store.write(requests)
+    writer = agent.AgentWriter(dataclasses.replace(conf.get_config(), agent=addr))
+    for trace in requests:
+        writer.submit(trace)
+    writer.flush()
+    ids = ",".join(trace.id for trace in requests)
+    deadline = time.monotonic() + 10
+    while listed(f"{console}api/traces?ids={ids}&limit=500") < len(requests):
+        assert time.monotonic() < deadline, "the agent didn't write the traces"
+        time.sleep(0.05)
+    # Something to compare: the request that queued a task has it among its related traces.
+    assert any(store.related(trace.id)["enqueued"] for trace in requests)
+
+    paths = [
+        f"traces?ids={ids}",
+        f"traces?ids={ids}&limit=2",
+        "counts",
+        "traces/" + "0" * 26,
+        "nope",
+        *(f"traces/{trace.id}" for trace in requests),
+        *(f"traces/{trace.id}/related" for trace in requests),
+    ]
+    for path in paths:
+        python = client.get(f"/__tracepanel__/api/{path}")
+        assert get(console + "api/" + path) == (python.status_code, python.json()), path
+    process.send_signal(signal.SIGTERM)
+    process.wait(timeout=10)
