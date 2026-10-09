@@ -34,6 +34,7 @@ falcon = ["falcon>=4.0"]
 sqlalchemy = ["sqlalchemy>=2.0"]
 ninja = ["django-ninja>=1.4"]
 drf = ["djangorestframework>=3.15"]
+otel = ["opentelemetry-sdk>=1.45"]
 
 [project.scripts]
 tracepanel = "tracepanel._cli:main"
@@ -93,6 +94,9 @@ ninja = [
 drf = [
     "djangorestframework>=3.18.3",
 ]
+otel = [
+    "opentelemetry-sdk>=1.45.1",
+]
 flask = [
     "flask>=3.1.3",
     "flask-sqlalchemy>=3.1.1",
@@ -124,7 +128,7 @@ ban-relative-imports = "all"
 
 [tool.ruff.lint.isort]
 # tracepanel.integrations.celery and friends are named after the libraries: those names stay third-party.
-known-third-party = ["celery", "channels", "strawberry", "ninja", "rest_framework", "django", "fastapi", "flask", "falcon", "starlette", "sqlalchemy"]
+known-third-party = ["celery", "channels", "strawberry", "ninja", "rest_framework", "django", "fastapi", "flask", "falcon", "starlette", "sqlalchemy", "opentelemetry"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

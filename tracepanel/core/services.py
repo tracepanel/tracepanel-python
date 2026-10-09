@@ -137,7 +137,7 @@ def _port(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _peer(span: Span) -> Peer | None:
+def _peer(span: Span) -> Peer | None:  # noqa: PLR0911 (one return per kind of peer)
     attrs = span.attrs
     address, port = _text(attrs.get("server.address")), _port(attrs.get("server.port"))
     if span.kind == "sql":
@@ -157,6 +157,9 @@ def _peer(span: Span) -> Peer | None:
         return Peer("queue", str(attrs["messaging.system"]), address, port, None, None)
     if span.kind == "http.client" and address:
         return Peer("http", _text(attrs.get("url.scheme")) or "http", address, port, None, None)
+    if system := _text(attrs.get("db.system")):
+        # Any other database a span names (an OpenTelemetry redis or MongoDB span): by the semantic conventions.
+        return Peer("database", system, address, port, _text(attrs.get("db.namespace")), None)
     return None
 
 

@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
-      - run: uv sync --locked --group celery --group channels --group strawberry --group django-tasks --group fastapi --group dramatiq --group rq --group ninja --group drf --group flask --group falcon
+      - run: uv sync --locked --group celery --group channels --group strawberry --group django-tasks --group fastapi --group dramatiq --group rq --group ninja --group drf --group flask --group falcon --group otel
       - run: uv run poe lint
 
   test:
@@ -51,7 +51,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python }}
-      - run: uv sync --locked --group celery --group channels --group strawberry --group django-tasks --group fastapi --group dramatiq --group rq --group ninja --group drf --group flask --group falcon ${{ matrix.db == 'postgres' && '--group postgres' || '' }}
+      - run: uv sync --locked --group celery --group channels --group strawberry --group django-tasks --group fastapi --group dramatiq --group rq --group ninja --group drf --group flask --group falcon --group otel ${{ matrix.db == 'postgres' && '--group postgres' || '' }}
       - name: Pin Django ${{ matrix.django }}
         run: uv pip install "django~=${{ matrix.django }}.0"
       - run: uv run --no-sync python -c "import django, sys; print('django', django.get_version(), 'python', sys.version)"

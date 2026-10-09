@@ -54,6 +54,7 @@ INTEGRATIONS: tuple[Integration, ...] = (
     Integration("dramatiq", "Dramatiq", ("dramatiq",), "tracepanel.integrations.dramatiq"),
     Integration("rq", "RQ", ("rq",), "tracepanel.integrations.rq"),
     Integration("strawberry", "Strawberry", ("strawberry",), "tracepanel.integrations.strawberry"),
+    Integration("otel", "OpenTelemetry", ("opentelemetry.sdk",), "tracepanel.integrations.otel"),
     Integration(
         "django_tasks", "Django Tasks", ("django.tasks", "django_tasks"), "tracepanel.django.tasks", django_only=True
     ),

@@ -66,6 +66,7 @@ class Config:
     drf_enabled: bool = True
     logging_enabled: bool = True
     ninja_enabled: bool = True
+    otel_enabled: bool = True
     rq_enabled: bool = True
     sqlalchemy_enabled: bool = True
     strawberry_enabled: bool = True
