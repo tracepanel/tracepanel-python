@@ -11,7 +11,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 # The agent stores, analyzes and serves the console; released together with this package, at the same version. It
-# is a closed binary with wheels for these platforms only (no sdist): elsewhere tracepanel installs without it.
+# ships as wheels for these platforms only (no sdist yet): elsewhere tracepanel installs without it.
 dependencies = [
     """tracepanel-agent==0.0.1; \
     (sys_platform == "linux" and (platform_machine == "x86_64" or platform_machine == "aarch64" \

@@ -22,7 +22,7 @@ def test_django_is_an_extra_not_a_requirement() -> None:
 
 
 def test_the_agent_is_required_where_it_has_wheels_only() -> None:
-    # A closed binary, no sdist: elsewhere tracepanel installs without it rather than failing.
+    # Wheels only, no sdist yet: elsewhere tracepanel installs without it rather than failing.
     marker = Requirement(project(ROOT / "pyproject.toml")["dependencies"][0]).marker  # type: ignore[index]
     platforms = {
         ("linux", machine): True

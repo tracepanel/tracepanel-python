@@ -76,7 +76,7 @@ Tracepanel records and sends; the Tracepanel agent (a dependency, started on the
 
 Tests mirror the source (`tests/core/`, `tests/storage/`, `tests/console/`, `tests/django/`, `tests/integrations/`); `tests/project/` is the Django project they run against.
 
-Related private repositories: tracepanel-ui (widget and local UI), tracepanel-examples (test projects). Nothing is published to PyPI or npm.
+Related repositories: tracepanel-agent (the agent, with the console and the widget in its `ui/`), tracepanel-examples (test projects). Nothing is published to PyPI or npm.
 
 ## Development
 
@@ -89,7 +89,7 @@ uv run poe lint    # ruff (ALL) + ruff format --check + pyrefly (strict)
 
 `uv run poe build` runs `uv build` and checks that the wheel and sdist hold the SDK only.
 
-## Contract with tracepanel-ui
+## Contract with the console and the widget
 
 The widget and the UI depend on:
 
@@ -97,4 +97,4 @@ The widget and the UI depend on:
 - `data-tracepanel-*` attributes on the injected `<script>`: `api`, `id`, `method`, `status`, `total`, `db`, `queries`, `issues`;
 - the console under `/__tracepanel__/`: the agent's, forwarded, but for `api/explain` and `api/users*`, which the app serves.
 
-Changing any of these needs a matching change in tracepanel-ui.
+Changing any of these needs a matching change in tracepanel-agent's `ui/`.
