@@ -45,7 +45,7 @@ jobs:
           path: tracepanel
       - name: The agent's sources
         run: ../tracepanel/scripts/schema.sh && mkdir -p ../tracepanel/ui-dist
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           working-directory: tracepanel-python
       - run: uv sync --locked $GROUPS
@@ -99,7 +99,7 @@ jobs:
           path: tracepanel
       - name: The agent's sources
         run: ../tracepanel/scripts/schema.sh && mkdir -p ../tracepanel/ui-dist
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: ${{ matrix.python }}
           working-directory: tracepanel-python
