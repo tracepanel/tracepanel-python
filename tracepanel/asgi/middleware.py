@@ -4,7 +4,7 @@ Starlette and FastAPI put the matched route and endpoint in the scope: the trace
 and the endpoint runs inside a `view` span. Other frameworks' requests are named after their path.
 
 The response's start is held until its body is complete (a normal response): its headers then carry the trace's
-timing for the widget, and an HTML page gets widget.js. Streaming responses go out at once, with Tracepanel-Id only.
+timing for the widget, and an HTML page gets widget.min.js. Streaming responses go out at once, with Tracepanel-Id only.
 """
 
 import asyncio

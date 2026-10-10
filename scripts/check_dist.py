@@ -1,6 +1,6 @@
 """Fail if a built wheel or sdist in dist/ holds what belongs to the agent: the console's UI, the store.
 
-tracepanel is the SDK only; the UI, widget.js and the store come with tracepanel-agent, which is closed.
+tracepanel is the SDK only; the UI, widget.min.js and the store come with tracepanel-agent, which is closed.
 """
 
 import sys
@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 DIST = Path(__file__).resolve().parent.parent / "dist"
-FORBIDDEN = ("tracepanel/static/", ".sqlite3", "widget.js", "schema.sql")
+FORBIDDEN = ("tracepanel/static/", ".sqlite3", "widget.min.js", "schema.sql")
 
 
 def names(path: Path) -> list[str]:

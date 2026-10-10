@@ -1,6 +1,6 @@
 """The console from the project's agent: an app's console (Django's /__tracepanel__/) forwards to it.
 
-The UI, widget.js and the API (tracepanel-agent's schema/openapi.yaml) come from the agent at the app's own address:
+The UI, widget.min.js and the API (tracepanel-agent's schema/openapi.yaml) come from the agent at the app's own address:
 the same origin for the widget's calls and the user's cookies. What only the framework can do stays in the app.
 """
 
@@ -20,7 +20,7 @@ TIMEOUT_S = 10.0
 # The widget asks for a trace as soon as its response arrives: the agent may not have written it yet.
 TRACE_WAIT_S = 1.0
 TRACE_POLL_S = 0.05
-# The agent's headers the browser needs: built assets are cached for good, the page and widget.js never.
+# The agent's headers the browser needs: versioned files and fonts are cached for good; the page, widget.min.js never.
 PASSED = ("Cache-Control",)
 
 

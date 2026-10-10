@@ -132,7 +132,7 @@ def exposed(existing: str) -> str:
 
 
 def script_tag(api: str, trace: Trace, method: str, status: int, timing: Timing) -> str:
-    """widget.js with the page's own request in data-tracepanel-* attributes."""
+    """widget.min.js with the page's own request in data-tracepanel-* attributes."""
     name = display_name(trace, method)
     values = {
         "api": api,
@@ -148,7 +148,7 @@ def script_tag(api: str, trace: Trace, method: str, status: int, timing: Timing)
         "runtime": runtime.label(),
     }
     attrs = " ".join(f'data-tracepanel-{name}="{html.escape(str(value))}"' for name, value in values.items())
-    return f'<script src="{html.escape(api)}widget.js" {attrs}></script>'
+    return f'<script src="{html.escape(api)}widget.min.js" {attrs}></script>'
 
 
 def inject(page: str, tag: str) -> str | None:

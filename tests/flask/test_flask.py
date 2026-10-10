@@ -171,7 +171,7 @@ def test_widget_in_html_pages(client: FlaskClient, traces: list[Trace], store: A
     response = client.get("/page")
     body = response.get_data(as_text=True)
 
-    assert body.index("<head>") < body.index('<script src="/__tracepanel__/widget.js"') < body.index("<title>")
+    assert body.index("<head>") < body.index('<script src="/__tracepanel__/widget.min.js"') < body.index("<title>")
     assert f'data-tracepanel-id="{traces[0].id}"' in body
     assert response.headers["Content-Length"] == str(len(response.get_data()))
 

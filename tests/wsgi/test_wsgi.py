@@ -83,7 +83,7 @@ def test_widget_in_html_pages(wrapped: tracepanel.wsgi.WSGIApp, traces: list[Tra
     _, headers, body = call(wrapped, "/page")
     page = body.decode()
 
-    assert page.index("<head>") < page.index('<script src="/__tracepanel__/widget.js"') < page.index("<title>")
+    assert page.index("<head>") < page.index('<script src="/__tracepanel__/widget.min.js"') < page.index("<title>")
     assert f'data-tracepanel-id="{traces[0].id}"' in page
     assert headers["Content-Length"] == str(len(body))
 

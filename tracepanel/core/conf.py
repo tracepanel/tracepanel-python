@@ -30,9 +30,9 @@ class Config:
     root: str = ""
     # This project's name on the service map; the project directory's name when empty.
     service: str = ""
-    # Inject widget.js into HTML responses.
+    # Inject widget.min.js into HTML responses.
     widget: bool = True
-    # URL prefix for the UI, widget.js and the JSON API.
+    # URL prefix for the UI, widget.min.js and the JSON API.
     prefix: str = "/__tracepanel__/"
     # The project's store directory (the agent's), relative to `root`.
     dir: str = ".tracepanel"

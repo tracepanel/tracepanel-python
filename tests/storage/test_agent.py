@@ -82,7 +82,7 @@ def test_the_apps_console_is_the_agents(store: AgentStore, client: Client, users
     store.write([trace])
 
     page = client.get("/__tracepanel__/")
-    widget = client.get("/__tracepanel__/widget.js")
+    widget = client.get("/__tracepanel__/widget.min.js")
     api = client.get(f"/__tracepanel__/api/traces/{trace.id}")
 
     assert (page.status_code, b"<html" in page.content.lower()) == (200, True)

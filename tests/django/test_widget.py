@@ -25,7 +25,7 @@ def test_headers(client: Client, traces: list[Trace], users: list[User]) -> None
 
 def test_script_injected_into_html(client: Client, traces: list[Trace], db: None, store: AgentStore) -> None:
     body = client.get("/html/").content.decode()
-    assert '<script src="/__tracepanel__/widget.js"' in body
+    assert '<script src="/__tracepanel__/widget.min.js"' in body
     assert f'data-tracepanel-id="{traces[0].id}"' in body
     # What served the page, for the panel's runtime chip.
     assert 'data-tracepanel-runtime="Python ' in body
@@ -36,9 +36,9 @@ def test_script_runs_before_the_page_scripts(client: Client, traces: list[Trace]
     # GraphiQL and Swagger keep a reference to fetch while loading: the widget must wrap it first.
     body = client.get("/html-page/").content.decode()
 
-    assert body.index('<script src="/__tracepanel__/widget.js"') < body.index('<script src="/app.js">')
-    assert body.index("<head>") < body.index("widget.js") < body.index("<title>")
-    assert " defer" not in body[body.index("widget.js") : body.index("</script>")]
+    assert body.index('<script src="/__tracepanel__/widget.min.js"') < body.index('<script src="/app.js">')
+    assert body.index("<head>") < body.index("widget.min.js") < body.index("<title>")
+    assert " defer" not in body[body.index("widget.min.js") : body.index("</script>")]
 
 
 def test_json_is_not_touched(client: Client, traces: list[Trace], db: None) -> None:

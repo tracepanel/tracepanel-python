@@ -152,7 +152,7 @@ def test_unhandled_error(client: TestClient, traces: list[Trace]) -> None:
 def test_widget_in_html_pages(client: TestClient, traces: list[Trace], store: AgentStore) -> None:
     body = client.get("/page").text
 
-    assert body.index("<head>") < body.index('<script src="/__tracepanel__/widget.js"') < body.index("<title>")
+    assert body.index("<head>") < body.index('<script src="/__tracepanel__/widget.min.js"') < body.index("<title>")
     assert f'data-tracepanel-id="{traces[0].id}"' in body
 
 

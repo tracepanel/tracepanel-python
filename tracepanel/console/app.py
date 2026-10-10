@@ -2,7 +2,7 @@
 
 A Request in, a Response out: the framework integration adapts its own request and response (Django:
 tracepanel.django.console) and registers what needs the framework with register() (switching the user, EXPLAIN on
-its databases). Everything else, the UI, widget.js and the API, comes from the project's agent (console.proxy).
+its databases). Everything else, the UI, widget.min.js and the API, comes from the project's agent (console.proxy).
 """
 
 import html
