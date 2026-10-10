@@ -1,8 +1,8 @@
-# tracepanel
+# Tracepanel
 
 **See what your Django app is really doing.**
 
-`pip install tracepanel` is all you need in development: tracepanel collects requests, SQL, cache calls, logs and errors, and the tracepanel agent it installs and starts finds N+1 queries, duplicates and slow SQL, keeps the traces in `.tracepanel/` and shows them in a widget on your pages and at `/__tracepanel__/`.
+`pip install tracepanel` is all you need in development: Tracepanel collects requests, SQL, cache calls, logs and errors, and the Tracepanel agent it installs and starts finds N+1 queries, duplicates and slow SQL, keeps the traces in `.tracepanel/` and shows them in a widget on your pages and at `/__tracepanel__/`.
 
 ```python
 # settings.py
@@ -54,9 +54,9 @@ Every outgoing call records what it talks to, with OpenTelemetry attribute names
 | `tests/` | pytest suite; every trace is validated against the agent's trace schema, and the agent is checked through the console's API |
 | `scripts/check_dist.py` | Fails a build whose wheel or sdist holds the agent's files (the UI, the store) |
 
-Package layout. Django is the framework tracepanel is built for; ASGI apps (`tracepanel.asgi`: Starlette, FastAPI, any other) and WSGI apps (`tracepanel.wsgi`: Flask, Falcon, any other) are covered too. Only these packages know their framework: the core, the transport and the console are framework-neutral (import-linter checks this in `poe lint`). Imports use full paths.
+Package layout. Django is the framework Tracepanel is built for; ASGI apps (`tracepanel.asgi`: Starlette, FastAPI, any other) and WSGI apps (`tracepanel.wsgi`: Flask, Falcon, any other) are covered too. Only these packages know their framework: the core, the transport and the console are framework-neutral (import-linter checks this in `poe lint`). Imports use full paths.
 
-tracepanel records and sends; the tracepanel agent (a dependency, started on the first trace and gone after 30 minutes unused) keeps the traces, finds their issues and serves the console, which `/__tracepanel__/` forwards to. Without a web server to host it (a Celery worker, management commands), each task run and command prints one line with a link to its trace in the agent's console; `tracepanel dev` runs the agent in the foreground on http://127.0.0.1:8765/.
+Tracepanel records and sends; the Tracepanel agent (a dependency, started on the first trace and gone after 30 minutes unused) keeps the traces, finds their issues and serves the console, which `/__tracepanel__/` forwards to. Without a web server to host it (a Celery worker, management commands), each task run and command prints one line with a link to its trace in the agent's console; `tracepanel dev` runs the agent in the foreground on http://127.0.0.1:8765/.
 
 | Module | Contents |
 | --- | --- |
