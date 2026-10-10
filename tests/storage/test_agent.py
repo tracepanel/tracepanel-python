@@ -1,6 +1,6 @@
 """Sending traces to tracepanel-agent: over a unix socket or TCP, and what happens without one.
 
-The agent under test is the one uv built from ../tracepanel-agent (or $TRACEPANEL_AGENT_BIN).
+The agent under test is the one uv built from ../tracepanel (or $TRACEPANEL_AGENT_BIN).
 """
 
 import dataclasses

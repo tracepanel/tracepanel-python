@@ -119,8 +119,8 @@ falcon = [
 ]
 
 [tool.uv.sources]
-# Unpublished: built from the tracepanel-agent checkout next to this one (Rust; its scripts/schema.sh and ui.sh first).
-tracepanel-agent = { path = "../tracepanel-agent" }
+# Unpublished: built from the tracepanel checkout next to this one (Rust; its scripts/schema.sh and ui.sh first).
+tracepanel-agent = { path = "../tracepanel" }
 
 [tool.uv.build-backend]
 module-name = "tracepanel"

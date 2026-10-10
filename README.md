@@ -81,7 +81,7 @@ Related repositories: tracepanel-agent (the agent, with the console and the widg
 ## Development
 
 ```bash
-uv sync --all-groups   # builds the agent from a ../tracepanel-agent checkout until it is on the package index
+uv sync --all-groups   # builds the agent from a ../tracepanel checkout until it is on the package index
 uv run poe test    # pytest on SQLite; TRACEPANEL_TEST_DB=postgres for Postgres (PG* variables)
 uv run poe fmt     # ruff check --fix + ruff format
 uv run poe lint    # ruff (ALL) + ruff format --check + pyrefly (strict)

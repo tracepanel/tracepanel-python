@@ -12,9 +12,9 @@ concurrency:
 permissions:
   contents: read
 
-# tracepanel requires tracepanel-agent, built from its checkout next to this one (uv.lock expects ../tracepanel-agent)
+# tracepanel requires tracepanel-agent, built from its checkout next to this one (uv.lock expects ../tracepanel)
 # until it is on the package index. That repository is private: the TRACEPANEL_AGENT_TOKEN secret (read access to
-# tracepanel/tracepanel-agent) is required. The agent compiles in this checkout's store schema; the tests don't need
+# tracepanel/tracepanel) is required. The agent compiles in this checkout's store schema; the tests don't need
 # the console's pages, so its UI stays empty.
 env:
   AGENT_TOKEN: ${{ secrets.TRACEPANEL_AGENT_TOKEN }}
@@ -33,18 +33,18 @@ jobs:
         if: env.AGENT_TOKEN == ''
         working-directory: .
         run: |
-          echo "::error::Set the TRACEPANEL_AGENT_TOKEN secret: read access to tracepanel/tracepanel-agent."
+          echo "::error::Set the TRACEPANEL_AGENT_TOKEN secret: read access to tracepanel/tracepanel."
           exit 1
       - uses: actions/checkout@v7
         with:
           path: tracepanel-python
       - uses: actions/checkout@v7
         with:
-          repository: tracepanel/tracepanel-agent
+          repository: tracepanel/tracepanel
           token: ${{ env.AGENT_TOKEN }}
-          path: tracepanel-agent
+          path: tracepanel
       - name: The agent's sources
-        run: ../tracepanel-agent/scripts/schema.sh && mkdir -p ../tracepanel-agent/ui-dist
+        run: ../tracepanel/scripts/schema.sh && mkdir -p ../tracepanel/ui-dist
       - uses: astral-sh/setup-uv@v7
         with:
           working-directory: tracepanel-python
@@ -87,18 +87,18 @@ jobs:
         if: env.AGENT_TOKEN == ''
         working-directory: .
         run: |
-          echo "::error::Set the TRACEPANEL_AGENT_TOKEN secret: read access to tracepanel/tracepanel-agent."
+          echo "::error::Set the TRACEPANEL_AGENT_TOKEN secret: read access to tracepanel/tracepanel."
           exit 1
       - uses: actions/checkout@v7
         with:
           path: tracepanel-python
       - uses: actions/checkout@v7
         with:
-          repository: tracepanel/tracepanel-agent
+          repository: tracepanel/tracepanel
           token: ${{ env.AGENT_TOKEN }}
-          path: tracepanel-agent
+          path: tracepanel
       - name: The agent's sources
-        run: ../tracepanel-agent/scripts/schema.sh && mkdir -p ../tracepanel-agent/ui-dist
+        run: ../tracepanel/scripts/schema.sh && mkdir -p ../tracepanel/ui-dist
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python }}

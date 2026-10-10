@@ -52,8 +52,8 @@ def binary() -> str | None:
         return explicit if Path(explicit).is_file() else None
     if found := find_agent_bin():
         return found
-    # tracepanel-python used from its checkout (development): a tracepanel-agent checkout next to it, its newest build.
-    target = Path(__file__).resolve().parents[2].parent / "tracepanel-agent" / "target"
+    # tracepanel-python used from its checkout (development): a tracepanel checkout next to it, its newest build.
+    target = Path(__file__).resolve().parents[2].parent / "tracepanel" / "target"
     builds = [build for build in (target / "release" / AGENT, target / "debug" / AGENT) if build.is_file()]
     return str(max(builds, key=lambda build: build.stat().st_mtime)) if builds else None
 

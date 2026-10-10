@@ -39,7 +39,7 @@ def binary() -> str:
     """The agent under test: $TRACEPANEL_AGENT_BIN, else the one uv built into this environment."""
     found = os.environ.get("TRACEPANEL_AGENT_BIN") or agent.binary()
     if not found or not Path(found).is_file():
-        msg = "no tracepanel-agent: `uv sync` builds it from ../tracepanel-agent, or set TRACEPANEL_AGENT_BIN"
+        msg = "no tracepanel-agent: `uv sync` builds it from ../tracepanel, or set TRACEPANEL_AGENT_BIN"
         raise RuntimeError(msg)
     return found
 
