@@ -1,16 +1,9 @@
 name: Release
 
-# A tag that names a version publishes it to PyPI. Nothing else does. Run by hand with `testpypi`, it publishes to
-# TestPyPI instead, without the tests against the published agent.
+# A tag that names a version publishes it to PyPI. Nothing else does.
 on:
   push:
     tags: ["[0-9]+.[0-9]+.[0-9]+*"]
-  workflow_dispatch:
-    inputs:
-      testpypi:
-        description: Publish to TestPyPI
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -22,13 +15,12 @@ env:
 
 jobs:
   release:
-    name: Publish to ${{ github.ref_type == 'tag' && 'PyPI' || 'TestPyPI' }}
-    if: github.ref_type == 'tag' || inputs.testpypi
+    name: Publish to PyPI
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
-      name: ${{ github.ref_type == 'tag' && 'pypi' || 'testpypi' }}
-      url: https://${{ github.ref_type == 'tag' && 'pypi.org' || 'test.pypi.org' }}/project/tracepanel/
+      name: pypi
+      url: https://pypi.org/project/tracepanel/
     permissions:
       # What PyPI's trusted publishing signs the upload with, in place of a token.
       id-token: write
@@ -46,7 +38,6 @@ jobs:
           working-directory: tracepanel-python
 
       - name: The tag is the version, and the agent's
-        if: github.ref_type == 'tag'
         run: |
           uv run --no-project --with packaging python - <<'EOF'
           import os, sys, tomllib
@@ -61,7 +52,6 @@ jobs:
 
       # The published agent of this version, and the schemas of its release: what a user installs.
       - uses: actions/checkout@v7
-        if: github.ref_type == 'tag'
         with:
           repository: tracepanel/tracepanel
           ref: ${{ github.ref_name }}
@@ -70,7 +60,6 @@ jobs:
           sparse-checkout: schema
 
       - name: Lint and test against the published agent
-        if: github.ref_type == 'tag'
         run: |
           uv sync --no-sources $GROUPS
           uv run --no-sync poe lint
@@ -80,6 +69,4 @@ jobs:
         run: uv build && uv run --no-project python scripts/check_dist.py
 
       - name: Publish
-        run: >
-          uv publish --trusted-publishing always
-          ${{ github.ref_type != 'tag' && '--publish-url https://test.pypi.org/legacy/ --check-url https://test.pypi.org/simple/' || '' }}
+        run: uv publish --trusted-publishing always

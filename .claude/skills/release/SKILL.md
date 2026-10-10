@@ -52,8 +52,6 @@ git tag 0.1.0a1 && git push origin 0.1.0a1
 ```
 
 The run waits in the `pypi` environment for a reviewer to approve the upload.
-To try the build and the upload first, run the `Release` workflow by hand with
-`testpypi` checked.
 
 `django-tracepanel` pins `tracepanel[django]` at the same version: release it
 after this one.
@@ -69,7 +67,7 @@ outside the repository can see.
 ## Once, on the publishing side
 
 Trusted publishing needs a publisher on PyPI (owner `tracepanel`, repository
-`tracepanel-python`, workflow `release.yml`, environment `pypi`), the same on
-TestPyPI with the environment `testpypi`, and both environments on GitHub.
+`tracepanel-python`, workflow `release.yml`, environment `pypi`) and the `pypi`
+environment on GitHub.
 While the tracepanel repository is private, the `TRACEPANEL_AGENT_TOKEN` secret
 gives the workflow read access to it.
