@@ -160,7 +160,7 @@ def test_mcp_answers_from_the_projects_store(tmp_path: Path) -> None:
         pass
     store.write([trace])
     store.stop()
-    messages = [
+    messages: list[dict[str, object]] = [
         {
             "jsonrpc": "2.0",
             "id": 0,

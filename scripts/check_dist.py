@@ -1,6 +1,8 @@
-"""Fail if a built wheel or sdist in dist/ holds what belongs to the agent: the console's UI, the store.
+"""Fail if a built wheel or sdist of tracepanel holds what belongs to the agent: the console's UI, the store.
 
-tracepanel is the SDK only; the UI, widget.min.js and the store come with tracepanel-agent, which is closed.
+    python scripts/check_dist.py [FILE...]   (default: dist/tracepanel-*.whl and .tar.gz)
+
+tracepanel is the SDK only; the UI, widget.min.js and the store come with tracepanel-agent, its own package.
 """
 
 import sys
@@ -22,9 +24,10 @@ def names(path: Path) -> list[str]:
 
 
 def main() -> None:
-    artifacts = [*DIST.glob("*.whl"), *DIST.glob("*.tar.gz")]
+    built = [*DIST.glob("tracepanel-*.whl"), *DIST.glob("tracepanel-*.tar.gz")]
+    artifacts = [Path(arg) for arg in sys.argv[1:]] or built
     if not artifacts:
-        sys.exit("dist/ is empty: run `uv build` first")
+        sys.exit("no tracepanel wheel or sdist in dist/: run `uv build` first")
     for artifact in artifacts:
         found = [name for name in names(artifact) if any(part in name for part in FORBIDDEN)]
         if found:

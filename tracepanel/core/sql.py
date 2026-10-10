@@ -100,7 +100,7 @@ def params_attrs(params: Params) -> Attrs:
 
 
 def run(execute: Callable[[], T], sql: str, params: Params, *, many: bool, database: Callable[[], Attrs]) -> T:
-    """Run a statement and record it as an `sql` span of the current trace (just run it outside a trace).
+    """Run a statement and record it as an `sql` span of the current trace (outside a trace it only runs).
 
     `database` describes where it ran (db.alias, db.vendor, db.system, db.namespace, server.*); it is only called
     when there is a trace to record into. For layers that report statements before and after rather than wrapping

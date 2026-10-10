@@ -4,9 +4,9 @@ Ninja registers one Django view per path, shared by every method on it: without 
 `POST /api/orders` both show Ninja's own wrapper as their view. The view span is renamed after the project's
 function (`shop.api.list_orders`), and inside it Ninja's steps become `framework` spans:
 
-- `auth` — the auth callbacks; a refusal (401) says which ones refused;
-- `validate` — parsing path, query and body into the operation's schemas; a 422 lists what was wrong;
-- `response` — turning the result into JSON through the response schema, where lazy relations run their queries.
+- `auth`: the auth callbacks; a refusal (401) says which ones refused;
+- `validate`: parsing path, query and body into the operation's schemas; a 422 lists what was wrong;
+- `response`: turning the result into JSON through the response schema, where lazy relations run their queries.
 """
 
 import functools

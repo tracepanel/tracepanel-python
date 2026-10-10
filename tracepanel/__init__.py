@@ -1,4 +1,4 @@
-"""tracepanel — see what your Django app is really doing.
+"""Tracepanel: see what your app does on every request.
 
 Instrument your own code with `tracepanel.span()`, `@tracepanel.traced`, `tracepanel.trace()`, `tracepanel.set_attr()`
 and `tracepanel.event()`; see tracepanel.api.

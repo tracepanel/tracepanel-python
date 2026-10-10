@@ -27,7 +27,7 @@ from tracepanel.storage import agent
 
 # The agent's schemas (store, search, the console's API): its checkout next to this one, or $TRACEPANEL_AGENT_DIR.
 AGENT_SCHEMAS = (
-    Path(os.environ.get("TRACEPANEL_AGENT_DIR") or Path(__file__).resolve().parents[2] / "tracepanel-agent") / "schema"
+    Path(os.environ.get("TRACEPANEL_AGENT_DIR") or Path(__file__).resolve().parents[2] / "tracepanel") / "schema"
 )
 WAIT_S = 10.0
 # What the API answers, as JSON.

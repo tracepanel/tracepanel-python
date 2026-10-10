@@ -5,13 +5,13 @@ build-backend = "uv_build"
 [project]
 name = "tracepanel"
 version = "0.0.1"
-description = "See what your app is really doing: Django, FastAPI, Flask and more."
+description = "A debug toolbar for Python web apps: every request, query, task and error traced, N+1 queries found"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
-# The agent stores, analyzes and serves the console; released together with this package, at the same version. It
-# ships as wheels for these platforms only (no sdist yet): elsewhere tracepanel installs without it.
+# The agent stores, analyzes and serves the console; released together with this package, at the same version. It has
+# wheels for these platforms: elsewhere tracepanel installs without it (its sdist needs Rust to build).
 dependencies = [
     """tracepanel-agent==0.0.1; \
     (sys_platform == "linux" and (platform_machine == "x86_64" or platform_machine == "aarch64" \
@@ -21,7 +21,11 @@ dependencies = [
     or (sys_platform == "win32" and (platform_machine == "AMD64" or platform_machine == "ARM64" \
         or platform_machine == "x86"))""",
 ]
+keywords = ["debug toolbar", "django", "fastapi", "flask", "n+1", "sql", "tracing", "profiling"]
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
     "Framework :: FastAPI",
     "Framework :: Flask",
     "Framework :: Django",
@@ -29,6 +33,12 @@ classifiers = [
     "Framework :: Django :: 6.0",
     "Framework :: Django :: 6.1",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Debuggers",
+    "Typing :: Typed",
 ]
 
 [project.optional-dependencies]
@@ -52,7 +62,10 @@ otel = ["opentelemetry-sdk>=1.45"]
 tracepanel = "tracepanel._cli:main"
 
 [project.urls]
+Homepage = "https://github.com/tracepanel/tracepanel"
 Repository = "https://github.com/tracepanel/tracepanel-python"
+Issues = "https://github.com/tracepanel/tracepanel-python/issues"
+Changelog = "https://github.com/tracepanel/tracepanel-python/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 celery = [
@@ -119,7 +132,8 @@ falcon = [
 ]
 
 [tool.uv.sources]
-# Unpublished: built from the tracepanel checkout next to this one (Rust; its scripts/schema.sh and ui.sh first).
+# In development: built from the tracepanel repository checked out next to this one (Rust). `uv sync --no-sources` uses
+# the published agent instead.
 tracepanel-agent = { path = "../tracepanel" }
 
 [tool.uv.build-backend]
@@ -188,8 +202,8 @@ sequence = ["ruff check --fix .", "ruff format ."]
 default_item_type = "cmd"
 
 [tool.poe.tasks.lint]
-help = "Check linting, formatting and types (runs every check, fails if any fails)"
-sequence = ["ruff check .", "ruff format --check .", "pyrefly check", "lint-imports"]
+help = "Check linting, formatting, types, imports and the docs (runs every check, fails if any fails)"
+sequence = ["ruff check .", "ruff format --check .", "pyrefly check", "lint-imports", "python scripts/lint_docs.py"]
 default_item_type = "cmd"
 ignore_fail = "return_non_zero"
 

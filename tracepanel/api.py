@@ -114,7 +114,7 @@ def traced(name: str | Callable[..., Any] | None = None) -> Any:
 def trace(
     name: str, *, kind: str = "command", attrs: Mapping[str, object] | None = None, **values: object
 ) -> Generator[SpanHandle, None, None]:
-    """Run a block as its own trace (a script, a consumer, a scheduled job); inside a trace it is just a span.
+    """Run a block as its own trace (a script, a consumer, a scheduled job); inside a trace it is a span.
 
     The trace is analysed and stored when the block ends, like a request.
     """

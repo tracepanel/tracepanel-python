@@ -1,0 +1,75 @@
+# Contributing
+
+This repository is the `tracepanel` Python package. It records traces and sends
+them to the Tracepanel agent, which keeps them, finds their issues and serves
+the console. The agent and its console live in
+[tracepanel](https://github.com/tracepanel/tracepanel).
+
+## Set up
+
+Check out tracepanel next to this repository, then:
+
+```bash
+uv sync --all-groups   # builds the agent from ../tracepanel
+uv run poe test        # pytest on SQLite
+uv run poe lint        # ruff, pyrefly (strict), import-linter, the docs
+uv run poe fmt         # ruff check --fix and ruff format
+```
+
+`TRACEPANEL_TEST_DB=postgres` runs the tests on PostgreSQL, with the usual
+`PG*` variables. `uv sync --no-sources` installs the published agent in place
+of the checkout.
+
+`uv run poe build` runs `uv build` and checks that the wheel and the sdist hold
+the package only, none of the agent's files.
+
+## The package
+
+Django is the framework Tracepanel started with. ASGI apps (`tracepanel.asgi`:
+Starlette, FastAPI, any other) and WSGI apps (`tracepanel.wsgi`: Flask, Falcon,
+any other) are covered too. Only the framework packages know their framework:
+the core, the transport and the console are neutral, and import-linter checks
+it. Imports use full paths.
+
+| Module | Contents |
+| --- | --- |
+| `tracepanel/__init__.py`, `api.py` | Public API: `span`, `traced`, `trace`, `set_attr`, `event` |
+| `tracepanel/core/` | Trace model, context, configuration, frames, errors, SQL spans and their fingerprints, EXPLAIN plans, service attributes; `registry` (every integration) and `patching` (every monkeypatch: once, remembered, undoable) |
+| `tracepanel/storage/` | The background writer and the agent: finding it, starting it, sending to it |
+| `tracepanel/console/` | The console under the prefix (forwarded to the agent), the widget's markup, the terminal line after tasks and commands |
+| `tracepanel/django/` | The Django app, middleware, collectors (ORM, cache, mail, signals, views and templates, transactions, commands, auth), user switching, EXPLAIN, Channels, Django Tasks, Django Ninja, Django REST framework |
+| `tracepanel/asgi/` | `tracepanel.asgi.install(app)` and the ASGI middleware. Starlette and FastAPI add the route and the endpoint |
+| `tracepanel/fastapi/` | `tracepanel.fastapi.install(app)`: `tracepanel.asgi` under the name FastAPI users look for |
+| `tracepanel/wsgi/` | `tracepanel.wsgi.install(app)` and the WSGI middleware |
+| `tracepanel/flask/` | Flask on `tracepanel.wsgi`: the URL rule, the view, Jinja renders, errors, Werkzeug's debugger page |
+| `tracepanel/falcon/` | Falcon on `tracepanel.wsgi`: the URI template, the responder, errors |
+| `tracepanel/integrations/` | Libraries traced when installed: `logging`, `celery`, `dramatiq`, `rq`, `strawberry`, `sqlalchemy`, `htmx`, OpenTelemetry |
+| `tracepanel/_setup.py` | The steps every framework's install takes |
+| `tracepanel/_cli.py`, `_run.py`, `_agent.py` | The command line, `tracepanel run`, the agent's binary |
+
+The tests mirror the package. `tests/project/` is the Django project they run
+against. Every trace a test records is checked against the agent's trace schema,
+and the agent is checked through the console's API.
+
+## The contract with the console
+
+The widget and the console read what this package puts on a response:
+
+- the headers `Tracepanel-Id`, `Tracepanel-Url` and `Server-Timing` (`db`,
+  `app`, `total`, and `tracepanel-issues;desc="pending"`: the agent finds the
+  issues, the widget asks the console for them)
+- the `data-tracepanel-*` attributes of the injected `<script>`: `api`, `id`,
+  `method`, `status`, `total`, `db`, `queries`, `issues`
+- the console under `/__tracepanel__/`: the agent's, forwarded, except
+  `api/explain` and `api/users*`, which the app serves
+
+A change to any of these needs the same change in tracepanel's `ui/`.
+
+## Write the documentation
+
+Read `.claude/skills/docs/SKILL.md` for the voice and the rules. `poe lint`
+checks the pages.
+
+## Release
+
+Read `.claude/skills/release/SKILL.md`.

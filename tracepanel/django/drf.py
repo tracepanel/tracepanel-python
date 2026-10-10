@@ -4,11 +4,11 @@ The view span is named after what handled the request: the ViewSet action (`blog
 method of an APIView (`blog.views.PostFixedList.get`) or the `@api_view` function (`blog.views.me`), so the actions
 of one ViewSet don't merge into one endpoint. DRF's steps become `framework` spans inside it:
 
-- `drf auth` — the authentication classes, and whether any of them recognised the request;
-- `drf permissions` — the permission classes; a 401/403 names the one that refused, with its message;
-- `drf throttles` — only for views with throttles; a 429 says how long to wait;
-- `drf validate <Serializer>` — `is_valid()`; a 400 lists what was wrong (`body: This field is required.`);
-- `drf serialize <Serializer>` — `.data`, where nested serializers and SerializerMethodFields run their queries.
+- `drf auth`: the authentication classes, and whether any of them recognised the request;
+- `drf permissions`: the permission classes; a 401/403 names the one that refused, with its message;
+- `drf throttles`: only for views with throttles; a 429 says how long to wait;
+- `drf validate <Serializer>`: `is_valid()`; a 400 lists what was wrong (`body: This field is required.`);
+- `drf serialize <Serializer>`: `.data`, where nested serializers and SerializerMethodFields run their queries.
 """
 
 import functools

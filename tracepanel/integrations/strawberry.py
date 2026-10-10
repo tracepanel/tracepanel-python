@@ -47,7 +47,7 @@ MAX_ROOT_FIELDS = 3
 
 
 def _root_fields(context: Any) -> str | None:  # noqa: ANN401 (Strawberry's ExecutionContext)
-    """`{ posts, users }`: what an unnamed operation asks for, so `{ posts { id } }` isn't just "anonymous"."""
+    """`{ posts, users }`: what an unnamed operation asks for, so `{ posts { id } }` isn't only "anonymous"."""
     try:
         operations = [
             definition

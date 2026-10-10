@@ -210,7 +210,7 @@ class _Responder:
         self.body.append(message.get("body", b""))
         if message.get("more_body") and len(self.body) == 1:
             self._htmx(None)
-            # Streaming: send what we have, with the id only (the timing isn't known yet).
+            # Streaming: send what there is, with the id only (the timing isn't known yet).
             _set_header(self.start, "Tracepanel-Id", self.trace.id)
             self.sent = True
             await self.downstream(self.start)
