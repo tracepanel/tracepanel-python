@@ -7,4 +7,4 @@ and `tracepanel.event()`; see tracepanel.api.
 from tracepanel.api import SpanHandle, event, set_attr, span, trace, traced
 
 __all__ = ["SpanHandle", "event", "set_attr", "span", "trace", "traced"]
-__version__ = "0.0.1"
+__version__ = "0.0.1a1"
