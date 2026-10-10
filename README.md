@@ -76,7 +76,7 @@ Tracepanel records and sends; the Tracepanel agent (a dependency, started on the
 
 Tests mirror the source (`tests/core/`, `tests/storage/`, `tests/console/`, `tests/django/`, `tests/integrations/`); `tests/project/` is the Django project they run against.
 
-Related repositories: tracepanel-agent (the agent, with the console and the widget in its `ui/`), tracepanel-examples (test projects). Nothing is published to PyPI or npm.
+Related repository: [tracepanel](https://github.com/tracepanel/tracepanel) (the agent, with the console and the widget in its `ui/`). Nothing is published to PyPI or npm.
 
 ## Development
 
