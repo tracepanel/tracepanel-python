@@ -40,6 +40,9 @@ CONNECT_TIMEOUT_S = 0.5
 SEND_TIMEOUT_S = 2.0
 # Without an agent, how often to look for one again.
 RETRY_S = 5.0
+# How often to start an agent again: one that exited (idle, killed) is started anew, one that can't start isn't retried
+# on every request.
+RESTART_S = 30.0
 
 
 def store_dir(config: conf.Config) -> Path:
@@ -73,6 +76,10 @@ def start(config: conf.Config) -> subprocess.Popen[bytes] | None:
         return None
     directory = store_dir(config)
     directory.mkdir(parents=True, exist_ok=True)
+    # An agent that didn't exit cleanly (killed, a reboot) leaves its addresses: nobody answers there.
+    if not answers(address(config)):
+        for name in (ADDR_FILE, CONSOLE_FILE):
+            (directory / name).unlink(missing_ok=True)
     command = [executable, "--dir", str(directory), "--serve", "127.0.0.1:0", "--idle-exit", str(IDLE_EXIT_S)]
     # Its own session (process group on Windows): Ctrl-C and reloads of the app don't reach it.
     windows = sys.platform == "win32"
@@ -118,22 +125,22 @@ def unavailable(config: conf.Config) -> str:
 
 
 _start_lock = threading.Lock()
-_start_tried = False
+_start_after = 0.0
 
 
 def ensure_started(config: conf.Config) -> bool:
-    """An agent for this store: one answering already, or one started now (once per process). True if there is one."""
-    global _start_tried  # noqa: PLW0603 (once per process)
-    if address(config) and console_url(config):
+    """An agent for this store: one answering already, or one started now (every RESTART_S at most). True if one is."""
+    global _start_after  # noqa: PLW0603 (one start at a time per process)
+    if answers(address(config)) and console_url(config):
         return True
     if not can_start(config):
         return False
     with _start_lock:
-        if not _start_tried:
-            _start_tried = True
+        if time.monotonic() >= _start_after:
+            _start_after = time.monotonic() + RESTART_S
             # Another process's agent may win the race (one per store): then its address is there.
             start(config)
-    return address(config) is not None
+    return answers(address(config))
 
 
 def console_url(config: conf.Config) -> str | None:
@@ -159,6 +166,15 @@ def address(config: conf.Config) -> str | None:
         return (store_dir(config) / ADDR_FILE).read_text().strip() or None
     except OSError:
         return None
+
+
+def answers(addr: str | None) -> bool:
+    """Is an agent listening at `addr`? An address file alone may be a stopped agent's."""
+    sock = _open(addr) if addr else None
+    if sock is None:
+        return False
+    sock.close()
+    return True
 
 
 def connect(addr: str, max_traces: int, thresholds: dict[str, int] | None = None) -> socket.socket | None:
