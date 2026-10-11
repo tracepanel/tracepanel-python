@@ -5,6 +5,7 @@ The agent under test is the one uv built from ../tracepanel (or $TRACEPANEL_AGEN
 
 import dataclasses
 import signal
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -95,3 +96,40 @@ def test_the_apps_console_is_the_agents(store: AgentStore, client: Client, users
     # The agent gone: the console says why instead of an empty page.
     store.stop()
     assert client.get(f"/__tracepanel__/api/traces/{trace.id}").status_code == 503
+
+
+def test_an_agent_that_died_is_started_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Killed, it left its addresses behind: nobody answers there, so the app starts a new agent.
+    directory = tmp_path / ".tracepanel"
+    directory.mkdir()
+    (directory / agent.ADDR_FILE).write_text(f"unix:{tmp_path}/gone.sock\n")
+    (directory / agent.CONSOLE_FILE).write_text("http://127.0.0.1:9/\n")
+    config = dataclasses.replace(conf.get_config(), agent="auto", dir=str(directory))
+    started: list[subprocess.Popen[bytes]] = []
+    start = agent.start
+
+    def recorded(config: conf.Config) -> subprocess.Popen[bytes] | None:
+        if (process := start(config)) is not None:
+            started.append(process)
+        return process
+
+    monkeypatch.setattr(agent, "can_start", lambda _config: True)  # pyrefly: ignore[implicit-any-lambda]
+    monkeypatch.setattr(agent, "_start_after", 0.0)
+    monkeypatch.setattr(agent, "start", recorded)
+
+    assert agent.ensure_started(config) is True
+
+    try:
+        assert (agent.answers(agent.address(config)), agent.console_url(config)) == (
+            True,
+            IsStr(regex=r"http://127\.0\.0\.1:\d+/"),
+        )
+        assert agent.console_url(config) != "http://127.0.0.1:9/"
+
+        assert capsys.readouterr().err == f"tracepanel ▸ agent started for {directory}\n"
+    finally:
+        for process in started:
+            process.terminate()
+            process.wait(timeout=10)
