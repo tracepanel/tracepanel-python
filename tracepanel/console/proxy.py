@@ -20,6 +20,8 @@ TIMEOUT_S = 10.0
 # The widget asks for a trace as soon as its response arrives: the agent may not have written it yet.
 TRACE_WAIT_S = 1.0
 TRACE_POLL_S = 0.05
+# Under api/traces/ but not a trace: an empty summary's 404 is its answer, not a trace still on its way.
+COLLECTIONS = frozenset({"summary", "overview"})
 # The agent's headers the browser needs: versioned files and fonts are cached for good; the page, widget.min.js never.
 PASSED = ("Cache-Control",)
 
@@ -31,19 +33,29 @@ def forward(request: Request, path: str) -> Response | None:
         return None
     url = f"{base}{path}" + (f"?{urlencode(dict(request.query))}" if request.query else "")
     response = _fetch(url, request.method)
-    if (
-        response is not None
-        and response.status == http.HTTPStatus.NOT_FOUND
-        and request.method == "GET"
-        and path.startswith("api/traces/")
-    ):
-        # This process's own traces may still be in its queue, then in the agent's: send them, wait a little.
+    if request.method == "GET" and _not_stored_yet(path, dict(request.query), response):
+        # This process's own traces may still be in its queue, then in the agent's: send them, wait a little. The
+        # widget asks for a page's issues as soon as it loads; answering once the trace is stored spares it retries.
         transport.get_writer().flush(timeout=TRACE_WAIT_S)
         deadline = time.monotonic() + TRACE_WAIT_S
-        while response is not None and response.status == http.HTTPStatus.NOT_FOUND and time.monotonic() < deadline:
+        while _not_stored_yet(path, dict(request.query), response) and time.monotonic() < deadline:
             time.sleep(TRACE_POLL_S)
             response = _fetch(url, request.method)
     return response
+
+
+def _not_stored_yet(path: str, query: dict[str, str], response: Response | None) -> bool:
+    """A trace asked for by id (`api/traces/<id>`, `api/traces?ids=…`) that the agent doesn't have yet."""
+    if response is None:
+        return False
+    trace_id = path.removeprefix("api/traces/")
+    if path.startswith("api/traces/") and "/" not in trace_id and trace_id not in COLLECTIONS:
+        return response.status == http.HTTPStatus.NOT_FOUND
+    if path == "api/traces" and query.get("ids") and response.status == http.HTTPStatus.OK:
+        asked = {trace_id for trace_id in query["ids"].split(",") if trace_id}
+        found = json.loads(response.body).get("traces", [])
+        return len(found) < len(asked)
+    return False
 
 
 def trace(trace_id: str) -> dict[str, object] | None:
