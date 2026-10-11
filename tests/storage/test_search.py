@@ -129,6 +129,7 @@ def test_traces_overview(client: Client, recorded: AgentStore) -> None:
         "name": IsStr(regex=r"GET /.*"),
         "method": "GET",
         "route": IsStr,
+        "view": None,
         "calls": 1,
         "errors": IsInt,
         "p95": IsPositiveInt,
