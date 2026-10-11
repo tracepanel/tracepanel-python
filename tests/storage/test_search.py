@@ -7,6 +7,9 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from tests.agentstore import AgentStore, SearchError
+from tracepanel.core import conf
+from tracepanel.core.context import record_span, start_trace
+from tracepanel.core.model import Log
 from tracepanel.storage.transport import set_writer
 
 
@@ -362,3 +365,61 @@ def test_endpoints_and_queries_in_a_time_window(recorded: AgentStore) -> None:
     ]
     assert len(recorded.list_queries("since:1h")) == len(recorded.list_queries())
     assert recorded.list_queries("until:1h") == []
+
+
+@pytest.fixture
+def two_apps(recorded: AgentStore) -> AgentStore:
+    """The Django requests, and one request of another app (service.name "shop") sending to the same agent."""
+    with start_trace("http", "GET /cart/") as trace:
+        trace.attrs.update(
+            {
+                "service.name": "shop",
+                "service.role": "web",
+                "http.method": "GET",
+                "http.route": "/cart/",
+                "http.path": "/cart/",
+                "http.status_code": 200,
+            }
+        )
+        record_span("sql", "SELECT cart", start=trace.start, duration=10, attrs={"db.statement": "SELECT 1 FROM cart"})
+        trace.logs.append(Log(span_id=None, time=trace.start, level="INFO", logger="shop", message="cart shown"))
+    recorded.write([trace])
+    return recorded
+
+
+@pytest.mark.django_db
+def test_one_app_of_several(client: Client, two_apps: AgentStore) -> None:
+    django = conf.get_config().service
+    every = {"issues": 3, "errors": 1, "sections": {"http": 7, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0}}
+
+    assert names(two_apps, "service:shop") == ["/cart/"]
+    assert names(two_apps, f"service:{django}") == [
+        "/cache/",
+        "/duplicates/",
+        "/error/",
+        "/fixed/",
+        "/logs/",
+        "/n-plus-one/",
+    ]
+
+    assert [row["route"] for row in two_apps.list_endpoints("service:shop")] == ["/cart/"]
+    assert [row["statement"] for row in two_apps.list_queries("service:shop")] == ["SELECT cart"]
+    assert [row["message"] for row in two_apps.search_logs("service:shop")[0]] == ["cart shown"]
+    assert two_apps.list_issues("service:shop") == []
+    assert len(two_apps.list_issues(f"service:{django}")) == 4
+
+    assert sorted(row["service"] for row in two_apps.list_services("kind:app")["apps"]) == sorted([django, "shop"])
+    assert [row["service"] for row in two_apps.list_services("service:shop")["apps"]] == ["shop"]
+
+    assert two_apps.counts() == every
+    assert two_apps.get("counts", service="shop") == {
+        "issues": 0,
+        "errors": 0,
+        "sections": {"http": 1, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0},
+    }
+    assert two_apps.get("counts", service=django) == every | {
+        "sections": {"http": 6, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0}
+    }
+    assert client.get("/__tracepanel__/api/counts", {"service": "shop"}).json() == two_apps.get(
+        "counts", service="shop"
+    )
