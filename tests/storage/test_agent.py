@@ -6,6 +6,7 @@ The agent under test is the one uv built from ../tracepanel (or $TRACEPANEL_AGEN
 import dataclasses
 import signal
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -14,10 +15,12 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from tests.agentstore import AgentStore
+from tracepanel.console import proxy
 from tracepanel.core import conf
 from tracepanel.core.context import record_span, start_trace
 from tracepanel.core.model import Trace
 from tracepanel.storage import agent
+from tracepanel.storage.transport import set_writer
 
 pytestmark = pytest.mark.django_db
 
@@ -96,6 +99,28 @@ def test_the_apps_console_is_the_agents(store: AgentStore, client: Client, users
     # The agent gone: the console says why instead of an empty page.
     store.stop()
     assert client.get(f"/__tracepanel__/api/traces/{trace.id}").status_code == 503
+
+
+def test_a_trace_still_on_its_way_is_waited_for(store: AgentStore, client: Client) -> None:
+    # The widget asks for its page's issues as soon as the page loads: the trace may still be in this process's queue.
+    writer = agent.AgentWriter(store.config())
+    set_writer(writer)
+    try:
+        first, second = requests(2)
+        writer.submit(first)
+        writer.submit(second)
+        rows = client.get("/__tracepanel__/api/traces", {"ids": f"{first.id},{second.id}"}).json()["traces"]
+        single = client.get(f"/__tracepanel__/api/traces/{second.id}")
+    finally:
+        set_writer(None)
+
+    assert sorted(row["id"] for row in rows) == sorted([first.id, second.id])
+    assert (single.status_code, single.json()["id"]) == (200, second.id)
+
+    # Not a trace on its way: an empty group's summary answers at once.
+    started = time.monotonic()
+    assert client.get("/__tracepanel__/api/traces/summary", {"q": "route:/nowhere/"}).status_code == 404
+    assert time.monotonic() - started < proxy.TRACE_WAIT_S
 
 
 def test_an_agent_that_died_is_started_again(
