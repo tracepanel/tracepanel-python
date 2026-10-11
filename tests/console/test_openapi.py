@@ -94,6 +94,7 @@ CASES: list[tuple[str, int, Callable[[Data], str]]] = [
     ("/issues", 400, lambda _: "issues?q=since:never"),
     ("/issues/detail", 200, lambda d: f"issues/detail?fingerprint={d['issue']}"),
     ("/issues/detail", 404, lambda _: "issues/detail?fingerprint=0000000000000000"),
+    ("/issues/detail", 400, lambda d: f"issues/detail?fingerprint={d['issue']}&q=colour:red"),
     ("/counts", 200, lambda _: "counts"),
     ("/values", 200, lambda _: "values"),
     ("/search", 200, lambda _: "search"),
