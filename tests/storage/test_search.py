@@ -241,6 +241,7 @@ def test_known_values(client: Client, recorded: AgentStore) -> None:
         "db": ["default"],
         "task": no_tasks,
         "queue": no_tasks,
+        "job": no_tasks,
         # django.request adds request and status_code to its own records.
         "extra": ["extra.order_id", "extra.payment_token", "extra.request", "extra.status_code", "extra.tags"],
     }
