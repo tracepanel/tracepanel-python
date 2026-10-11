@@ -1,5 +1,5 @@
 import pytest
-from dirty_equals import IsInt
+from dirty_equals import IsInt, IsStr
 from django.db import connection, connections
 from django.test import Client
 from pytest_django.fixtures import Settings
@@ -56,7 +56,17 @@ def test_service_map(client: Client, traces: list[Trace], store: AgentStore, set
 
     databases = [node for node in result["services"] if node["kind"] == "database"]
 
-    assert result["apps"] == [{"service": "shop", "role": "web"}]
+    assert result["apps"] == [
+        {
+            "service": "shop",
+            "role": "web",
+            "traces": 2,
+            "errors": 0,
+            "total": IsInt(ge=0),
+            "last_seen": IsInt,
+            "runtime": IsStr(regex=r"Python 3\.\d+ · Django \d+\.\d+"),
+        }
+    ]
     assert [(node["kind"], node["system"]) for node in result["services"]] == [
         ("cache", "locmem"),
         *[("database", node["system"]) for node in databases],
