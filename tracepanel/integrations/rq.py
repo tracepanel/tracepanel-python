@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from tracepanel.core import conf, errors, registry, services
-from tracepanel.core.context import current_span, current_trace, now_us, record_span, start_trace
+from tracepanel.core.context import adopt, current_span, current_trace, now_us, record_span, recorded, start_trace
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
@@ -40,7 +40,7 @@ def _enqueue(original: Any) -> Any:  # noqa: ANN401
     @functools.wraps(original)
     def enqueue_job(self: Any, job: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         trace = current_trace()
-        start = now_us()
+        start, mark = now_us(), recorded()
         span_id = new_id()
         job.meta[TRIGGER] = trigger(trace)
         if job.retries_left is not None and MAX_RETRIES not in job.meta:
@@ -49,6 +49,8 @@ def _enqueue(original: Any) -> Any:  # noqa: ANN401
             job.meta[PARENT] = f"{trace.id}:{span_id}"
         result = original(self, job, *args, **kwargs)
         if trace is not None:
+            # RQ's Redis commands go under the enqueue span.
+            adopt(span_id, mark)
             record_span(
                 "task.enqueue",
                 f"enqueue {job.func_name}",

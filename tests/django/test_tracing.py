@@ -101,9 +101,9 @@ def test_cache_spans(client: Client, traces: list[Trace], db: None) -> None:
     client.get("/cache/")
     spans = [s for s in only(traces).spans if s.kind == "cache"]
     assert [(s.name, s.attrs.get("cache.hit")) for s in spans] == [
-        ("cache.set", None),
-        ("cache.get", True),
-        ("cache.get", False),
+        ("set answer", None),
+        ("get answer", True),
+        ("get missing", False),
     ]
     assert spans[0].attrs["cache.key"] == "answer"
 

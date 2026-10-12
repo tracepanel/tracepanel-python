@@ -247,7 +247,9 @@ class AgentWriter(BatchWriter):
             addr = address(self.config)
             thresholds = {
                 "n_plus_one": self.config.n_plus_one_threshold,
+                "n_plus_one_min_ms": self.config.n_plus_one_min_ms,
                 "slow_sql_ms": self.config.slow_sql_ms,
+                "slow_http_ms": self.config.slow_http_ms,
                 "long_transaction_ms": self.config.long_transaction_ms,
             }
             self._sock = connect(addr, self.config.max_traces, thresholds) if addr else None

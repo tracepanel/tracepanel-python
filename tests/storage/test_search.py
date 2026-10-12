@@ -232,6 +232,10 @@ def test_any_of_levels(recorded: AgentStore) -> None:
         recorded.search_logs("level:warning,loud")
 
 
+# The test project's views cache through Django's cache (locmem), and call no Redis or HTTP service.
+NO_CALLS = {"calls": False, "redis": False, "cache": True}
+
+
 @pytest.mark.django_db
 def test_known_values(client: Client, recorded: AgentStore) -> None:
     no_tasks: list[str] = []
@@ -239,6 +243,9 @@ def test_known_values(client: Client, recorded: AgentStore) -> None:
         "route": ["/cache/", "/duplicates/", "/error/", "/fixed/", "/logs/", "/n-plus-one/"],
         "logger": IsList("django.request", "tests.project.views", check_order=False),
         "db": ["default"],
+        "host": no_tasks,
+        "redis": no_tasks,
+        "cache": ["default"],
         "task": no_tasks,
         "queue": no_tasks,
         "job": no_tasks,
@@ -300,7 +307,7 @@ def test_counts(client: Client, recorded: AgentStore) -> None:
     counts = {
         "issues": 3,
         "errors": 1,
-        "sections": {"http": 6, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0},
+        "sections": {"http": 6, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, **NO_CALLS},
     }
     assert recorded.counts() == counts
     assert client.get("/__tracepanel__/api/counts").json() == counts
@@ -391,7 +398,11 @@ def two_apps(recorded: AgentStore) -> AgentStore:
 @pytest.mark.django_db
 def test_one_app_of_several(client: Client, two_apps: AgentStore) -> None:
     django = conf.get_config().service
-    every = {"issues": 3, "errors": 1, "sections": {"http": 7, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0}}
+    every = {
+        "issues": 3,
+        "errors": 1,
+        "sections": {"http": 7, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, **NO_CALLS},
+    }
 
     assert names(two_apps, "service:shop") == ["/cart/"]
     assert names(two_apps, f"service:{django}") == [
@@ -416,10 +427,11 @@ def test_one_app_of_several(client: Client, two_apps: AgentStore) -> None:
     assert two_apps.get("counts", service="shop") == {
         "issues": 0,
         "errors": 0,
-        "sections": {"http": 1, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0},
+        # The shop app uses no cache.
+        "sections": {"http": 1, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, **NO_CALLS, "cache": False},
     }
     assert two_apps.get("counts", service=django) == every | {
-        "sections": {"http": 6, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0}
+        "sections": {"http": 6, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, **NO_CALLS}
     }
     assert client.get("/__tracepanel__/api/counts", {"service": "shop"}).json() == two_apps.get(
         "counts", service="shop"
