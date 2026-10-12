@@ -14,7 +14,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from tracepanel.core import conf, errors, registry, services
-from tracepanel.core.context import current_trace, now_us, record_span, start_trace
+from tracepanel.core.context import adopt, current_trace, now_us, record_span, recorded, start_trace
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
@@ -31,8 +31,8 @@ TRIGGER = "tracepanel_trigger"
 # Not keyed by message id: a retry keeps the id, and Retries requeues it (in its own after_ hook, before tracepanel's)
 # soon enough for another thread to start the next attempt while this one is still being closed.
 _run: ContextVar[TaskRun | None] = ContextVar("tracepanel_dramatiq_run", default=None)
-# Message id -> (when the send started, the id the enqueue span will get).
-_sending: dict[str, tuple[int, str]] = {}
+# Message id -> (when the send started, the id the enqueue span will get, the trace's span count then).
+_sending: dict[str, tuple[int, str, int]] = {}
 _lock = threading.Lock()
 
 
@@ -71,14 +71,16 @@ class TracepanelHooks:
         span_id = new_id()
         options[PARENT] = f"{trace.id}:{span_id}"
         with _lock:
-            _sending[message.message_id] = (now_us(), span_id)
+            _sending[message.message_id] = (now_us(), span_id, recorded())
 
     def after_enqueue(self, broker: Any, message: Any, delay: int) -> None:  # noqa: ANN401
         with _lock:
             sending = _sending.pop(message.message_id, None)
         if sending is None or current_trace() is None:
             return
-        start, span_id = sending
+        start, span_id, mark = sending
+        # The broker's commands (Redis) go under the enqueue span.
+        adopt(span_id, mark)
         name = _actor_path(broker, message.actor_name)
         record_span(
             "task.enqueue",

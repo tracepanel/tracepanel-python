@@ -15,8 +15,11 @@
   (requests, boto3), httpx, httpx2 and aiohttp. Credentials and the values of
   sensitive query parameters stay out of the recorded URL. A status of 400 or
   more marks the call as an error. The `http_clients_enabled` setting turns it
-  off.
-- Redis commands as `cache` spans, from redis-py and valkey-py, sync and async.
+  off. Calls slower than `slow_http_ms` (500 ms by default) are reported as
+  slow.
+- Redis commands as `redis` spans, from redis-py and valkey-py, sync and async:
+  Redis as a datastore, with the command and its key. Django's cache on Redis
+  stays a cache, with hits and misses.
   A pipeline is one span. Django's cache and the task queues' own Redis calls
   are left to them. The `redis_enabled` setting turns it off.
 

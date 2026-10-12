@@ -1,8 +1,11 @@
-"""Redis used directly: every command of redis-py (and its fork valkey-py) as a `cache` span, sync and async.
+"""Redis used directly: every command of redis-py (and its fork valkey-py) as a `redis` span, sync and async.
 
-A pipeline is one span: its commands go to the server together. What tracepanel records already is left out, by who
-called the client (tracepanel.core.callers): Django's cache (its RedisCache, django-redis), the task queues' brokers and
-result backends (Celery and kombu, RQ, Dramatiq) and Channels' layer.
+Redis is a datastore here, not a cache: queues, counters, locks and sessions live in it as often as cached values.
+A cache on Redis is a `cache` span (with its hit or miss) whose Redis commands are its children.
+
+A pipeline is one span: its commands go to the server together. Commands a library sends for the app (a cache's, a task
+queue's, a channel layer's) are recorded too, under that library's span (cache.get, task.enqueue, channel.send): the
+agent finds issues on that span, and counts the commands as Redis's load.
 """
 
 import functools
@@ -23,18 +26,9 @@ from tracepanel.core.services import location
 CALLERS = Callers(
     own=__name__,
     libraries=("redis", "valkey", "fakeredis"),
-    layers=(
-        "tracepanel.",
-        "django.core.cache.",
-        "django_redis.",
-        "django_valkey.",
-        "kombu.",
-        "celery.",
-        "rq.",
-        "dramatiq.",
-        "channels_redis.",
-        "opentelemetry.",
-    ),
+    # Only tracepanel's own calls are left out. A cache's, a task queue's or a channel layer's commands are recorded
+    # under their cache.get / task.enqueue / channel.send span: Redis's load, with what asked for it.
+    layers=("tracepanel.", "opentelemetry."),
 )
 
 
@@ -49,34 +43,33 @@ def _where(client: Any) -> Attrs:  # noqa: ANN401 (a Redis client, or its pipeli
     return location(f"redis://{host}:{port or 6379}/{db}" if db else f"redis://{host}:{port or 6379}", "redis")
 
 
-def _attrs(client: Any, op: str, key: str | int | None) -> Attrs:  # noqa: ANN401
+def _attrs(client: Any, command: str, key: str | int | None) -> Attrs:  # noqa: ANN401
     where = _where(client)
     namespace = where.get("db.namespace")
     return {
-        "cache.system": "redis",
-        "cache.alias": f"redis/{namespace}" if namespace else "redis",
-        "cache.op": op,
-        "cache.key": key,
+        "db.system": "redis",
+        "db.operation": command,
+        "redis.key": key,
+        "redis.alias": f"redis/{namespace}" if namespace else "redis",
         **where,
         "code.origin": origin(),
     }
 
 
 def _command(args: tuple[Any, ...]) -> tuple[str, str | int | None]:
-    """The command's name (`get`, `hset`) and its key."""
+    """The command's name (`GET`, `HSET`) and its key."""
     name = args[0].decode() if args and isinstance(args[0], bytes) else str(args[0]) if args else ""
     key = args[1] if len(args) > 1 else None
     if isinstance(key, bytes):
         key = key.decode(errors="replace")
-    return name.lower(), key if key is None or isinstance(key, (str, int)) else str(key)
+    return name.upper(), key if key is None or isinstance(key, (str, int)) else str(key)
 
 
-def _record(client: Any, op: str, key: str | int | None, start: int, counter: int, status: str, result: object) -> None:  # noqa: ANN401, PLR0913, PLR0917
-    attrs = _attrs(client, op, key)
-    if op == "get" and status == "ok":
-        attrs["cache.hit"] = result is not None
+def _record(client: Any, command: str, key: str | int | None, start: int, counter: int, status: str) -> None:  # noqa: ANN401, PLR0913, PLR0917
     duration = (time.perf_counter_ns() - counter) // 1000
-    record_span("cache", f"redis.{op}", start=start, duration=duration, attrs=attrs, status=status)
+    # A pipeline's key is how many commands it sent: its name is the command alone.
+    name = f"{command} {key}" if key is not None and command != "PIPELINE" else command
+    record_span("redis", name, start=start, duration=duration, attrs=_attrs(client, command, key), status=status)
 
 
 def _run(client: Any, op: str, key: str | int | None, send: Callable[[], Any]) -> Any:  # noqa: ANN401
@@ -89,7 +82,7 @@ def _run(client: Any, op: str, key: str | int | None, send: Callable[[], Any]) -
     else:
         return result
     finally:
-        _record(client, op, key, start, counter, status, result)
+        _record(client, op, key, start, counter, status)
 
 
 async def _run_async(client: Any, op: str, key: str | int | None, send: Callable[[], Awaitable[Any]]) -> Any:  # noqa: ANN401
@@ -102,7 +95,7 @@ async def _run_async(client: Any, op: str, key: str | int | None, send: Callable
     else:
         return result
     finally:
-        _record(client, op, key, start, counter, status, result)
+        _record(client, op, key, start, counter, status)
 
 
 def _command_wrapper(method: Callable[..., Any], *, asynchronous: bool) -> Callable[..., Any]:
@@ -136,7 +129,7 @@ def _pipeline_wrapper(method: Callable[..., Any], *, asynchronous: bool) -> Call
             if current_trace() is None or not CALLERS.app_called(sys._getframe(0)):  # noqa: SLF001
                 return await method(self, *args, **kwargs)
             size = len(getattr(self, "command_stack", None) or ())
-            return await _run_async(self, "pipeline", size, lambda: method(self, *args, **kwargs))
+            return await _run_async(self, "PIPELINE", size, lambda: method(self, *args, **kwargs))
 
         return traced_async
 
@@ -145,7 +138,7 @@ def _pipeline_wrapper(method: Callable[..., Any], *, asynchronous: bool) -> Call
         if current_trace() is None or not CALLERS.app_called(sys._getframe(0)):  # noqa: SLF001
             return method(self, *args, **kwargs)
         size = len(getattr(self, "command_stack", None) or ())
-        return _run(self, "pipeline", size, lambda: method(self, *args, **kwargs))
+        return _run(self, "PIPELINE", size, lambda: method(self, *args, **kwargs))
 
     return traced
 

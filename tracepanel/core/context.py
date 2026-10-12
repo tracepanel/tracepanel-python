@@ -109,3 +109,25 @@ def record_span(  # noqa: PLR0913
     )
     trace.spans.append(span)
     return span
+
+
+def recorded() -> int:
+    """How many spans the current trace has: a mark for adopt()."""
+    trace = _trace.get()
+    return len(trace.spans) if trace is not None else 0
+
+
+def adopt(span_id: str, since: int) -> None:
+    """Move the spans recorded under the current span since `since` (recorded()) under `span_id`.
+
+    For a span recorded once its work is over (a task enqueue, from the queue's signal after publishing): what the
+    work did meanwhile (the broker's Redis commands) becomes its children, as if it had been open all along.
+    """
+    trace = _trace.get()
+    if trace is None:
+        return
+    parent = _span.get()
+    current = parent.id if parent else None
+    for span in trace.spans[since:]:
+        if span.parent_id == current and span.id != span_id:
+            span.parent_id = span_id

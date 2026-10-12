@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from tracepanel.core import conf, errors, registry, services
-from tracepanel.core.context import current_span, current_trace, now_us, record_span, start_trace
+from tracepanel.core.context import adopt, current_span, current_trace, now_us, record_span, recorded, start_trace
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
@@ -30,9 +30,9 @@ PARENT = "tracepanel_parent"
 PUBLISHED = "tracepanel_published"
 TRIGGER = "tracepanel_trigger"
 _runs: dict[str, TaskRun] = {}
-# Task id -> (when publishing started, the id the enqueue span will get): known before the message leaves, so the
-# worker's link can point at that span.
-_published: dict[str, tuple[int, str]] = {}
+# Task id -> (when publishing started, the id the enqueue span will get, the trace's span count then): known before
+# the message leaves, so the worker's link can point at that span, and what publishing recorded can go under it.
+_published: dict[str, tuple[int, str, int]] = {}
 _lock = threading.Lock()
 _beat = False
 
@@ -80,7 +80,7 @@ def before_publish(sender: str | None = None, headers: dict[str, Any] | None = N
         span_id = new_id()
         headers[PARENT] = f"{trace.id}:{span_id}"
         with _lock:
-            _published[task_id] = (now_us(), span_id)
+            _published[task_id] = (now_us(), span_id, recorded())
     del sender, kwargs
 
 
@@ -98,7 +98,9 @@ def after_publish(
         published = _published.pop(task_id, None)
     if published is None:
         return
-    start, span_id = published
+    start, span_id, mark = published
+    # The broker's commands while publishing (Redis LPUSH…) go under the enqueue span.
+    adopt(span_id, mark)
     eta = headers.get("eta")
     record_span(
         "task.enqueue",

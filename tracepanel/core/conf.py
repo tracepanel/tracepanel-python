@@ -49,6 +49,8 @@ class Config:
     n_plus_one_threshold: int = 3
     # Queries slower than this are reported as slow SQL.
     slow_sql_ms: int = 100
+    # Outgoing HTTP calls slower than this are reported as slow.
+    slow_http_ms: int = 500
     # Outer transactions (atomic blocks) longer than this are reported: they hold their locks until COMMIT.
     long_transaction_ms: int = 500
     # Keep repr() of local variables in project frames of errors (development only, masked).

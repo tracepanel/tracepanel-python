@@ -96,6 +96,7 @@ class AgentStore:
         thresholds = {
             "n_plus_one": config.n_plus_one_threshold,
             "slow_sql_ms": config.slow_sql_ms,
+            "slow_http_ms": config.slow_http_ms,
             "long_transaction_ms": config.long_transaction_ms,
         }
         sock = agent.connect(self.address, self.max_traces, thresholds)

@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
-from dirty_equals import IsStr
+from dirty_equals import IsPartialDict, IsStr
 from jsonschema import Draft202012Validator
 
 pytest.importorskip("redis")
@@ -41,7 +41,7 @@ def traced(work: Callable[[], object]) -> Trace:
 
 
 def commands(trace: Trace) -> list[Span]:
-    return [span for span in trace.spans if span.kind == "cache"]
+    return [span for span in trace.spans if span.kind == "redis"]
 
 
 def test_each_command_is_a_span(port: int, validator: Draft202012Validator) -> None:
@@ -55,20 +55,17 @@ def test_each_command_is_a_span(port: int, validator: Draft202012Validator) -> N
     trace = traced(work)
     validator.validate(trace.to_dict())
 
-    assert [span.name for span in commands(trace)] == ["redis.set", "redis.get", "redis.get"]
+    assert [span.name for span in commands(trace)] == ["SET user:1", "GET user:1", "GET user:2"]
     assert commands(trace)[1].attrs == {
-        "cache.system": "redis",
-        "cache.alias": "redis/1",
-        "cache.op": "get",
-        "cache.key": "user:1",
-        "cache.hit": True,
+        "db.system": "redis",
+        "db.operation": "GET",
+        "redis.key": "user:1",
+        "redis.alias": "redis/1",
         "server.address": "localhost",
         "server.port": port,
         "db.namespace": "1",
         "code.origin": ORIGIN,
     }
-
-    assert commands(trace)[2].attrs["cache.hit"] is False
 
 
 def test_a_pipeline_is_one_span(port: int) -> None:
@@ -83,7 +80,7 @@ def test_a_pipeline_is_one_span(port: int) -> None:
 
     trace = traced(work)
 
-    assert [(span.name, span.attrs["cache.key"]) for span in commands(trace)] == [("redis.pipeline", 3)]
+    assert [(span.name, span.attrs["redis.key"]) for span in commands(trace)] == [("PIPELINE", 3)]
 
 
 def test_async_commands_and_pipeline(port: int) -> None:
@@ -100,7 +97,7 @@ def test_async_commands_and_pipeline(port: int) -> None:
 
     trace = traced(lambda: asyncio.run(work()))
 
-    assert [span.name for span in commands(trace)] == ["redis.set", "redis.pipeline"]
+    assert [span.name for span in commands(trace)] == ["SET b", "PIPELINE"]
     assert commands(trace)[0].attrs["code.origin"] == ORIGIN
 
 
@@ -113,34 +110,48 @@ def test_a_failing_command_is_an_error(port: int) -> None:
             client.incr("text")
 
     assert [(span.name, span.status) for span in commands(traced(work))] == [
-        ("redis.set", "ok"),
+        ("SET text", "ok"),
         # What redis-py sends for incr().
-        ("redis.incrby", "error"),
+        ("INCRBY text", "error"),
     ]
 
 
-# ---------- what records its own Redis calls ----------
+# ---------- Redis under a library: the library's span, its commands inside ----------
 
 
-def test_django_s_redis_cache_is_left_to_django(port: int) -> None:
+def test_a_django_cache_on_redis_has_its_commands_inside(port: int) -> None:
     from django.core.cache.backends.redis import RedisCache  # noqa: PLC0415
 
-    cache = RedisCache(f"redis://127.0.0.1:{port}/2", {})
+    from tracepanel.django.cache import instrument  # noqa: PLC0415
+
+    cache = instrument(RedisCache(f"redis://127.0.0.1:{port}/2", {}), "default")
 
     def work() -> None:
         cache.set("k", "v")
         assert cache.get("k") == "v"
 
-    assert commands(traced(work)) == []
+    trace = traced(work)
+    by_id = {span.id: span for span in trace.spans}
+    parents = [(by_id[str(span.parent_id)].name, span.attrs["db.operation"]) for span in commands(trace)]
+
+    assert parents == [("cache.set", "SET"), ("cache.get", "GET")]
+    assert by_id[str(commands(trace)[1].parent_id)].attrs == IsPartialDict(
+        {"cache.library": "django", "cache.op": "get", "cache.hit": True}
+    )
 
 
-def test_an_rq_enqueue_is_left_to_rq(port: int) -> None:
+def test_an_rq_enqueue_has_its_commands_inside(port: int) -> None:
     rq = pytest.importorskip("rq")
+    from tracepanel.integrations import rq as rq_integration  # noqa: PLC0415
+
+    rq_integration.install()
     queue = rq.Queue("default", connection=redis.Redis(port=port))
 
     trace = traced(lambda: queue.enqueue("builtins.print", "hi"))
+    enqueue = next(span for span in trace.spans if span.kind == "task.enqueue")
 
-    assert commands(trace) == []
+    assert commands(trace) != []
+    assert {span.parent_id for span in commands(trace)} == {enqueue.id}
 
 
 def calling_from(module: str) -> Callable[[redis.Redis], Any]:
@@ -149,8 +160,8 @@ def calling_from(module: str) -> Callable[[redis.Redis], Any]:
     return namespace["run"]
 
 
-@pytest.mark.parametrize("module", ["kombu.transport.redis", "celery.backends.redis", "channels_redis.core"])
-def test_task_queues_and_channel_layers_are_left_out(port: int, module: str) -> None:
+@pytest.mark.parametrize("module", ["tracepanel.storage.agent", "opentelemetry.exporter.otlp"])
+def test_tracepanel_s_own_commands_are_left_out(port: int, module: str) -> None:
     client = redis.Redis(port=port)
 
     assert commands(traced(lambda: calling_from(module)(client))) == []
