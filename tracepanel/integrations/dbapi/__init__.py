@@ -1,0 +1,43 @@
+"""Database drivers used directly, without an ORM: every statement as an `sql` span.
+
+The third database layer on tracepanel.core.sql (Django's ORM and SQLAlchemy are the others): the statement, its
+parameters, its place in project code and the N+1 / duplicate analysis are the same. An app that talks to its
+database through the driver (FastAPI or Flask with raw SQL, Peewee, a script) gets its queries traced like an ORM's.
+
+- SQLite: sqlite3, aiosqlite.
+- PostgreSQL: psycopg (3), psycopg2, asyncpg.
+- MySQL and MariaDB: PyMySQL, mysqlclient, MySQL Connector/Python, aiomysql.
+- Oracle: python-oracledb.
+
+An ORM runs its statements through the same drivers, and records them itself. What decides is who called the driver:
+the first frame above the call that is neither the driver's own code nor this package's (_core.app_called). When that
+is Django's database layer, SQLAlchemy or tracepanel itself (EXPLAIN), the statement is theirs and the driver's wrapper
+leaves it alone; the app, or a library on top of the driver, gets it recorded here.
+
+Not covered: drivers whose cursors are C types with no factory to subclass (pyodbc, pymssql, asyncmy).
+"""
+
+from collections.abc import Callable
+
+from tracepanel.core import explain as plans
+from tracepanel.integrations.dbapi import mysql, oracle, postgres, sqlite
+from tracepanel.integrations.dbapi._core import explain, known
+
+__all__ = ["explain", "explain_or", "install", "known"]
+
+
+def explain_or(fallback: Callable[..., plans.Plan]) -> Callable[..., plans.Plan]:
+    """EXPLAIN for a statement a driver recorded, else for one of the framework's ORM (`fallback`)."""
+
+    def run(statement: str, params: object, alias: str, *, analyze: bool = False) -> plans.Plan:
+        if known(alias):
+            return explain(statement, params, alias, analyze=analyze)  # type: ignore[arg-type]
+        return fallback(statement, params, alias, analyze=analyze)
+
+    return run
+
+
+def install() -> None:
+    """Wrap the drivers that are installed (sqlite3 always: it is the standard library)."""
+    for family in (sqlite, postgres, mysql, oracle):
+        family.install()

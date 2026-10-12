@@ -64,6 +64,8 @@ class Config:
     # Integrations, each on when its library is installed; `false` leaves the library unpatched. Read at startup.
     celery_enabled: bool = True
     channels_enabled: bool = True
+    # Database drivers used directly, without an ORM (statements an ORM runs are the ORM's).
+    dbapi_enabled: bool = True
     django_tasks_enabled: bool = True
     dramatiq_enabled: bool = True
     drf_enabled: bool = True

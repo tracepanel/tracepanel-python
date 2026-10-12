@@ -36,7 +36,9 @@ jobs:
       - uses: astral-sh/setup-uv@v10.3.0
         with:
           working-directory: tracepanel-python
-      - run: uv sync --locked $GROUPS
+      # mysqlclient builds against the MySQL client library.
+      - run: sudo apt-get install -y --no-install-recommends pkg-config default-libmysqlclient-dev
+      - run: uv sync --locked $GROUPS --group postgres --group drivers
       - run: uv run poe lint
 
   test:
@@ -90,6 +92,64 @@ jobs:
         run: uv pip install "django~=${{ matrix.django }}.0"
       - run: uv run --no-sync python -c "import django, sys; print('django', django.get_version(), 'python', sys.version)"
       # The agent uv built is the one the tests compare with (tests/storage/test_agent.py).
+      - run: uv run --no-sync pytest
+        env:
+          TRACEPANEL_AGENT_BIN: ${{ github.workspace }}/tracepanel-python/.venv/bin/tracepanel-agent
+
+  drivers:
+    # The database drivers on their servers, with Django and SQLAlchemy on the same drivers: each statement once.
+    name: drivers (PostgreSQL, MySQL, Oracle)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tracepanel
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: mysql
+          MYSQL_DATABASE: tracepanel
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pmysql" --health-interval 5s --health-timeout 5s
+          --health-retries 20
+      oracle:
+        image: gvenzl/oracle-free:23-slim-faststart
+        env:
+          ORACLE_PASSWORD: oracle
+          APP_USER: tracepanel
+          APP_USER_PASSWORD: tracepanel
+        ports: ["1521:1521"]
+        options: >-
+          --health-cmd healthcheck.sh --health-interval 10s --health-timeout 5s --health-retries 30
+    env:
+      TRACEPANEL_TEST_DB: postgres
+      PGHOST: localhost
+      TRACEPANEL_TEST_MYSQL: "1"
+      TRACEPANEL_TEST_ORACLE: "1"
+      ORACLE_DSN: localhost:1521/FREEPDB1
+    defaults:
+      run:
+        working-directory: tracepanel-python
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: tracepanel-python
+      - uses: actions/checkout@v7
+        with:
+          repository: tracepanel/tracepanel
+          path: tracepanel
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.14"
+          working-directory: tracepanel-python
+      - run: sudo apt-get install -y --no-install-recommends pkg-config default-libmysqlclient-dev
+      - run: uv sync --locked $GROUPS --group postgres --group drivers
       - run: uv run --no-sync pytest
         env:
           TRACEPANEL_AGENT_BIN: ${{ github.workspace }}/tracepanel-python/.venv/bin/tracepanel-agent

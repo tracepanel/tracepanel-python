@@ -94,6 +94,18 @@ django-tasks = [
     "django-tasks-db>=0.13.0",
 ]
 postgres = ["psycopg[binary]>=3.2"]
+# The database drivers tracepanel wraps when they are used without an ORM (their servers: see CONTRIBUTING).
+drivers = [
+    "aiosqlite>=0.22.1",
+    "psycopg2-binary>=2.9.13",
+    "asyncpg>=0.32.0",
+    "pymysql>=1.2.3",
+    "mysqlclient>=2.3.0",
+    "mysql-connector-python>=26.7.0",
+    "aiomysql>=0.3.2",
+    "oracledb>=26.0.1",
+    "sqlalchemy[asyncio]>=2.1.4",
+]
 strawberry = [
     "strawberry-graphql>=0.332.0",
 ]
