@@ -8,10 +8,12 @@ on:
 permissions:
   contents: read
 
+# The same groups as CI's lint job (ci.yml): pyrefly checks the integrations against every library they wrap.
 env:
   GROUPS: >-
     --group celery --group channels --group strawberry --group django-tasks --group fastapi --group dramatiq
-    --group rq --group ninja --group drf --group flask --group falcon --group otel
+    --group rq --group ninja --group drf --group flask --group falcon --group otel --group clients
+    --group postgres --group drivers
 
 jobs:
   release:
@@ -57,6 +59,9 @@ jobs:
           ref: ${{ github.ref_name }}
           path: tracepanel
           sparse-checkout: schema
+
+      # mysqlclient (the drivers group) builds against the MySQL client library.
+      - run: sudo apt-get install -y --no-install-recommends pkg-config default-libmysqlclient-dev
 
       - name: Lint and test against the published agent
         # poe runs each task through `uv run`, which would sync again with the sources and build the agent from
