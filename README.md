@@ -1,10 +1,10 @@
 # Tracepanel
 
-**See what your app does on every request.** Tracepanel is a debug toolbar for
-Python web apps. It traces every request, query, task and error on your
-machine. It finds N+1 queries, duplicate queries and slow SQL, and names the
-line of code to fix. You see the results in a panel on your pages and in a
-console.
+**See what your app does on every request.** Tracepanel collects the traces
+and logs of your Python app on your machine. Every request, background task and
+command comes with its SQL queries, log lines and errors. Tracepanel finds N+1
+queries, duplicate queries and slow SQL, and names the line of code to fix. You
+see the results in a panel on your pages and in a console.
 
 It runs while you develop. Nothing leaves your machine.
 
@@ -46,7 +46,9 @@ tracepanel.flask.install(app)
 Open any page of your app. A badge in the corner opens the panel, and the
 console is at `/__tracepanel__/`. Tracepanel also traces Celery, Dramatiq, RQ,
 SQLAlchemy, Strawberry, Django REST framework, Django Ninja, Channels and htmx
-without extra setup.
+without extra setup. Log lines written with `logging` are captured too, each
+attached to the request, task or command that wrote it. Tracepanel adds no
+handler and keeps your logging configuration as it is.
 
 For Django, `pip install django-tracepanel` installs the same package, and
 [its documentation](https://github.com/tracepanel/django-tracepanel) covers

@@ -1,7 +1,7 @@
 [project]
 name = "tracepanel"
 version = "0.0.1a1"
-description = "A debug toolbar for Python web apps: every request, query, task and error traced, N+1 queries found"
+description = "Traces and logs for Python apps: every request, task and command with its SQL and log lines, N+1 queries found"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
