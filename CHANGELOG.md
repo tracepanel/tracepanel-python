@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.0.1a2 (2026-10-12)
+
+Needs `tracepanel-agent` 0.0.1a2 (installed with it): the agent that knows the
+`redis` spans and shows the new Redis, Cache and HTTP calls pages.
 
 ### Added
 
@@ -27,6 +30,14 @@
 - Repeated Redis commands and cache calls are reported only when they cost
   `n_plus_one_min_ms` (5 ms by default) together: an in-memory store answers
   in a fraction of a millisecond.
+
+### Changed
+
+- Cache spans are named after their operation and key (`get user:1`), not
+  `cache.get`, and carry `cache.library` and `code.origin`.
+- Redis commands a library sends for the app (Django's cache, Celery, RQ,
+  Dramatiq, Channels) are recorded, under that library's span, instead of left
+  out.
 
 ## 0.0.1a1 (2026-10-12)
 
