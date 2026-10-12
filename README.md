@@ -1,10 +1,15 @@
 # Tracepanel
 
-**See what your app does on every request.** Tracepanel is a debug toolbar for
-Python web apps. It traces every request, query, task and error on your
-machine. It finds N+1 queries, duplicate queries and slow SQL, and names the
-line of code to fix. You see the results in a panel on your pages and in a
-console.
+**See what your app does on every request.** Tracepanel collects the traces
+and logs of your Python app on your machine. Every request, background task and
+command comes with its SQL queries, log lines and errors. Tracepanel finds N+1
+queries, duplicate queries and slow SQL, and names the line of code to fix. You
+see the results in a panel on your pages and in a console.
+
+Logs need no setup. Tracepanel picks up what your code already writes with
+`logging`, adds no handler, keeps your logging configuration as it is, and
+attaches each line to the request, task or command that wrote it, with the
+fields you pass in `extra=`.
 
 It runs while you develop. Nothing leaves your machine.
 
