@@ -18,10 +18,15 @@
   off. Calls slower than `slow_http_ms` (500 ms by default) are reported as
   slow.
 - Redis commands as `redis` spans, from redis-py and valkey-py, sync and async:
-  Redis as a datastore, with the command and its key. Django's cache on Redis
-  stays a cache, with hits and misses.
-  A pipeline is one span. Django's cache and the task queues' own Redis calls
-  are left to them. The `redis_enabled` setting turns it off.
+  Redis as a datastore, with the command and its key. A pipeline is one span.
+  The `redis_enabled` setting turns it off.
+- A cache operation is a span named after its operation and key
+  (`get user:1`), open while the backend works: a cache on Redis has its
+  commands inside, with its hit or miss on the cache span. A task enqueue has
+  its broker's commands inside the same way.
+- Repeated Redis commands and cache calls are reported only when they cost
+  `n_plus_one_min_ms` (5 ms by default) together: an in-memory store answers
+  in a fraction of a millisecond.
 
 ## 0.0.1a1 (2026-10-12)
 

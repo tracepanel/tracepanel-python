@@ -134,7 +134,7 @@ def test_a_django_cache_on_redis_has_its_commands_inside(port: int) -> None:
     by_id = {span.id: span for span in trace.spans}
     parents = [(by_id[str(span.parent_id)].name, span.attrs["db.operation"]) for span in commands(trace)]
 
-    assert parents == [("cache.set", "SET"), ("cache.get", "GET")]
+    assert parents == [("set k", "SET"), ("get k", "GET")]
     assert by_id[str(commands(trace)[1].parent_id)].attrs == IsPartialDict(
         {"cache.library": "django", "cache.op": "get", "cache.hit": True}
     )
