@@ -8,6 +8,7 @@ from django.core.cache import CacheHandler, caches
 from django.core.cache.backends.base import BaseCache
 
 from tracepanel.core.context import current_trace, start_span
+from tracepanel.core.frames import origin
 from tracepanel.core.patching import patch, patched
 from tracepanel.django import services as django_services
 
@@ -38,6 +39,7 @@ def _wrap(alias: str, op: str, method: Callable[..., object], service: "Attrs") 
             **service,
             "cache.op": op,
             "cache.key": _key(op, args),
+            "code.origin": origin(),
         }
         # Open while the backend works: its own calls (Redis commands, memcached) land inside.
         with start_span("cache", f"cache.{op}", attrs) as span:
