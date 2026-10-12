@@ -242,6 +242,7 @@ def test_sqlalchemy_on_a_postgres_driver_is_recorded_by_sqlalchemy_only(dialect:
 @pytest.mark.parametrize("dialect", ["asyncpg", "psycopg"])
 def test_async_sqlalchemy_on_a_postgres_driver_is_recorded_by_sqlalchemy_only(dialect: str) -> None:
     pytest.importorskip(dialect)
+    pytest.importorskip("greenlet")  # SQLAlchemy's asyncio
     from sqlalchemy import text  # noqa: PLC0415
     from sqlalchemy.ext.asyncio import create_async_engine  # noqa: PLC0415
 

@@ -26,7 +26,10 @@ def mysqlclient_connect() -> Any:  # noqa: ANN401
 
 def connector_connect(*, pure: bool) -> Callable[[], Any]:
     def connect() -> Any:  # noqa: ANN401
-        return pytest.importorskip("mysql.connector").connect(**my(), use_pure=pure)
+        connector = pytest.importorskip("mysql.connector")
+        if not pure and not connector.HAVE_CEXT:
+            pytest.skip("MySQL Connector's C extension isn't built for this Python")
+        return connector.connect(**my(), use_pure=pure)
 
     return connect
 
@@ -151,6 +154,7 @@ def test_sqlalchemy_on_a_mysql_driver_is_recorded_by_sqlalchemy_only(dialect: st
 
 def test_async_sqlalchemy_on_aiomysql_is_recorded_by_sqlalchemy_only() -> None:
     pytest.importorskip("aiomysql")
+    pytest.importorskip("greenlet")  # SQLAlchemy's asyncio
     from sqlalchemy import text  # noqa: PLC0415
     from sqlalchemy.ext.asyncio import create_async_engine  # noqa: PLC0415
 

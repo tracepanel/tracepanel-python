@@ -157,6 +157,7 @@ def test_aiosqlite_statements_are_recorded_once_each() -> None:
 
 def test_sqlalchemy_on_aiosqlite_is_recorded_by_sqlalchemy_only() -> None:
     pytest.importorskip("aiosqlite")
+    pytest.importorskip("greenlet")  # SQLAlchemy's asyncio
     from sqlalchemy import text  # noqa: PLC0415
     from sqlalchemy.ext.asyncio import create_async_engine  # noqa: PLC0415
 
