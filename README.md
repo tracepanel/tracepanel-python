@@ -2,8 +2,8 @@
 
 **See what your app does on every request.** Tracepanel is a debug toolbar for
 Python web apps. It traces every request, query, task and error on your
-machine, finds the N+1 queries and the duplicate and slow SQL, and names the
-line of code to fix. It shows all of it in a panel on your pages and in a
+machine. It finds N+1 queries, duplicate queries and slow SQL, and names the
+line of code to fix. You see the results in a panel on your pages and in a
 console.
 
 It runs while you develop. Nothing leaves your machine.
@@ -14,8 +14,9 @@ It runs while you develop. Nothing leaves your machine.
 pip install tracepanel
 ```
 
-Tracepanel turns on in development only: with `DEBUG`, in a debug server, or
-under `tracepanel run`. Add it for your framework:
+Tracepanel turns on only in development. That means `DEBUG` is on, the app
+runs in a debug server, or you start it with `tracepanel run`. Add it for your
+framework:
 
 ```python
 # Django: settings.py
@@ -43,9 +44,9 @@ tracepanel.flask.install(app)
 ```
 
 Open any page of your app. A badge in the corner opens the panel, and the
-console is at `/__tracepanel__/`. Celery, Dramatiq, RQ, SQLAlchemy, Strawberry,
-Django REST framework, Django Ninja, Channels and htmx are traced with no more
-setup.
+console is at `/__tracepanel__/`. Tracepanel also traces Celery, Dramatiq, RQ,
+SQLAlchemy, Strawberry, Django REST framework, Django Ninja, Channels and htmx
+without extra setup.
 
 For Django, `pip install django-tracepanel` installs the same package, and
 [its documentation](https://github.com/tracepanel/django-tracepanel) covers
@@ -54,7 +55,7 @@ Django in depth.
 ## Run without changing your code
 
 `tracepanel run` turns Tracepanel on for one command and adds nothing to the
-project:
+project. For example:
 
 ```bash
 tracepanel run python manage.py runserver   # Django
@@ -81,13 +82,13 @@ n_plus_one_threshold = 5
 ignore_paths = ["/health*", "/static/*"]
 ```
 
-`tracepanel config` prints every setting, its value and where it was set.
+`tracepanel config` prints every setting, its value and the place that set it.
 
 ## Trace your own code
 
-Requests, tasks and management commands are traced already. To see your own
-steps inside them, or to trace work that runs elsewhere, such as a script or a
-scheduled job:
+Tracepanel already traces requests, tasks and management commands. The API
+below adds your own steps inside them, or traces work that runs elsewhere, such
+as a script or a scheduled job.
 
 ```python
 import time
@@ -109,9 +110,9 @@ with tracepanel.trace("rebuild-index"):
 ```
 
 `span()` adds a step to the current trace, `@traced` does the same for a
-function, and `trace()` starts a trace of its own. Keyword attributes go under
-`app.`: `source` is stored as `app.source`. SQL, logs and errors inside a span
-belong to it. Outside development every call does nothing, so the
+function, and `trace()` starts a trace of its own. Tracepanel stores keyword
+attributes under `app.`, so `source` becomes `app.source`. SQL, logs and errors
+inside a span belong to it. Outside development every call does nothing, so the
 instrumentation can stay in your code.
 
 ## Command line
@@ -142,4 +143,4 @@ instrumentation can stay in your code.
 
 ## License
 
-[MIT](LICENSE). © DevRealm OÜ.
+Licensed under the [MIT License](LICENSE).
