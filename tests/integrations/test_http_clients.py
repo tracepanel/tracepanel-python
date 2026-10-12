@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from dirty_equals import IsInt, IsPartialDict, IsStr
+from jsonschema import Draft202012Validator
 
 from tracepanel._compat import override
 from tracepanel.core.context import start_trace
@@ -69,13 +70,15 @@ def summary(trace: Trace) -> list[tuple[str, str, object]]:
 # ---------- urllib3, and requests on it ----------
 
 
-def test_a_requests_call_is_one_span(server: str) -> None:
+def test_a_requests_call_is_one_span(server: str, validator: Draft202012Validator) -> None:
     requests = pytest.importorskip("requests")
 
     def work() -> None:
         requests.get(f"{server}/ok", timeout=5)
 
     trace = traced(work)
+
+    validator.validate(trace.to_dict())
 
     assert summary(trace) == [("GET 127.0.0.1/ok", "ok", 200)]
     assert calls(trace)[0].attrs == {

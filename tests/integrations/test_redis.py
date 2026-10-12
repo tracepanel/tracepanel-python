@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 from dirty_equals import IsStr
+from jsonschema import Draft202012Validator
 
 pytest.importorskip("redis")
 fakeredis = pytest.importorskip("fakeredis")
@@ -43,7 +44,7 @@ def commands(trace: Trace) -> list[Span]:
     return [span for span in trace.spans if span.kind == "cache"]
 
 
-def test_each_command_is_a_span(port: int) -> None:
+def test_each_command_is_a_span(port: int, validator: Draft202012Validator) -> None:
     client = redis.Redis(port=port, db=1)
 
     def work() -> None:
@@ -52,6 +53,7 @@ def test_each_command_is_a_span(port: int) -> None:
         client.get("user:2")
 
     trace = traced(work)
+    validator.validate(trace.to_dict())
 
     assert [span.name for span in commands(trace)] == ["redis.set", "redis.get", "redis.get"]
     assert commands(trace)[1].attrs == {
