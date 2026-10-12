@@ -50,6 +50,7 @@ class Integration:
 INTEGRATIONS: tuple[Integration, ...] = (
     Integration("logging", "logging", ("logging",), "tracepanel.integrations.logging"),
     Integration("sqlalchemy", "SQLAlchemy", ("sqlalchemy",), "tracepanel.integrations.sqlalchemy"),
+    Integration("dbapi", "sqlite3, psycopg", ("sqlite3",), "tracepanel.integrations.dbapi"),
     Integration("celery", "Celery", ("celery",), "tracepanel.integrations.celery"),
     Integration("dramatiq", "Dramatiq", ("dramatiq",), "tracepanel.integrations.dramatiq"),
     Integration("rq", "RQ", ("rq",), "tracepanel.integrations.rq"),

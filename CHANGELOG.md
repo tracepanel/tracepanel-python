@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- SQL from sqlite3 and psycopg (3) used directly, without an ORM: an app that
+  talks to its database through the driver gets the same `sql` spans as Django's
+  ORM and SQLAlchemy, with N+1, duplicate and slow query issues. A statement an
+  ORM runs through the driver is still recorded once, by the ORM. The
+  `dbapi_enabled` setting turns it off.
+
 ## 0.0.1a1 (2026-10-12)
 
 The first release of Tracepanel for Python. It is an alpha: settings and what
