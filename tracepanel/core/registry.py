@@ -51,6 +51,13 @@ INTEGRATIONS: tuple[Integration, ...] = (
     Integration("logging", "logging", ("logging",), "tracepanel.integrations.logging"),
     Integration("sqlalchemy", "SQLAlchemy", ("sqlalchemy",), "tracepanel.integrations.sqlalchemy"),
     Integration("dbapi", "Database drivers", ("sqlite3",), "tracepanel.integrations.dbapi"),
+    Integration(
+        "http_clients",
+        "HTTP clients",
+        ("urllib3", "httpx", "httpx2", "aiohttp"),
+        "tracepanel.integrations.http_clients",
+    ),
+    Integration("redis", "Redis", ("redis", "valkey"), "tracepanel.integrations.redis"),
     Integration("celery", "Celery", ("celery",), "tracepanel.integrations.celery"),
     Integration("dramatiq", "Dramatiq", ("dramatiq",), "tracepanel.integrations.dramatiq"),
     Integration("rq", "RQ", ("rq",), "tracepanel.integrations.rq"),

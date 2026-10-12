@@ -69,9 +69,13 @@ class Config:
     django_tasks_enabled: bool = True
     dramatiq_enabled: bool = True
     drf_enabled: bool = True
+    # Outgoing HTTP calls: urllib3 (requests, boto3), httpx, aiohttp.
+    http_clients_enabled: bool = True
     logging_enabled: bool = True
     ninja_enabled: bool = True
     otel_enabled: bool = True
+    # Redis used directly (Django's cache and the task queues record their own calls).
+    redis_enabled: bool = True
     rq_enabled: bool = True
     sqlalchemy_enabled: bool = True
     strawberry_enabled: bool = True
