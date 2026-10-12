@@ -1,12 +1,11 @@
 # Tracepanel
 
-**See what your app does on every request.** Tracepanel collects the traces
-and logs of your Python app on your machine. Every request, background task and
-command comes with its SQL queries, log lines and errors. Tracepanel finds N+1
-queries, duplicate queries and slow SQL, and names the line of code to fix. You
-see the results in a panel on your pages and in a console.
+**See what your app does on every request.** Tracepanel records each request,
+background task and command of your Python app with its SQL queries, logs and
+errors. It points out N+1 queries, duplicate queries and slow SQL, and names the
+line of code to fix. You read it in a panel on your pages and in a console.
 
-It runs while you develop. Nothing leaves your machine.
+It runs while you develop, and everything stays on your machine.
 
 ## Install
 
@@ -14,9 +13,8 @@ It runs while you develop. Nothing leaves your machine.
 pip install tracepanel
 ```
 
-Tracepanel turns on only in development. That means `DEBUG` is on, the app
-runs in a debug server, or you start it with `tracepanel run`. Add it for your
-framework:
+Tracepanel is on only in development: when `DEBUG` is on, in a debug server,
+or under `tracepanel run`. Add it to your app:
 
 ```python
 # Django: settings.py
@@ -43,21 +41,23 @@ app = Flask(__name__)
 tracepanel.flask.install(app)
 ```
 
-Open any page of your app. A badge in the corner opens the panel, and the
-console is at `/__tracepanel__/`. Tracepanel also traces Celery, Dramatiq, RQ,
-SQLAlchemy, Strawberry, Django REST framework, Django Ninja, Channels and htmx
-without extra setup. Log lines written with `logging` are captured too, each
-attached to the request, task or command that wrote it. Tracepanel adds no
-handler and keeps your logging configuration as it is.
+Open a page of your app and click the badge in the corner. On a page that
+loads each post's author in its own query, the panel shows
+`SELECT auth_user ×50` marked N+1, the line of code that ran it, and the
+`select_related()` that turns 50 queries into one. The console at
+`/__tracepanel__/` holds every request, task and command the app ran.
 
-For Django, `pip install django-tracepanel` installs the same package, and
-[its documentation](https://github.com/tracepanel/django-tracepanel) covers
-Django in depth.
+Tracepanel also traces Celery, Dramatiq, RQ, SQLAlchemy, Strawberry, Django REST
+framework, Django Ninja, Channels and htmx when they are installed. It reads the
+log lines you write with `logging` and attaches each one to the request, task
+or command that wrote it. Your logging configuration stays as it is.
+
+For Django, `pip install django-tracepanel` installs the same package.
 
 ## Run without changing your code
 
-`tracepanel run` turns Tracepanel on for one command and adds nothing to the
-project. For example:
+`tracepanel run` turns Tracepanel on for one command. The project stays as it
+is:
 
 ```bash
 tracepanel run python manage.py runserver   # Django
@@ -69,8 +69,8 @@ tracepanel run celery -A app worker         # a worker
 
 ## Configure
 
-Tracepanel works with no settings. To change one, set it in any of these
-places. A later one wins:
+Every setting has a default. To change one, set it in one of these places, and
+a later place wins:
 
 1. `tracepanel.toml`, or `[tool.tracepanel]` in `pyproject.toml`
 2. the `TRACEPANEL` dict in Django's settings
@@ -84,13 +84,12 @@ n_plus_one_threshold = 5
 ignore_paths = ["/health*", "/static/*"]
 ```
 
-`tracepanel config` prints every setting, its value and the place that set it.
+`tracepanel config` prints each setting, its value and where it comes from.
 
 ## Trace your own code
 
-Tracepanel already traces requests, tasks and management commands. The API
-below adds your own steps inside them, or traces work that runs elsewhere, such
-as a script or a scheduled job.
+To add your own steps to a request or a task, or to trace a script or a
+scheduled job:
 
 ```python
 import time
@@ -111,11 +110,11 @@ with tracepanel.trace("rebuild-index"):
     rebuild_index()
 ```
 
-`span()` adds a step to the current trace, `@traced` does the same for a
-function, and `trace()` starts a trace of its own. Tracepanel stores keyword
-attributes under `app.`, so `source` becomes `app.source`. SQL, logs and errors
-inside a span belong to it. Outside development every call does nothing, so the
-instrumentation can stay in your code.
+`span()` adds a step to the current trace, and `@traced` does the same for a
+function. `trace()` starts a new trace. Tracepanel stores keyword attributes
+under `app.`, so `source` becomes `app.source`. SQL, logs and errors inside a
+span belong to that span. Outside development these calls do nothing, so you
+can leave them in.
 
 ## Command line
 
@@ -133,13 +132,12 @@ instrumentation can stay in your code.
 | --- | --- |
 | 3.11 | 5.2 |
 | 3.12, 3.13, 3.14 | 5.2, 6.0, 6.1 |
+| 3.15 | 6.1 |
 
 ## Links
 
 - [tracepanel](https://github.com/tracepanel/tracepanel): what Tracepanel finds,
   how it works, privacy, and the agent this package installs
-- [django-tracepanel](https://github.com/tracepanel/django-tracepanel): the
-  documentation for Django
 - [CHANGELOG.md](CHANGELOG.md): what changed in each version
 - [CONTRIBUTING.md](CONTRIBUTING.md): developing this package
 
