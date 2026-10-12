@@ -13,10 +13,8 @@ permissions:
   contents: read
 
 # tracepanel requires tracepanel-agent, built from the tracepanel repository checked out next to this one (uv.lock
-# expects ../tracepanel). While that repository is private, the TRACEPANEL_AGENT_TOKEN secret gives read access to
-# it; once it is public, the workflow's own token does.
+# expects ../tracepanel).
 env:
-  AGENT_TOKEN: ${{ secrets.TRACEPANEL_AGENT_TOKEN }}
   GROUPS: >-
     --group celery --group channels --group strawberry --group django-tasks --group fastapi --group dramatiq
     --group rq --group ninja --group drf --group flask --group falcon --group otel
@@ -34,7 +32,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: tracepanel/tracepanel
-          token: ${{ env.AGENT_TOKEN || github.token }}
           path: tracepanel
       - uses: astral-sh/setup-uv@v10.3.0
         with:
@@ -48,13 +45,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12", "3.13", "3.14"]
+        python: ["3.11", "3.12", "3.13", "3.14", "3.15"]
         django: ["5.2", "6.0", "6.1"]
         db: [sqlite]
         exclude:
           # Django 6.x requires Python 3.12+.
           - { python: "3.11", django: "6.0" }
           - { python: "3.11", django: "6.1" }
+          # Python 3.15 came after Django 5.2 and 6.0: only 6.1 runs on it.
+          - { python: "3.15", django: "5.2" }
+          - { python: "3.15", django: "6.0" }
         include:
           - { python: "3.11", django: "5.2", db: postgres }
           - { python: "3.14", django: "6.1", db: postgres }
@@ -80,7 +80,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: tracepanel/tracepanel
-          token: ${{ env.AGENT_TOKEN || github.token }}
           path: tracepanel
       - uses: astral-sh/setup-uv@v10.3.0
         with:

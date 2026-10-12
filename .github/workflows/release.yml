@@ -55,7 +55,6 @@ jobs:
         with:
           repository: tracepanel/tracepanel
           ref: ${{ github.ref_name }}
-          token: ${{ secrets.TRACEPANEL_AGENT_TOKEN || github.token }}
           path: tracepanel
           sparse-checkout: schema
 

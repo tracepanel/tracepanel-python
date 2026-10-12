@@ -16,11 +16,8 @@ ROOT = Path(__file__).resolve().parent.parent
 # Keep in sync with .github/workflows/ci.yml.
 PAIRS = [
     ("3.11", "5.2"),
-    ("3.12", "5.2"),
-    ("3.12", "6.0"),
-    ("3.12", "6.1"),
-    ("3.13", "6.1"),
-    ("3.14", "6.1"),
+    *((python, django) for python in ("3.12", "3.13", "3.14") for django in ("5.2", "6.0", "6.1")),
+    ("3.15", "6.1"),
 ]
 GROUPS = [
     "celery",
@@ -34,6 +31,7 @@ GROUPS = [
     "drf",
     "flask",
     "falcon",
+    "otel",
 ]
 
 
