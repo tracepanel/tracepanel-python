@@ -181,8 +181,8 @@ class AgentStore:
     def _list(self, path: str, query: str, limit: int) -> list[Json]:
         return self.get(path, q=query, limit=limit)[path.split("/", maxsplit=1)[0]]
 
-    def list_queries(self, query: str = "", *, limit: int = 100) -> list[Json]:
-        return self._list("queries", query, limit)
+    def list_calls(self, system: str = "", query: str = "", *, limit: int = 100) -> list[Json]:
+        return self.get("calls", system=system, q=query, limit=limit)["calls"]
 
     def list_endpoints(self, query: str = "", *, limit: int = 100) -> list[Json]:
         return self._list("endpoints", query, limit)

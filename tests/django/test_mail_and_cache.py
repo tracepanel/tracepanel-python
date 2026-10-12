@@ -73,7 +73,7 @@ def test_alias_and_mail_filters(client: Client, store: AgentStore) -> None:
     assert paths("db:analytics") == ["/multi-backend/"]
     assert paths("cache:sessions") == ["/multi-backend/"]
     assert paths("has:mail") == ["/welcome-email/"]
-    by_alias = {(str(q["alias"]), str(q["name"])) for q in store.list_queries("db:analytics")}
+    by_alias = {(str(q["target"]), str(q["name"])) for q in store.list_calls("sql", "db:analytics")}
     assert by_alias == {("analytics", "SELECT COUNT auth_user")}
     listing = store.search_traces("has:mail")[0][0]
     assert listing["mails"] == 1

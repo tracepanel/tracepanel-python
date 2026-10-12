@@ -81,10 +81,10 @@ def test_log_search(recorded: AgentStore) -> None:
 @pytest.mark.django_db
 def test_query_and_endpoint_aggregates(recorded: AgentStore) -> None:
     # The N+1 statement: the one called once per user (ties in total time make list order unreliable).
-    n_plus_one = max(recorded.list_queries("table:auth_group"), key=lambda query: int(str(query["calls"])))
+    n_plus_one = max(recorded.list_calls("sql", "auth_group"), key=lambda query: int(str(query["calls"])))
     assert n_plus_one == IsPartialDict(calls=5, most_per_trace=5, origin=IsStr(regex=r"tests/project/views\.py:.*"))
-    fp = str(n_plus_one["fp"])
-    assert names(recorded, f"query:{fp}") == ["/n-plus-one/"]
+    key = str(n_plus_one["key"])
+    assert names(recorded, f"call:{key}") == ["/n-plus-one/"]
 
     endpoints = {str(e["route"]): e for e in recorded.list_endpoints()}
     assert endpoints["/error/"]["errors"] == 1
@@ -99,7 +99,7 @@ def test_api(client: Client, recorded: AgentStore) -> None:
     assert body["next"] is None
     assert client.get("/__tracepanel__/api/traces", {"q": "nope:1"}).status_code == 400
     assert client.get("/__tracepanel__/api/logs", {"q": "careful"}).json()["logs"][0]["message"] == "careful with fire"
-    assert client.get("/__tracepanel__/api/queries").json()["queries"]
+    assert client.get("/__tracepanel__/api/calls", {"system": "sql"}).json()["calls"]
     assert client.get("/__tracepanel__/api/endpoints").json()["endpoints"]
     assert client.get("/__tracepanel__/api/issues", {"q": "kind:error"}).json()["issues"][0]["kind"] == "error"
     assert client.get("/__tracepanel__/api/search").json()["traces"]["status"]["type"] == "number"
@@ -232,8 +232,9 @@ def test_any_of_levels(recorded: AgentStore) -> None:
         recorded.search_logs("level:warning,loud")
 
 
-# The test project's views cache through Django's cache (locmem), and call no Redis or HTTP service.
-NO_CALLS = {"calls": False, "redis": False, "cache": True}
+# The test project's views query the database and cache through Django's cache (locmem); no Redis or HTTP service.
+DATABASE = {"system": "sql", "family": "sql", "label": "Database"}
+SYSTEMS = {"systems": [DATABASE, {"system": "cache", "family": "cache", "label": "Cache"}]}
 
 
 @pytest.mark.django_db
@@ -243,9 +244,8 @@ def test_known_values(client: Client, recorded: AgentStore) -> None:
         "route": ["/cache/", "/duplicates/", "/error/", "/fixed/", "/logs/", "/n-plus-one/"],
         "logger": IsList("django.request", "tests.project.views", check_order=False),
         "db": ["default"],
-        "host": no_tasks,
-        "redis": no_tasks,
-        "cache": ["default"],
+        "targets": {"cache": ["default"], "sql": ["default"]},
+        "ops": {"cache": ["get", "set"], "sql": ["SELECT"]},
         "task": no_tasks,
         "queue": no_tasks,
         "job": no_tasks,
@@ -307,7 +307,7 @@ def test_counts(client: Client, recorded: AgentStore) -> None:
     counts = {
         "issues": 3,
         "errors": 1,
-        "sections": {"http": 6, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, **NO_CALLS},
+        "sections": {"http": 6, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, **SYSTEMS},
     }
     assert recorded.counts() == counts
     assert client.get("/__tracepanel__/api/counts").json() == counts
@@ -371,8 +371,8 @@ def test_endpoints_and_queries_in_a_time_window(recorded: AgentStore) -> None:
         0,
         1,
     ]
-    assert len(recorded.list_queries("since:1h")) == len(recorded.list_queries())
-    assert recorded.list_queries("until:1h") == []
+    assert len(recorded.list_calls("sql", "since:1h")) == len(recorded.list_calls("sql"))
+    assert recorded.list_calls("sql", "until:1h") == []
 
 
 @pytest.fixture
@@ -401,7 +401,7 @@ def test_one_app_of_several(client: Client, two_apps: AgentStore) -> None:
     every = {
         "issues": 3,
         "errors": 1,
-        "sections": {"http": 7, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, **NO_CALLS},
+        "sections": {"http": 7, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, **SYSTEMS},
     }
 
     assert names(two_apps, "service:shop") == ["/cart/"]
@@ -415,7 +415,7 @@ def test_one_app_of_several(client: Client, two_apps: AgentStore) -> None:
     ]
 
     assert [row["route"] for row in two_apps.list_endpoints("service:shop")] == ["/cart/"]
-    assert [row["statement"] for row in two_apps.list_queries("service:shop")] == ["SELECT cart"]
+    assert [row["name"] for row in two_apps.list_calls("sql", "service:shop")] == ["SELECT cart"]
     assert [row["message"] for row in two_apps.search_logs("service:shop")[0]] == ["cart shown"]
     assert two_apps.list_issues("service:shop") == []
     assert len(two_apps.list_issues(f"service:{django}")) == 4
@@ -428,10 +428,10 @@ def test_one_app_of_several(client: Client, two_apps: AgentStore) -> None:
         "issues": 0,
         "errors": 0,
         # The shop app uses no cache.
-        "sections": {"http": 1, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, **NO_CALLS, "cache": False},
+        "sections": {"http": 1, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, "systems": [DATABASE]},
     }
     assert two_apps.get("counts", service=django) == every | {
-        "sections": {"http": 6, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, **NO_CALLS}
+        "sections": {"http": 6, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, **SYSTEMS}
     }
     assert client.get("/__tracepanel__/api/counts", {"service": "shop"}).json() == two_apps.get(
         "counts", service="shop"
