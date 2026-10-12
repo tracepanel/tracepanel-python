@@ -59,6 +59,11 @@ jobs:
           sparse-checkout: schema
 
       - name: Lint and test against the published agent
+        # poe runs each task through `uv run`, which would sync again with the sources and build the agent from
+        # ../tracepanel, where only schema/ is checked out. The environment synced here, with the published agent, is
+        # the one to check.
+        env:
+          UV_NO_SYNC: "1"
         run: |
           uv sync --no-sources $GROUPS
           uv run --no-sync poe lint
