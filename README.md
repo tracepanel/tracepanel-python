@@ -6,10 +6,11 @@ command comes with its SQL queries, log lines and errors. Tracepanel finds N+1
 queries, duplicate queries and slow SQL, and names the line of code to fix. You
 see the results in a panel on your pages and in a console.
 
-Logs need no setup. Tracepanel picks up what your code already writes with
-`logging`, adds no handler, keeps your logging configuration as it is, and
-attaches each line to the request, task or command that wrote it, with the
-fields you pass in `extra=`.
+There is nothing to instrument. Tracepanel hooks into your framework, ORM,
+task queue and `logging`, so requests, SQL queries, tasks and log lines are
+recorded without changes to your code. It adds no log handler and keeps your
+logging configuration as it is. Each log line is attached to the request, task
+or command that wrote it, with the fields you pass in `extra=`.
 
 It runs while you develop. Nothing leaves your machine.
 
