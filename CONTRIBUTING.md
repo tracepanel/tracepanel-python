@@ -20,6 +20,21 @@ uv run poe fmt         # ruff check --fix and ruff format
 `PG*` variables. `uv sync --no-sources` installs the published agent in place
 of the checkout.
 
+The database drivers' tests (`tests/integrations/dbapi/`) need their servers.
+Without them they are skipped. Start the servers in Docker:
+
+```bash
+docker run -d --name pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=tracepanel -p 5432:5432 postgres:17
+docker run -d --name mysql -e MYSQL_ROOT_PASSWORD=mysql -e MYSQL_DATABASE=tracepanel -p 3306:3306 mysql:8.4
+docker run -d --name oracle -e ORACLE_PASSWORD=oracle -e APP_USER=tracepanel \
+  -e APP_USER_PASSWORD=tracepanel -p 1521:1521 gvenzl/oracle-free:23-slim-faststart
+TRACEPANEL_TEST_DB=postgres TRACEPANEL_TEST_MYSQL=1 TRACEPANEL_TEST_ORACLE=1 uv run poe test
+```
+
+mysqlclient builds against the MySQL client library: `brew install mysql-client
+pkg-config` on macOS, `apt install default-libmysqlclient-dev pkg-config` on
+Debian and Ubuntu.
+
 `uv run poe build` runs `uv build` and checks that the wheel and the sdist hold
 the package only, none of the agent's files.
 
@@ -43,7 +58,7 @@ enforces that. Imports use full paths.
 | `tracepanel/wsgi/` | `tracepanel.wsgi.install(app)` and the WSGI middleware |
 | `tracepanel/flask/` | Flask on `tracepanel.wsgi`: the URL rule, the view, Jinja renders, errors, Werkzeug's debugger page |
 | `tracepanel/falcon/` | Falcon on `tracepanel.wsgi`: the URI template, the responder, errors |
-| `tracepanel/integrations/` | Libraries traced when installed: `logging`, `celery`, `dramatiq`, `rq`, `strawberry`, `sqlalchemy`, `htmx`, OpenTelemetry |
+| `tracepanel/integrations/` | Libraries traced when installed: `logging`, `celery`, `dramatiq`, `rq`, `strawberry`, `sqlalchemy`, `htmx`, the database drivers (`dbapi`), OpenTelemetry |
 | `tracepanel/_setup.py` | The steps every framework's install takes |
 | `tracepanel/_cli.py`, `_run.py`, `_agent.py` | The command line, `tracepanel run`, the agent's binary |
 

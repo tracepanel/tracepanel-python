@@ -24,13 +24,14 @@ def started(framework: str, *, debug: str = "debug mode", django: bool = False, 
     from tracepanel.console import app as app_console  # noqa: PLC0415 (only once an app installs tracepanel)
     from tracepanel.console import terminal  # noqa: PLC0415
     from tracepanel.core import registry, runtime  # noqa: PLC0415
-    from tracepanel.integrations import sqlalchemy  # noqa: PLC0415
+    from tracepanel.integrations import dbapi, sqlalchemy  # noqa: PLC0415
 
     runtime.set_framework(framework)
     registry.install(django=django)
-    # EXPLAIN in the console runs on the SQLAlchemy engine a query came from (Django's own runs on its connection).
+    # EXPLAIN in the console runs where a query came from: a driver's database, else the SQLAlchemy engine (Django's own
+    # runs on its connection).
     if not django:
-        app_console.register("explain", app_console.explain_handler(sqlalchemy.explain))
+        app_console.register("explain", app_console.explain_handler(dbapi.explain_or(sqlalchemy.explain)))
     terminal.install()
     if announce:
         terminal.announce(framework, debug=debug)

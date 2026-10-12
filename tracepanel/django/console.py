@@ -11,6 +11,7 @@ from django.http.response import HttpResponseBase
 
 from tracepanel.console import app
 from tracepanel.django import explain, users
+from tracepanel.integrations import dbapi
 
 
 def dispatch(request: HttpRequest, path: str) -> HttpResponseBase:
@@ -41,7 +42,7 @@ def _view(view: Callable[[HttpRequest], HttpResponseBase]) -> app.Handler:
 
 
 def install() -> None:
-    app.register("explain", app.explain_handler(explain.explain))
+    app.register("explain", app.explain_handler(dbapi.explain_or(explain.explain)))
     # Switching the user needs Django's auth and sessions: without them the API (and the widget's button) is absent.
     if apps.is_installed("django.contrib.auth") and apps.is_installed("django.contrib.sessions"):
         app.register("users", _view(users.search))
