@@ -25,11 +25,11 @@ the package only, none of the agent's files.
 
 ## The package
 
-Django is the framework Tracepanel started with. ASGI apps (`tracepanel.asgi`:
-Starlette, FastAPI, any other) and WSGI apps (`tracepanel.wsgi`: Flask, Falcon,
-any other) are covered too. Only the framework packages know their framework:
-the core, the transport and the console are neutral, and import-linter checks
-it. Imports use full paths.
+Django is the framework Tracepanel started with. `tracepanel.asgi` covers ASGI
+apps such as Starlette and FastAPI, and `tracepanel.wsgi` covers WSGI apps such
+as Flask and Falcon. Only the framework packages import their framework. The
+core, the storage and the console stay framework-neutral, and import-linter
+enforces that. Imports use full paths.
 
 | Module | Contents |
 | --- | --- |
@@ -48,20 +48,21 @@ it. Imports use full paths.
 | `tracepanel/_cli.py`, `_run.py`, `_agent.py` | The command line, `tracepanel run`, the agent's binary |
 
 The tests mirror the package. `tests/project/` is the Django project they run
-against. Every trace a test records is checked against the agent's trace schema,
-and the agent is checked through the console's API.
+against. The tests check every trace they record against the agent's trace
+schema, and check the agent through the console's API.
 
 ## The contract with the console
 
 The widget and the console read what this package puts on a response:
 
-- the headers `Tracepanel-Id`, `Tracepanel-Url` and `Server-Timing` (`db`,
-  `app`, `total`, and `tracepanel-issues;desc="pending"`: the agent finds the
-  issues, the widget asks the console for them)
+- the headers `Tracepanel-Id`, `Tracepanel-Url` and `Server-Timing` with
+  `db`, `app`, `total` and `tracepanel-issues;desc="pending"`. The last one
+  means the agent is still finding the issues, and the widget asks the console
+  for them.
 - the `data-tracepanel-*` attributes of the injected `<script>`: `api`, `id`,
   `method`, `status`, `total`, `db`, `queries`, `issues`
-- the console under `/__tracepanel__/`: the agent's, forwarded, except
-  `api/explain` and `api/users*`, which the app serves
+- the console under `/__tracepanel__/`, which the app forwards to the agent,
+  except `api/explain` and `api/users*`, which the app serves itself
 
 A change to any of these needs the same change in tracepanel's `ui/`.
 
