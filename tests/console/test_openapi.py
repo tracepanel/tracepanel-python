@@ -56,8 +56,8 @@ def data(client: Client, users: list[User], store: AgentStore) -> Data:
         writer.flush()
     finally:
         set_writer(None)
-    select = next(query for query in store.list_queries() if str(query["statement"]).startswith("SELECT"))
-    insert = next(query for query in store.list_queries() if str(query["statement"]).startswith("INSERT"))
+    select = next(query for query in store.list_calls("sql") if str(query["template"]).startswith("SELECT"))
+    insert = next(query for query in store.list_calls("sql") if str(query["template"]).startswith("INSERT"))
     (issue,) = store.list_issues("kind:error")
     return {
         "trace": str(select["sample_trace"]),
@@ -81,14 +81,9 @@ CASES: list[tuple[str, int, Callable[[Data], str]]] = [
     ("/logs", 400, lambda _: "logs?q=level:loud"),
     ("/mails", 200, lambda _: "mails"),
     ("/mails", 400, lambda _: "mails?q=subject:hi"),
-    ("/queries", 200, lambda _: "queries"),
-    ("/queries", 400, lambda _: "queries?q=colour:red"),
     ("/calls", 200, lambda _: "calls"),
+    ("/calls", 200, lambda _: "calls?system=sql"),
     ("/calls", 400, lambda _: "calls?q=colour:red"),
-    ("/redis", 200, lambda _: "redis"),
-    ("/redis", 400, lambda _: "redis?q=colour:red"),
-    ("/cache", 200, lambda _: "cache"),
-    ("/cache", 400, lambda _: "cache?q=colour:red"),
     ("/explain", 200, lambda d: f"explain?trace={d['trace']}&span={d['select']}"),
     ("/explain", 422, lambda d: f"explain?trace={d['insert_trace']}&span={d['insert']}"),
     ("/explain", 404, lambda d: f"explain?trace={d['trace']}&span=nope"),
@@ -174,5 +169,5 @@ def test_clearing_the_store(client: Client, data: Data, store: AgentStore) -> No
     assert store.search_traces("") == ([], None)
     assert store.search_logs("") == ([], None)
     assert store.list_mails() == ([], None)
-    assert store.list_queries() == []
+    assert store.list_calls() == []
     assert store.list_issues() == []
