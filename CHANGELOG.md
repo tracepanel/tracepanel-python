@@ -11,6 +11,14 @@
   duplicate and slow query issues, and EXPLAIN in the console (SQLite files,
   PostgreSQL and MySQL). A statement an ORM runs through the driver is still
   recorded once, by the ORM. The `dbapi_enabled` setting turns it off.
+- Outgoing HTTP calls as `http.client` spans: urllib3 and what is built on it
+  (requests, boto3), httpx, httpx2 and aiohttp. Credentials and the values of
+  sensitive query parameters stay out of the recorded URL. A status of 400 or
+  more marks the call as an error. The `http_clients_enabled` setting turns it
+  off.
+- Redis commands as `cache` spans, from redis-py and valkey-py, sync and async.
+  A pipeline is one span. Django's cache and the task queues' own Redis calls
+  are left to them. The `redis_enabled` setting turns it off.
 
 ## 0.0.1a1 (2026-10-12)
 

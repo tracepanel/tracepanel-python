@@ -48,9 +48,13 @@ loads each post's author in its own query, the panel shows
 `/__tracepanel__/` holds every request, task and command the app ran.
 
 Tracepanel also traces Celery, Dramatiq, RQ, SQLAlchemy, Strawberry, Django REST
-framework, Django Ninja, Channels and htmx when they are installed. It reads the
-log lines you write with `logging` and attaches each one to the request, task
-or command that wrote it. Your logging configuration stays as it is.
+framework, Django Ninja, Channels and htmx when they are installed. SQL you run
+through a database driver without an ORM is traced too: sqlite3, psycopg,
+psycopg2, asyncpg, the MySQL drivers and oracledb. So are the HTTP calls your
+app makes with requests, httpx, aiohttp or boto3, and its Redis commands. It
+reads the log lines you write with `logging` and attaches each one to the
+request, task or command that wrote it. Your logging configuration stays as it
+is.
 
 For Django, `pip install django-tracepanel` installs the same package.
 

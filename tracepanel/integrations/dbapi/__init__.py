@@ -9,10 +9,10 @@ database through the driver (FastAPI or Flask with raw SQL, Peewee, a script) ge
 - MySQL and MariaDB: PyMySQL, mysqlclient, MySQL Connector/Python, aiomysql.
 - Oracle: python-oracledb.
 
-An ORM runs its statements through the same drivers, and records them itself. What decides is who called the driver:
-the first frame above the call that is neither the driver's own code nor this package's (_core.app_called). When that
-is Django's database layer, SQLAlchemy or tracepanel itself (EXPLAIN), the statement is theirs and the driver's wrapper
-leaves it alone; the app, or a library on top of the driver, gets it recorded here.
+An ORM runs its statements through the same drivers, and records them itself. What decides is who called the driver
+(tracepanel.core.callers): the first frame above the call that is neither the driver's own code nor this package's.
+When that is Django's database layer, SQLAlchemy or tracepanel itself (EXPLAIN), the statement is theirs and the
+driver's wrapper leaves it alone; the app, or a library on top of the driver, gets it recorded here.
 
 Not covered: drivers whose cursors are C types with no factory to subclass (pyodbc, pymssql, asyncmy).
 """

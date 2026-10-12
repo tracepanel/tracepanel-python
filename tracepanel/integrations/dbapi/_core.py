@@ -10,6 +10,7 @@ from typing import Any, TypeVar
 
 from tracepanel.core import explain as plans
 from tracepanel.core import sql
+from tracepanel.core.callers import Callers
 from tracepanel.core.context import current_trace, now_us
 from tracepanel.core.model import Attrs, Scalar
 from tracepanel.core.patching import patch
@@ -17,43 +18,30 @@ from tracepanel.core.services import database
 
 T = TypeVar("T")
 
-# This package's wrappers: the frames between the driver's caller and the statement.
-_SELF = __name__.rpartition(".")[0]
-# The layers that record their own statements (or run internal ones): a driver call they make is theirs.
-LAYERS = ("django.db.", "sqlalchemy.", "tracepanel.", "aiosqlite.", "psycopg_pool.")
-# The drivers' own modules (psycopg's Connection.execute calls its cursor's): passed over to find the caller.
-DRIVERS = ("sqlite3", "_sqlite3", "psycopg", "asyncpg", "pymysql", "MySQLdb", "mysql.connector", "aiomysql", "oracledb")
-# The drivers' housekeeping: statements they run themselves (asyncpg's pool resets a connection it gets back).
-HOUSEKEEPING = frozenset({("asyncpg.connection", "reset"), ("asyncpg.connection", "_reset")})
-# A bound on the frames passed over; the caller is a few frames up.
-_DEPTH = 32
-
-
-def app_called(frame: Any) -> bool:  # noqa: ANN401 (a frame)
-    """Whether the statement is the app's to record here, looking up the stack from the wrapper's frame.
-
-    Not when an ORM (or tracepanel) called the driver: it records the statement itself. Not when a wrapper further out
-    is already recording it: the driver calling its own wrapped method (pymysql's executemany calls execute).
-    """
-    while frame is not None and frame.f_globals.get("__name__", "").startswith(_SELF):
-        frame = frame.f_back
-    for _ in range(_DEPTH):
-        if frame is None:
-            return True
-        name: str = frame.f_globals.get("__name__", "")
-        if name.startswith(_SELF) or name.startswith(LAYERS):
-            return False
-        if not name.startswith(DRIVERS):
-            return True
-        if (name, frame.f_code.co_name) in HOUSEKEEPING:
-            return False
-        frame = frame.f_back
-    return True
+# Who called the driver: an ORM (or tracepanel) records its own statements, and a pool's housekeeping isn't the app's.
+CALLERS = Callers(
+    own=__name__.rpartition(".")[0],
+    # The drivers' own modules (psycopg's Connection.execute calls its cursor's): passed over to find the caller.
+    libraries=(
+        "sqlite3",
+        "_sqlite3",
+        "psycopg",
+        "asyncpg",
+        "pymysql",
+        "MySQLdb",
+        "mysql.connector",
+        "aiomysql",
+        "oracledb",
+    ),
+    layers=("django.db.", "sqlalchemy.", "tracepanel.", "aiosqlite.", "psycopg_pool."),
+    # asyncpg's pool resets a connection it gets back.
+    housekeeping=frozenset({("asyncpg.connection", "reset"), ("asyncpg.connection", "_reset")}),
+)
 
 
 def run(execute: Callable[[], T], statement: object, params: sql.Params, *, many: bool, db: Callable[[], Attrs]) -> T:
     """Run a driver call, recorded as an `sql` span when the app made it inside a trace."""
-    if current_trace() is None or not app_called(sys._getframe(1)):  # noqa: SLF001 (the stack tells who called)
+    if current_trace() is None or not CALLERS.app_called(sys._getframe(1)):  # noqa: SLF001 (the stack tells who called)
         return execute()
     return sql.run(execute, text(statement), params, many=many, database=db)
 
@@ -62,7 +50,7 @@ async def run_async(
     execute: Callable[[], Awaitable[T]], statement: object, params: sql.Params, *, many: bool, db: Callable[[], Attrs]
 ) -> T:
     """run() for an async driver: the check runs once the call is awaited, where the stack shows who awaits it."""
-    if current_trace() is None or not app_called(sys._getframe(1)):  # noqa: SLF001
+    if current_trace() is None or not CALLERS.app_called(sys._getframe(1)):  # noqa: SLF001
         return await execute()
     start, counter, status = now_us(), time.perf_counter_ns(), "ok"
     try:
