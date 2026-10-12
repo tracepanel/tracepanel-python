@@ -6,12 +6,6 @@ command comes with its SQL queries, log lines and errors. Tracepanel finds N+1
 queries, duplicate queries and slow SQL, and names the line of code to fix. You
 see the results in a panel on your pages and in a console.
 
-There is nothing to instrument. Tracepanel hooks into your framework, ORM,
-task queue and `logging`, so requests, SQL queries, tasks and log lines are
-recorded without changes to your code. It adds no log handler and keeps your
-logging configuration as it is. Each log line is attached to the request, task
-or command that wrote it, with the fields you pass in `extra=`.
-
 It runs while you develop. Nothing leaves your machine.
 
 ## Install
@@ -52,7 +46,9 @@ tracepanel.flask.install(app)
 Open any page of your app. A badge in the corner opens the panel, and the
 console is at `/__tracepanel__/`. Tracepanel also traces Celery, Dramatiq, RQ,
 SQLAlchemy, Strawberry, Django REST framework, Django Ninja, Channels and htmx
-without extra setup.
+without extra setup. Log lines written with `logging` are captured too, each
+attached to the request, task or command that wrote it. Tracepanel adds no
+handler and keeps your logging configuration as it is.
 
 For Django, `pip install django-tracepanel` installs the same package, and
 [its documentation](https://github.com/tracepanel/django-tracepanel) covers
