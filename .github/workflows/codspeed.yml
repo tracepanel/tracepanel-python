@@ -19,25 +19,20 @@ jobs:
   benchmarks:
     name: Run benchmarks
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: tracepanel-python
     steps:
+      # CodSpeed reads the commit from the repository at the workspace root: this one is checked out there.
       - uses: actions/checkout@v7
-        with:
-          path: tracepanel-python
-      # tracepanel requires tracepanel-agent, built from the tracepanel repository checked out next to this one.
+      # tracepanel requires tracepanel-agent, built from the tracepanel repository next to this one (uv.lock expects
+      # ../tracepanel). actions/checkout only writes inside the workspace: link it from there.
       - uses: actions/checkout@v7
         with:
           repository: tracepanel/tracepanel
-          path: tracepanel
+          path: .deps/tracepanel
+      - run: ln -s "$GITHUB_WORKSPACE/.deps/tracepanel" ../tracepanel
       - uses: astral-sh/setup-uv@v10.3.0
-        with:
-          working-directory: tracepanel-python
       - run: uv sync --locked
       - name: Run benchmarks
         uses: CodSpeedHQ/action@v5
         with:
           mode: simulation
-          working-directory: tracepanel-python
           run: uv run --no-sync pytest tests/benchmarks --codspeed
