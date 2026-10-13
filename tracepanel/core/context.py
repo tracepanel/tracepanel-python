@@ -1,5 +1,6 @@
 """Current trace and span via contextvars (works for async too)."""
 
+import asyncio
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -9,6 +10,8 @@ from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Span, Trace
 
 MAX_SPANS = 2000
+# A call made synchronously on a running event loop's thread: every other task on the loop waited for it.
+BLOCKS_EVENT_LOOP = "code.blocks_event_loop"
 
 _trace: ContextVar[Trace | None] = ContextVar("tracepanel_trace", default=None)
 _span: ContextVar[Span | None] = ContextVar("tracepanel_span", default=None)
@@ -16,6 +19,23 @@ _span: ContextVar[Span | None] = ContextVar("tracepanel_span", default=None)
 
 def now_us() -> int:
     return time.time_ns() // 1000
+
+
+def on_event_loop() -> bool:
+    """Whether a synchronous call made now blocks an event loop: its thread runs one (an async view, an endpoint).
+
+    A thread a sync view or sync_to_async runs in has no loop running: its calls block nothing else.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
+def blocking_attrs() -> Attrs:
+    """`code.blocks_event_loop` for a synchronous call made on an event loop's thread; nothing otherwise."""
+    return {BLOCKS_EVENT_LOOP: True} if on_event_loop() else {}
 
 
 def current_trace() -> Trace | None:

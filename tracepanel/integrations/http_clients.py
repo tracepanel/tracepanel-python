@@ -23,7 +23,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from tracepanel.core import w3c
 from tracepanel.core.callers import Callers
-from tracepanel.core.context import current_trace, now_us, record_span
+from tracepanel.core.context import blocking_attrs, current_trace, now_us, record_span
 from tracepanel.core.frames import MASK, SENSITIVE, origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs
@@ -69,11 +69,18 @@ def _name(method: str, url: str) -> str:
 
 
 def _finish(  # noqa: PLR0913
-    method: str, url: str, started: tuple[int, int], span: str, *, status_code: int | None, failed: str | None
+    method: str,
+    url: str,
+    started: tuple[int, int],
+    span: str,
+    *,
+    status_code: int | None,
+    failed: str | None,
+    blocking: Attrs | None = None,
 ) -> None:
     """Record the call as span `span`: `started` is its start (now_us) and perf_counter_ns() then."""
     start, counter = started
-    attrs = _attrs(method, url)
+    attrs = {**_attrs(method, url), **(blocking or {})}
     attrs["w3c.span_id"] = w3c.span_id(span)
     if status_code is not None:
         attrs["http.response.status_code"] = status_code
@@ -107,12 +114,14 @@ def call(send: Callable[[str | None], T], method: str, url: str, status: Callabl
         return send(None)
     span = new_id()
     start, counter = now_us(), time.perf_counter_ns()
+    # A synchronous client on an event loop's thread blocks it until the answer comes.
+    blocking = blocking_attrs()
     try:
         response = send(w3c.outgoing(trace, span))
     except Exception as exc:
-        _finish(method, url, (start, counter), span, status_code=None, failed=type(exc).__name__)
+        _finish(method, url, (start, counter), span, status_code=None, failed=type(exc).__name__, blocking=blocking)
         raise
-    _finish(method, url, (start, counter), span, status_code=status(response), failed=None)
+    _finish(method, url, (start, counter), span, status_code=status(response), failed=None, blocking=blocking)
     return response
 
 
