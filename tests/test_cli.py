@@ -123,6 +123,34 @@ def test_run_traces_sqlalchemy_without_a_framework(tmp_path: Path) -> None:
     assert json.loads(result.stdout.splitlines()[-1]) == ["command", "transaction", "sql"]
 
 
+# A script with no framework: the libraries it imports are traced all the same.
+DRIVER_SCRIPT = """
+import json
+import sqlite3
+from tracepanel.core.context import start_trace
+from tracepanel.storage import transport
+
+traces = []
+class Collector:
+    def submit(self, trace): traces.append(trace)
+    def flush(self, timeout=5.0): pass
+transport.set_writer(Collector())
+
+with start_trace("command", "script") as trace:
+    sqlite3.connect(":memory:").execute("SELECT 1").fetchall()
+print(json.dumps([span.kind for span in trace.spans]))
+"""
+
+
+def test_run_traces_a_driver_without_a_framework(tmp_path: Path) -> None:
+    (tmp_path / "script.py").write_text(DRIVER_SCRIPT)
+
+    result = tracepanel("run", "--set", "terminal_summary=false", sys.executable, "script.py", cwd=tmp_path)
+
+    assert result.stderr == ""
+    assert json.loads(result.stdout.splitlines()[-1]) == ["command", "sql"]
+
+
 def test_run_help_is_the_usage(tmp_path: Path) -> None:
     result = tracepanel("run", "--help", cwd=tmp_path)
 

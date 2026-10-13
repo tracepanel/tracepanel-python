@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A script or a worker under `tracepanel run` with no web framework traced
+  only Celery, Dramatiq, RQ, SQLAlchemy, Strawberry and logging. Its database
+  drivers, HTTP clients, Redis and MongoDB weren't recorded, so a job wrapped
+  in `tracepanel.trace()` showed its own steps and none of its calls. Every
+  library is now traced in such a process too, once it's imported.
+
 ## 0.1.0 (2026-10-13)
 
 Needs `tracepanel-agent` 0.1.0 (installed with it): the agent that keeps a
