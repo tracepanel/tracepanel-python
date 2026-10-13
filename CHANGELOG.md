@@ -16,6 +16,11 @@
   async view or endpoint) is marked `code.blocks_event_loop`: the agent finds
   it as a `blocking-call` issue. Async clients, and sync calls in a thread
   (`sync_to_async`, `asyncio.to_thread`, a sync view), aren't marked.
+- An `sql` span says how many rows the query returned
+  (`db.response.returned_rows`): counted as Django fetches them, on every
+  database, and from the driver's `rowcount` where it knows it (psycopg, the
+  MySQL drivers). The agent finds a SELECT without a LIMIT that read many
+  rows as a `large-result` issue.
 
 ## 0.0.1a2 (2026-10-12)
 
