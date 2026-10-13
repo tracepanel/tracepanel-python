@@ -18,25 +18,17 @@ permissions:
 jobs:
   benchmarks:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: tracepanel-python
     steps:
+      # At the workspace's root: CodSpeed reads the commit from the repository there.
       - uses: actions/checkout@v7
-        with:
-          path: tracepanel-python
-      # tracepanel requires tracepanel-agent, built from the tracepanel repository checked out next to this one.
-      - uses: actions/checkout@v7
-        with:
-          repository: tracepanel/tracepanel
-          path: tracepanel
+      # tracepanel requires tracepanel-agent, built from the tracepanel repository next to this one (../tracepanel,
+      # outside the workspace, where actions/checkout can't put it).
+      - run: git clone --depth 1 https://github.com/tracepanel/tracepanel.git ../tracepanel
       - uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: "3.14"
-          working-directory: tracepanel-python
       - run: uv sync --locked --group bench --group fastapi
       - uses: CodSpeedHQ/action@v5.4.2
         with:
           mode: simulation
-          working-directory: tracepanel-python
           run: uv run --no-sync pytest tests/benchmarks --codspeed
