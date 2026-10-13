@@ -7,7 +7,9 @@ however noisy the machine.
 
 import json
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from typing import Any
+from wsgiref.util import setup_testing_defaults
 
 import pytest
 
@@ -17,7 +19,9 @@ from django.contrib.auth.models import Group, User
 from django.test import Client
 from pytest_codspeed import BenchmarkFixture
 
-from tracepanel.core import sql
+import tracepanel.wsgi
+from tests.benchmarks.conftest import Discard
+from tracepanel.core import conf, sql
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Trace
 from tracepanel.storage.transport import complete
@@ -46,6 +50,35 @@ def test_request(
     response = benchmark(client.get, path)
 
     assert response.status_code == 200
+
+
+# ---------- a request through the WSGI middleware, without a framework ----------
+
+
+def _app(environ: dict[str, Any], start_response: Callable[..., object]) -> list[bytes]:
+    del environ
+    start_response("200 OK", [("Content-Type", "text/plain"), ("Content-Length", "2")])
+    return [b"ok"]
+
+
+@pytest.fixture
+def wsgi_app() -> Generator[tracepanel.wsgi.WSGIApp, None, None]:
+    previous = conf._framework  # noqa: SLF001
+    yield tracepanel.wsgi.install(_app, enabled=True)
+    conf.use_source(previous)
+
+
+def test_wsgi_request(benchmark: BenchmarkFixture, wsgi_app: tracepanel.wsgi.WSGIApp, discard: Discard) -> None:
+    def start_response(status: str, headers: list[tuple[str, str]], exc_info: object = None) -> None:
+        del status, headers, exc_info
+
+    def request() -> bytes:
+        environ: dict[str, Any] = {"PATH_INFO": "/orders/5"}
+        setup_testing_defaults(environ)
+        return b"".join(wsgi_app(environ, start_response))
+
+    assert benchmark(request) == b"ok"
+    assert discard.submitted > 0
 
 
 # ---------- reading many rows: each way the SDK counts them ----------

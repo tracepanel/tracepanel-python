@@ -14,6 +14,7 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write # CodSpeed authenticates the upload by OpenID Connect
 
 jobs:
   benchmarks:
