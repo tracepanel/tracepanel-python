@@ -76,6 +76,7 @@ class Config:
     # Outgoing HTTP calls: urllib3 (requests, boto3), httpx, aiohttp.
     http_clients_enabled: bool = True
     logging_enabled: bool = True
+    mongodb_enabled: bool = True
     ninja_enabled: bool = True
     otel_enabled: bool = True
     # Redis used directly (Django's cache and the task queues record their own calls).

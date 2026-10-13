@@ -47,6 +47,7 @@ COVERED = frozenset(
         "httpx",
         "aiohttp_client",
         "redis",
+        "pymongo",
         "sqlalchemy",
         "celery",
         "logging",

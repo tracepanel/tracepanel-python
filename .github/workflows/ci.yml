@@ -97,8 +97,9 @@ jobs:
           TRACEPANEL_AGENT_BIN: ${{ github.workspace }}/tracepanel-python/.venv/bin/tracepanel-agent
 
   drivers:
-    # The database drivers on their servers, with Django and SQLAlchemy on the same drivers: each statement once.
-    name: drivers (PostgreSQL, MySQL, Oracle)
+    # The database drivers on their servers, with Django and SQLAlchemy on the same drivers: each statement once; and
+    # MongoDB's commands.
+    name: drivers (PostgreSQL, MySQL, Oracle, MongoDB)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -127,12 +128,19 @@ jobs:
         ports: ["1521:1521"]
         options: >-
           --health-cmd healthcheck.sh --health-interval 10s --health-timeout 5s --health-retries 30
+      mongodb:
+        image: mongo:8.0
+        ports: ["27017:27017"]
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ping: 1}).ok'" --health-interval 5s --health-timeout 5s
+          --health-retries 20
     env:
       TRACEPANEL_TEST_DB: postgres
       PGHOST: localhost
       TRACEPANEL_TEST_MYSQL: "1"
       TRACEPANEL_TEST_ORACLE: "1"
       ORACLE_DSN: localhost:1521/FREEPDB1
+      TRACEPANEL_TEST_MONGO: mongodb://localhost:27017
     defaults:
       run:
         working-directory: tracepanel-python
