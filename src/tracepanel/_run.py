@@ -2,8 +2,9 @@
 
 Each framework and library is patched when the project imports it (an import hook), so a process that never imports
 FastAPI never loads it: Django gets `tracepanel.django` in INSTALLED_APPS, a Starlette, FastAPI, Flask or Falcon app
-gets the middleware when it is created, and Celery, SQLAlchemy, Strawberry and logging are traced on their own (a
-worker needs no framework).
+gets the middleware when it is created. A process with no framework (a script, a worker) gets the libraries all the
+same: the database drivers, HTTP clients, Redis, MongoDB, task queues, SQLAlchemy and logging, each patched once the
+project imports it.
 """
 
 import sys
@@ -17,7 +18,7 @@ MARKER = "_tracepanel"
 
 
 def _django(module: ModuleType) -> None:
-    """Add tracepanel.django to INSTALLED_APPS as Django reads the settings (it still only runs under DEBUG)."""
+    """Add tracepanel.django to INSTALLED_APPS as Django reads the settings."""
     settings_class = module.Settings
     original = settings_class.__init__
 
@@ -86,16 +87,6 @@ def _flask(module: ModuleType) -> None:
     app_class.__init__ = init
 
 
-def _library(name: str) -> Callable[[ModuleType], None]:
-    def install(module: ModuleType) -> None:
-        del module
-        from tracepanel.core import registry  # noqa: PLC0415 (only once the library is imported)
-
-        registry.get(name).install()
-
-    return install
-
-
 # Module -> what to patch once it has loaded. Hook packages rather than their submodules where the patch needs the
 # package finished: a submodule loads while its package is still importing.
 HOOKS: dict[str, Callable[[ModuleType], None]] = {
@@ -105,12 +96,6 @@ HOOKS: dict[str, Callable[[ModuleType], None]] = {
     "flask.app": _flask,
     # The package: falcon.app loads while falcon (and falcon.asgi, which install() checks for) is still importing.
     "falcon": _falcon,
-    "celery": _library("celery"),
-    "dramatiq": _library("dramatiq"),
-    "rq": _library("rq"),
-    # The package, not sqlalchemy.engine: its events need the whole package loaded (sqlalchemy.util.preloaded).
-    "sqlalchemy": _library("sqlalchemy"),
-    "strawberry.schema.schema": _library("strawberry"),
 }
 
 
@@ -124,7 +109,10 @@ def install() -> None:
         imports.when_imported(name, hook)
     if conf.get_config().enabled:
         from tracepanel.console import terminal  # noqa: PLC0415
+        from tracepanel.core import registry  # noqa: PLC0415
         from tracepanel.integrations import logging  # noqa: PLC0415
 
         logging.install()
+        # Every library, each patched once the project imports it: a script or a worker has no framework to do it.
+        registry.install()
         terminal.install()
