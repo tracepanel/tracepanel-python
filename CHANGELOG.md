@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 (2026-10-13)
+
+Needs `tracepanel-agent` 0.1.1 (installed with it): its Services map fits the
+width it has, and its Share dialog and Issues page say what they do now.
 
 ### Fixed
 
