@@ -8,7 +8,7 @@ pytest.importorskip("pytest_codspeed")
 
 from pytest_codspeed import BenchmarkFixture
 
-from tracepanel.core import frames, sql, w3c
+from tracepanel.core import frames, ids, sql, w3c
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Log, Span, Trace
 
@@ -39,10 +39,14 @@ def test_parameters(benchmark: BenchmarkFixture) -> None:
     assert benchmark(run) == sql.params_hash(positional)
 
 
-def test_ids(benchmark: BenchmarkFixture) -> None:
-    ids = benchmark(lambda: [new_id() for _ in range(100)])
+def test_ids(benchmark: BenchmarkFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    # One millisecond throughout: how many the run spans would change what it measures (the time part is cached for
+    # one), and the simulation runs far slower than the clock.
+    monkeypatch.setattr(ids.time, "time_ns", lambda: 1_791_878_400_000_000_000)
 
-    assert len(set(ids)) == 100
+    ids_made = benchmark(lambda: [new_id() for _ in range(100)])
+
+    assert len(set(ids_made)) == 100
 
 
 def test_w3c_traceparent(benchmark: BenchmarkFixture) -> None:
