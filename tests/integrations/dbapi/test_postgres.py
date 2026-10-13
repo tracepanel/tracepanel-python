@@ -308,3 +308,80 @@ def test_async_sqlalchemy_counts_the_rows_of_a_result() -> None:
         await engine.dispose()
 
     assert returned(traced(lambda: asyncio.run(work()))) == [6, 5]
+
+
+def test_asyncpg_prepared_statements_are_recorded_with_their_rows() -> None:
+    asyncpg = pytest.importorskip("asyncpg")
+
+    async def work() -> None:
+        connection = await asyncpg.connect(**asyncpg_params())
+        try:
+            statement = await connection.prepare("SELECT generate_series(1, $1::int)")
+            await statement.fetch(8)
+            await statement.fetchrow(8)
+            await statement.fetchval(8)
+            await statement.fetchmany([(2,), (3,)])
+        finally:
+            await connection.close()
+
+    trace = traced(lambda: asyncio.run(work()))
+
+    assert sql_spans(trace) == [("asyncpg", "SELECT")] * 4
+    assert [span.attrs.get("db.params") for span in statements(trace)] == [[8], [8], [8], None]
+    assert [span.attrs["db.many"] for span in statements(trace)] == [False, False, False, True]
+    assert returned(trace) == [8, 1, None, 5]
+    assert statements(trace)[0].attrs == IsPartialDict(
+        {"db.statement": "SELECT generate_series(1, $1::int)", "code.origin": ORIGIN}
+    )
+
+
+def test_asyncpg_cursors_are_recorded_once_with_every_row_read() -> None:
+    asyncpg = pytest.importorskip("asyncpg")
+
+    async def work() -> None:
+        connection = await asyncpg.connect(**asyncpg_params())
+        try:
+            async with connection.transaction():
+                # Read 3 at a time: one statement, every chunk counted.
+                async for _ in connection.cursor("SELECT generate_series(1, $1::int)", 10, prefetch=3):
+                    pass
+                cursor = await connection.cursor("SELECT generate_series(1, 20)")
+                await cursor.fetch(4)
+                await cursor.fetchrow()
+                # Moved over, not returned.
+                await cursor.forward(5)
+                statement = await connection.prepare("SELECT generate_series(1, 6)")
+                [row async for row in statement.cursor()]
+        finally:
+            await connection.close()
+
+    trace = traced(lambda: asyncio.run(work()))
+    selects = [span for span in statements(trace) if span.name == "SELECT"]
+
+    assert [span.attrs.get("db.params") for span in selects] == [[10], None, None]
+    assert [span.attrs.get("db.response.returned_rows") for span in selects] == [10, 5, 6]
+    assert selects[0].attrs == IsPartialDict({"code.origin": ORIGIN})
+
+
+def test_psycopg_server_side_cursor_counts_the_rows_read() -> None:
+    psycopg = pytest.importorskip("psycopg")
+
+    def work() -> None:
+        with psycopg.connect(dsn()) as connection, connection.cursor(name="big") as cursor:
+            cursor.execute("SELECT generate_series(1, 12)")
+            cursor.fetchmany(5)
+            cursor.fetchone()
+            list(cursor)
+
+    assert returned(traced(work)) == [12]
+
+
+def test_psycopg_async_server_side_cursor_counts_the_rows_read() -> None:
+    psycopg = pytest.importorskip("psycopg")
+
+    async def work() -> None:
+        async with await psycopg.AsyncConnection.connect(dsn()) as connection, connection.cursor(name="big") as cursor:
+            await cursor.execute("SELECT generate_series(1, 7)")
+            [row async for row in cursor]
+
+    assert returned(traced(lambda: asyncio.run(work()))) == [7]

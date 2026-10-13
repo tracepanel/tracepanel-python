@@ -10,6 +10,7 @@ import functools
 import importlib
 import sqlite3
 import sqlite3.dbapi2
+from collections.abc import Iterator
 from typing import Any
 
 from tracepanel.core import sql
@@ -50,19 +51,26 @@ class _Cursor:
     def execute(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 (sqlite3's own signature, passed on unchanged)
         query, params, _ = _core.dbapi_execute(args, kwargs)
         run = functools.partial(super().execute, *args, **kwargs)  # type: ignore[misc]
-        return _core.run(run, query, params, many=False, db=lambda: _attrs(self.connection), cursor=self)  # type: ignore[attr-defined]
+        return _counts(self, _core.run(run, query, params, many=False, db=lambda: _attrs(self.connection), cursor=self))  # type: ignore[attr-defined]
 
     def executemany(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         query, _, _ = _core.dbapi_executemany(args, kwargs)
         run = functools.partial(super().executemany, *args, **kwargs)  # type: ignore[misc]
-        return _core.run(run, query, None, many=True, db=lambda: _attrs(self.connection), cursor=self)  # type: ignore[attr-defined]
+        return _counts(self, _core.run(run, query, None, many=True, db=lambda: _attrs(self.connection), cursor=self))  # type: ignore[attr-defined]
 
     def executescript(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         script, _, _ = _core.dbapi_script(args, kwargs)
         run = functools.partial(super().executescript, *args, **kwargs)  # type: ignore[misc]
-        return _core.run(run, script, None, many=False, db=lambda: _attrs(self.connection), cursor=self)  # type: ignore[attr-defined]
+        return _counts(self, _core.run(run, script, None, many=False, db=lambda: _attrs(self.connection), cursor=self))  # type: ignore[attr-defined]
 
-    # sqlite3 doesn't say how many rows a SELECT found: they're counted as they are fetched.
+
+class _Counting:
+    """Mixed into a traced cursor while its rows count into a SELECT's span: sqlite3 doesn't say how many it found.
+
+    Only then: a cursor whose statement isn't recorded (Django's, SQLAlchemy's: they count their own) fetches as
+    sqlite3's.
+    """
+
     def fetchone(self) -> Any:  # noqa: ANN401
         row = super().fetchone()  # type: ignore[misc]
         sql.fetched(self, sql.size(row))
@@ -78,10 +86,28 @@ class _Cursor:
         sql.fetched(self, len(rows))
         return rows
 
-    def __next__(self) -> Any:  # noqa: ANN401
-        row = super().__next__()  # type: ignore[misc]
-        sql.fetched(self, 1)
-        return row
+    def __iter__(self) -> Iterator[Any]:
+        # Counted once, when the iteration ends.
+        rows = 0
+        try:
+            while True:
+                try:
+                    row = sqlite3.Cursor.__next__(self)  # type: ignore[arg-type]
+                except StopIteration:
+                    return
+                rows += 1
+                yield row
+        finally:
+            sql.fetched(self, rows)
+
+
+def _counts(cursor: Any, result: object) -> object:  # noqa: ANN401 (a traced sqlite3 cursor)
+    """The cursor counts what is fetched from it while its statement's span waits for the rows, else not."""
+    counting = issubclass(type(cursor), _Counting)
+    if (sql.counting(cursor) is not None) != counting:
+        with contextlib.suppress(TypeError):  # a class whose layout differs: left as it is
+            cursor.__class__ = type(cursor).__bases__[1] if counting else _core.subclass(type(cursor), _Counting)
+    return result
 
 
 class _Connection:

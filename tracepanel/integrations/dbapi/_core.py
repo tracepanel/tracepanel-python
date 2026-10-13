@@ -78,7 +78,7 @@ def _rowcount(cursor: object, span: Span) -> None:
 
 def _asyncpg_rows(method: str, result: object) -> int | None:
     """What an asyncpg call returned, in rows: fetch's list, fetchrow's row, execute's status ("SELECT 12")."""
-    if method == "fetch" and isinstance(result, list):
+    if method in {"fetch", "fetchmany"} and isinstance(result, list):
         return len(result)
     if method == "fetchrow":
         return sql.size(result)
@@ -108,8 +108,7 @@ async def run_async(  # noqa: PLR0913
     *,
     many: bool,
     db: Callable[[], Attrs],
-    owner: object = None,
-    method: str = "",
+    then: Callable[[Span, T], None] | None = None,
 ) -> T:
     """run() for an async driver: the check runs once the call is awaited, where the stack shows who awaits it."""
     if current_trace() is None or not CALLERS.app_called(sys._getframe(1)):  # noqa: SLF001
@@ -132,8 +131,8 @@ async def run_async(  # noqa: PLR0913
             duration=(time.perf_counter_ns() - counter) // 1000,
             status=status,
         )
-        if span is not None and status == "ok":
-            _async_rows(owner, span, method, result)
+        if span is not None and status == "ok" and then is not None:
+            then(span, result)  # type: ignore[arg-type]  # ok: the call returned it
 
 
 def text(statement: object) -> str:
@@ -232,14 +231,17 @@ def _async_wrapper(
 ) -> Callable[..., Any]:
     async def call(self: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         query, params, many = reads(args, kwargs)
+
+        def rows(span: Span, result: object) -> None:
+            _async_rows(self, span, method.__name__, result)
+
         return await run_async(
             lambda: method(self, *args, **kwargs),
             statement(query, self),
             params,
             many=many,
             db=lambda: db(self),
-            owner=self,
-            method=method.__name__,
+            then=rows,
         )
 
     if inspect.iscoroutinefunction(method):

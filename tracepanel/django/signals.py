@@ -7,6 +7,7 @@ pre_init / post_init are left out: they fire once per model instance and would d
 
 import functools
 import sys
+import types
 from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from inspect import iscoroutinefunction
@@ -16,7 +17,7 @@ from django.db.models.signals import post_init, pre_init
 from django.dispatch import Signal
 
 from tracepanel.core.context import current_trace, start_span
-from tracepanel.core.patching import patch, patched
+from tracepanel.core.patching import original, patch, patched
 
 if TYPE_CHECKING:
     from tracepanel.core.model import Attrs
@@ -133,9 +134,6 @@ def _unwrapped(responses: Responses) -> Responses:
 def _wrap(send: Callable[..., Responses]) -> Callable[..., Responses]:
     @functools.wraps(send)
     def traced(self: Signal, sender: object, **named: object) -> Responses:
-        # First and by identity: these two fire for every row a query loads.
-        if self is pre_init or self is post_init:
-            return send(self, sender, **named)
         attrs = _span_attrs(self, sender)
         if attrs is None:
             return send(self, sender, **named)
@@ -175,3 +173,7 @@ def install() -> None:
     patch(Signal, "send_robust", _wrap(Signal.send_robust))
     patch(Signal, "asend", _wrap_async(Signal.asend))
     patch(Signal, "asend_robust", _wrap_async(Signal.asend_robust))
+    # pre_init and post_init fire for every object a query loads: their own send() is Django's, not wrapped at all
+    # (even a wrapper that only passes them on costs a microsecond an object).
+    for signal in (pre_init, post_init):
+        patch(signal, "send", types.MethodType(original(Signal, "send"), signal))

@@ -141,12 +141,21 @@ def _fetchrows(method: Any) -> Any:  # noqa: ANN401
 
 
 def _fetchiter(method: Any) -> Any:  # noqa: ANN401
-    def counted(self: Any) -> Any:  # noqa: ANN401
-        for row in method(self):
-            sql.fetched(self.context, 1)
-            yield row
+    def rows(self: Any) -> Any:  # noqa: ANN401
+        # As it is when nothing counts its rows; otherwise counted once, when the iteration ends.
+        return method(self) if sql.counting(self.context) is None else _counted(self, method(self))
 
-    return counted
+    return rows
+
+
+def _counted(result: Any, rows: Any) -> Any:  # noqa: ANN401
+    count = 0
+    try:
+        for row in rows:
+            count += 1
+            yield row
+    finally:
+        sql.fetched(result.context, count)
 
 
 def _after(conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool) -> None:  # noqa: ANN401, ARG001, FBT001, PLR0913, PLR0917
