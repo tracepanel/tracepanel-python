@@ -13,7 +13,7 @@ env:
   GROUPS: >-
     --group celery --group channels --group strawberry --group django-tasks --group fastapi --group dramatiq
     --group rq --group ninja --group drf --group flask --group falcon --group otel --group clients
-    --group postgres --group drivers
+    --group postgres --group drivers --group bench
 
 jobs:
   release:
