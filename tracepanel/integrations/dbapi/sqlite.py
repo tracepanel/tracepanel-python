@@ -12,6 +12,7 @@ import sqlite3
 import sqlite3.dbapi2
 from typing import Any
 
+from tracepanel.core import sql
 from tracepanel.core.model import Attrs
 from tracepanel.core.patching import original, patch
 from tracepanel.integrations.dbapi import _core
@@ -49,17 +50,38 @@ class _Cursor:
     def execute(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 (sqlite3's own signature, passed on unchanged)
         query, params, _ = _core.dbapi_execute(args, kwargs)
         run = functools.partial(super().execute, *args, **kwargs)  # type: ignore[misc]
-        return _core.run(run, query, params, many=False, db=lambda: _attrs(self.connection))  # type: ignore[attr-defined]
+        return _core.run(run, query, params, many=False, db=lambda: _attrs(self.connection), cursor=self)  # type: ignore[attr-defined]
 
     def executemany(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         query, _, _ = _core.dbapi_executemany(args, kwargs)
         run = functools.partial(super().executemany, *args, **kwargs)  # type: ignore[misc]
-        return _core.run(run, query, None, many=True, db=lambda: _attrs(self.connection))  # type: ignore[attr-defined]
+        return _core.run(run, query, None, many=True, db=lambda: _attrs(self.connection), cursor=self)  # type: ignore[attr-defined]
 
     def executescript(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         script, _, _ = _core.dbapi_script(args, kwargs)
         run = functools.partial(super().executescript, *args, **kwargs)  # type: ignore[misc]
-        return _core.run(run, script, None, many=False, db=lambda: _attrs(self.connection))  # type: ignore[attr-defined]
+        return _core.run(run, script, None, many=False, db=lambda: _attrs(self.connection), cursor=self)  # type: ignore[attr-defined]
+
+    # sqlite3 doesn't say how many rows a SELECT found: they're counted as they are fetched.
+    def fetchone(self) -> Any:  # noqa: ANN401
+        row = super().fetchone()  # type: ignore[misc]
+        sql.fetched(self, sql.size(row))
+        return row
+
+    def fetchmany(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        rows = super().fetchmany(*args, **kwargs)  # type: ignore[misc]
+        sql.fetched(self, len(rows))
+        return rows
+
+    def fetchall(self) -> Any:  # noqa: ANN401
+        rows = super().fetchall()  # type: ignore[misc]
+        sql.fetched(self, len(rows))
+        return rows
+
+    def __next__(self) -> Any:  # noqa: ANN401
+        row = super().__next__()  # type: ignore[misc]
+        sql.fetched(self, 1)
+        return row
 
 
 class _Connection:
@@ -111,3 +133,4 @@ def install() -> None:
     methods = {**_core.DBAPI, "executescript": _core.dbapi_script}
     for cls in (aiosqlite.Connection, aiosqlite.Cursor):
         _core.wrap(cls, methods, db=_aiosqlite_attrs, asynchronous=True)
+    _core.count_fetches(aiosqlite.Cursor)

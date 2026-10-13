@@ -5,6 +5,7 @@ everything else is here: the span's name, the normalized statement and its finge
 the parameters kept for EXPLAIN, the place in project code, the template that issued it.
 """
 
+import contextlib
 import datetime
 import decimal
 import functools
@@ -103,10 +104,34 @@ def params_attrs(params: Params) -> Attrs:
 RETURNED_ROWS = "db.response.returned_rows"
 
 
+# Where a statement's span waits for its rows: on the cursor (or result) they are fetched from.
+_ROWS_SPAN = "_tracepanel_rows_span"
+
+
 def count_rows(span: Span, rows: int) -> None:
     """Add rows a statement returned (fetched now, or known from the driver) to its span."""
     known = span.attrs.get(RETURNED_ROWS)
     span.attrs[RETURNED_ROWS] = (known if isinstance(known, int) else 0) + rows
+
+
+def counts_into(owner: object, span: Span | None) -> None:
+    """The rows fetched from `owner` from now on count into `span`, or nowhere (an owner that takes no attribute)."""
+    with contextlib.suppress(AttributeError, TypeError):
+        setattr(owner, _ROWS_SPAN, span)
+
+
+def fetched(owner: object, rows: int) -> None:
+    """Rows fetched from `owner`, counted into the span of the statement it last ran, if one is recorded."""
+    span = getattr(owner, _ROWS_SPAN, None)
+    if isinstance(span, Span):
+        count_rows(span, rows)
+
+
+def size(result: object) -> int:
+    """How many rows a fetch returned: a list's length, one for a row, none for None."""
+    if result is None:
+        return 0
+    return len(result) if isinstance(result, list) else 1
 
 
 def run(  # noqa: PLR0913

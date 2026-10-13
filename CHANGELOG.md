@@ -17,10 +17,18 @@
   it as a `blocking-call` issue. Async clients, and sync calls in a thread
   (`sync_to_async`, `asyncio.to_thread`, a sync view), aren't marked.
 - An `sql` span says how many rows the query returned
-  (`db.response.returned_rows`): counted as Django fetches them, on every
-  database, and from the driver's `rowcount` where it knows it (psycopg, the
-  MySQL drivers). The agent finds a SELECT without a LIMIT that read many
-  rows as a `large-result` issue.
+  (`db.response.returned_rows`): counted as Django or SQLAlchemy (the ORM
+  too, sync or async) fetch them, on every database. A driver used directly
+  gives its `rowcount` where it knows it (psycopg, the MySQL drivers), asyncpg
+  its results, and sqlite3 and aiosqlite count what is fetched. The agent
+  finds a SELECT without a LIMIT that read many rows as a `large-result`
+  issue.
+
+### Fixed
+
+- `async with connection.execute(...)` on aiosqlite raised a `TypeError`
+  while Tracepanel recorded it: the traced call can be awaited or entered
+  again, as aiosqlite's own.
 
 ## 0.0.1a2 (2026-10-12)
 
