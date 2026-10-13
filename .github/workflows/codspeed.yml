@@ -1,0 +1,34 @@
+name: CodSpeed
+
+# What Tracepanel costs the app (tests/benchmarks), on every pull request against main: CodSpeed counts the
+# instructions each benchmark runs and comments on the pull request when one costs more.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  benchmarks:
+    runs-on: ubuntu-latest
+    steps:
+      # At the workspace's root: CodSpeed reads the commit from the repository there.
+      - uses: actions/checkout@v7
+      # tracepanel requires tracepanel-agent, built from the tracepanel repository next to this one (../tracepanel,
+      # outside the workspace, where actions/checkout can't put it).
+      - run: git clone --depth 1 https://github.com/tracepanel/tracepanel.git ../tracepanel
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.14"
+      - run: uv sync --locked --group bench --group fastapi
+      - uses: CodSpeedHQ/action@v5.4.2
+        with:
+          mode: simulation
+          run: uv run --no-sync pytest tests/benchmarks --codspeed

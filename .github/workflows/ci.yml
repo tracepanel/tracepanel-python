@@ -38,7 +38,7 @@ jobs:
           working-directory: tracepanel-python
       # mysqlclient builds against the MySQL client library.
       - run: sudo apt-get install -y --no-install-recommends pkg-config default-libmysqlclient-dev
-      - run: uv sync --locked $GROUPS --group postgres --group drivers
+      - run: uv sync --locked $GROUPS --group postgres --group drivers --group bench
       - run: uv run poe lint
 
   test:
