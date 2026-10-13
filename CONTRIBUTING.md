@@ -41,7 +41,9 @@ the package only, none of the agent's files.
 ## Measure what it costs
 
 `tests/benchmarks/` holds what Tracepanel costs the app: requests through
-Django, reading many rows, recording statements, encoding a trace. CodSpeed
+Django and through the WSGI middleware, reading many rows, recording
+statements, IDs, parameters, `traceparent`, an error's frames, encoding a
+trace. CodSpeed
 runs them on every pull request, counts the instructions each one takes and
 comments when one costs more. To run them yourself:
 

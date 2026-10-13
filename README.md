@@ -1,5 +1,7 @@
 # Tracepanel
 
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/tracepanel/tracepanel-python)
+
 **See what your app does on every request.** Tracepanel records each request,
 background task and command of your Python app with its SQL queries, logs and
 errors. It points out N+1 queries, duplicate queries and slow SQL, and names the
