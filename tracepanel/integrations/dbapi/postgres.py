@@ -3,16 +3,20 @@
 - psycopg: its cursors are Python classes, wrapped in place, sync and async (server-side cursors too).
 - psycopg2: its classes are C types, so connect() gets a connection subclass whose cursors are traced; the app's
   connection_factory and cursor_factory are subclassed rather than replaced.
-- asyncpg: not DB-API; its Connection's and Pool's query methods are wrapped.
+- asyncpg: not DB-API; its Connection's query methods (which its Pool's call), its prepared statements' and its
+  server-side cursors are wrapped.
 """
 
 import asyncio
+import functools
 import importlib
+import weakref
+from collections.abc import Awaitable, Callable, Generator
 from types import ModuleType
 from typing import Any
 
 from tracepanel.core import sql
-from tracepanel.core.model import Attrs
+from tracepanel.core.model import Attrs, Span
 from tracepanel.core.patching import original, patch
 from tracepanel.integrations.dbapi import _core
 
@@ -72,6 +76,18 @@ def _psycopg_attrs(cursor: Any) -> Attrs:  # noqa: ANN401 (a psycopg cursor)
     )
 
 
+def _fetching(method: Callable[..., Generator[Any, Any, Any]]) -> Callable[..., Generator[Any, Any, Any]]:
+    """A page of a psycopg server-side cursor's rows, counted into the span of the statement it ran."""
+
+    @functools.wraps(method)
+    def counted(self: Any, *args: Any) -> Generator[Any, Any, Any]:  # noqa: ANN401
+        rows = yield from method(self, *args)
+        sql.fetched(self, len(rows))
+        return rows
+
+    return counted
+
+
 def _install_psycopg() -> None:
     psycopg = _optional("psycopg")
     if psycopg is None:
@@ -81,6 +97,10 @@ def _install_psycopg() -> None:
         _core.wrap(getattr(psycopg, name), _core.DBAPI, db=_psycopg_attrs, statement=_rendered)
     for name in ("AsyncCursor", "AsyncServerCursor"):
         _core.wrap(getattr(psycopg, name), _core.DBAPI, db=_psycopg_attrs, statement=_rendered, asynchronous=True)
+    # A server-side cursor reads its rows a page at a time, sync or async, through the mixin's _fetch_gen.
+    mixin = next((cls for cls in psycopg.ServerCursor.__mro__ if "_fetch_gen" in vars(cls)), None)
+    if mixin is not None:
+        patch(mixin, "_fetch_gen", _fetching(vars(mixin)["_fetch_gen"]))
 
 
 # ---------- psycopg2 ----------
@@ -224,12 +244,107 @@ def _asyncpg_attrs(owner: Any) -> Attrs:  # noqa: ANN401 (an asyncpg Connection,
     return _core.attrs(_core.Where("asyncpg", "postgresql", str(host), str(port), name, explain))
 
 
+# A prepared statement's methods: its query is its own, the arguments are the parameters.
+def _prepared_positional(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[object, sql.Params, bool]:
+    """fetch(*args), fetchrow, fetchval."""
+    del kwargs
+    return None, tuple(args) or None, False
+
+
+def _prepared_many(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[object, sql.Params, bool]:
+    """fetchmany(args), executemany(args): many rows of parameters."""
+    del args, kwargs
+    return None, None, True
+
+
+_PREPARED: dict[str, _core.Reads] = {
+    "fetch": _prepared_positional,
+    "fetchrow": _prepared_positional,
+    "fetchval": _prepared_positional,
+    "fetchmany": _prepared_many,
+    "executemany": _prepared_many,
+}
+
+# A server-side cursor (a portal) is recorded when it is opened, and the rows read from it later count into that span.
+# asyncpg's cursors take no attributes: the span waits by connection and portal, the newest few per connection.
+_PORTALS: weakref.WeakKeyDictionary[Any, dict[str, Span]] = weakref.WeakKeyDictionary()
+_PORTALS_KEPT = 16
+
+
+def _portal_opened(cursor: Any, span: Span) -> None:  # noqa: ANN401 (an asyncpg cursor)
+    portals = _PORTALS.setdefault(cursor._connection, {})  # noqa: SLF001
+    portals[cursor._portal_name] = span  # noqa: SLF001
+    while len(portals) > _PORTALS_KEPT:
+        del portals[next(iter(portals))]
+
+
+def _portal_span(cursor: Any) -> Span | None:  # noqa: ANN401
+    return _PORTALS.get(cursor._connection, {}).get(cursor._portal_name)  # noqa: SLF001
+
+
+def _cursor_opening(method: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+    """_bind_exec (an iterated cursor: opened with its first rows) and _bind (an awaited one): the statement."""
+
+    @functools.wraps(method)
+    async def traced(self: Any, *args: Any) -> Any:  # noqa: ANN401
+        def opened(span: Span, rows: object) -> None:
+            _portal_opened(self, span)
+            if isinstance(rows, list):
+                sql.count_rows(span, len(rows))
+
+        return await _core.run_async(
+            lambda: method(self, *args),
+            self._query,
+            tuple(self._args) or None,
+            many=False,
+            db=lambda: _asyncpg_attrs(self._connection),
+            then=opened,
+        )
+
+    return traced
+
+
+def _cursor_reading(method: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+    """_exec: more rows from an open portal, counted into the span of the statement that opened it."""
+
+    @functools.wraps(method)
+    async def counted(self: Any, *args: Any) -> Any:  # noqa: ANN401
+        rows = await method(self, *args)
+        span = _portal_span(self)
+        if span is not None and isinstance(rows, list):
+            sql.count_rows(span, len(rows))
+        return rows
+
+    return counted
+
+
+def _cursor_closing(method: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+    @functools.wraps(method)
+    async def closing(self: Any, *args: Any) -> Any:  # noqa: ANN401
+        _PORTALS.get(self._connection, {}).pop(self._portal_name, None)
+        return await method(self, *args)
+
+    return closing
+
+
 def _install_asyncpg() -> None:
     asyncpg = _optional("asyncpg")
     if asyncpg is None:
         return
     # The pool's methods take a connection and call its own: the connection's wrapper records the statement.
     _core.wrap(asyncpg.connection.Connection, _ASYNCPG, db=_asyncpg_attrs, asynchronous=True)
+    _core.wrap(
+        asyncpg.prepared_stmt.PreparedStatement,
+        _PREPARED,
+        db=lambda statement: _asyncpg_attrs(statement._connection),  # noqa: SLF001
+        statement=lambda _query, statement: statement._query,  # noqa: SLF001
+        asynchronous=True,
+    )
+    cursor = asyncpg.cursor.BaseCursor
+    patch(cursor, "_bind_exec", _cursor_opening(cursor._bind_exec))  # noqa: SLF001
+    patch(cursor, "_bind", _cursor_opening(cursor._bind))  # noqa: SLF001
+    patch(cursor, "_exec", _cursor_reading(cursor._exec))  # noqa: SLF001
+    patch(cursor, "_close_portal", _cursor_closing(cursor._close_portal))  # noqa: SLF001
 
 
 def install() -> None:

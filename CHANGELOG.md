@@ -23,6 +23,18 @@
   its results, and sqlite3 and aiosqlite count what is fetched. The agent
   finds a SELECT without a LIMIT that read many rows as a `large-result`
   issue.
+- asyncpg's prepared statements (`fetch`, `fetchrow`, `fetchval`,
+  `fetchmany`, `executemany`) and server-side cursors are recorded: a cursor
+  as one statement, with every row read from it, however many chunks. So
+  are the rows read from psycopg's server-side (named) cursors.
+
+### Changed
+
+- Loading model instances costs less: Django's `pre_init` and `post_init`,
+  sent twice for every object a query loads, no longer pass through the
+  signal tracing at all (about 0.6 µs an object before).
+- `scripts/bench.py rows`: reading 20,000 rows by each way the SDK counts
+  them, with and without Tracepanel.
 
 ### Fixed
 

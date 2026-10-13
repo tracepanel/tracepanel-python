@@ -12,6 +12,7 @@ import functools
 import re
 import time
 import uuid
+import weakref
 from collections.abc import Callable, Mapping, Sequence
 from typing import TypeVar
 
@@ -104,8 +105,11 @@ def params_attrs(params: Params) -> Attrs:
 RETURNED_ROWS = "db.response.returned_rows"
 
 
-# Where a statement's span waits for its rows: on the cursor (or result) they are fetched from.
+# Where a statement's span waits for its rows: on the cursor (or result) they are fetched from, or for one that takes
+# no attributes (psycopg's cursors have __slots__), by a weak reference to it.
 _ROWS_SPAN = "_tracepanel_rows_span"
+_MISSING = object()
+_rows_spans: weakref.WeakKeyDictionary[object, Span] = weakref.WeakKeyDictionary()
 
 
 def count_rows(span: Span, rows: int) -> None:
@@ -115,15 +119,31 @@ def count_rows(span: Span, rows: int) -> None:
 
 
 def counts_into(owner: object, span: Span | None) -> None:
-    """The rows fetched from `owner` from now on count into `span`, or nowhere (an owner that takes no attribute)."""
-    with contextlib.suppress(AttributeError, TypeError):
+    """The rows fetched from `owner` from now on count into `span`, or nowhere."""
+    try:
         setattr(owner, _ROWS_SPAN, span)
+    except (AttributeError, TypeError):
+        # Neither attributes nor weak references: its rows aren't counted.
+        with contextlib.suppress(TypeError):
+            if span is None:
+                _rows_spans.pop(owner, None)
+            else:
+                _rows_spans[owner] = span
+
+
+def counting(owner: object) -> Span | None:
+    """The span the rows fetched from `owner` count into, if any."""
+    span = getattr(owner, _ROWS_SPAN, _MISSING)
+    if span is _MISSING and _rows_spans:
+        with contextlib.suppress(TypeError):
+            span = _rows_spans.get(owner)
+    return span if isinstance(span, Span) else None
 
 
 def fetched(owner: object, rows: int) -> None:
     """Rows fetched from `owner`, counted into the span of the statement it last ran, if one is recorded."""
-    span = getattr(owner, _ROWS_SPAN, None)
-    if isinstance(span, Span):
+    span = counting(owner)
+    if span is not None:
         count_rows(span, rows)
 
 
