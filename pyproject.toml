@@ -65,6 +65,10 @@ Issues = "https://github.com/tracepanel/tracepanel-python/issues"
 Changelog = "https://github.com/tracepanel/tracepanel-python/blob/main/CHANGELOG.md"
 
 [dependency-groups]
+# CodSpeed's pytest plugin: tests/benchmarks runs with it.
+bench = [
+    "pytest-codspeed>=5.0.3",
+]
 celery = [
     "celery>=5.6.3",
 ]

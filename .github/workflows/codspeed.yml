@@ -1,0 +1,42 @@
+name: CodSpeed
+
+# What Tracepanel costs the app (tests/benchmarks), on every pull request against main: CodSpeed counts the
+# instructions each benchmark runs and comments on the pull request when one costs more.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  benchmarks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tracepanel-python
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: tracepanel-python
+      # tracepanel requires tracepanel-agent, built from the tracepanel repository checked out next to this one.
+      - uses: actions/checkout@v7
+        with:
+          repository: tracepanel/tracepanel
+          path: tracepanel
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.14"
+          working-directory: tracepanel-python
+      - run: uv sync --locked --group bench --group fastapi
+      - uses: CodSpeedHQ/action@v5.4.2
+        with:
+          mode: simulation
+          working-directory: tracepanel-python
+          run: uv run --no-sync pytest tests/benchmarks --codspeed

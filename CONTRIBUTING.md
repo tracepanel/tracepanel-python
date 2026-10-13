@@ -38,6 +38,21 @@ Debian and Ubuntu.
 `uv run poe build` runs `uv build` and checks that the wheel and the sdist hold
 the package only, none of the agent's files.
 
+## Measure what it costs
+
+`tests/benchmarks/` holds what Tracepanel costs the app: requests through
+Django, reading many rows, recording statements, encoding a trace. CodSpeed
+runs them on every pull request, counts the instructions each one takes and
+comments when one costs more. To run them yourself:
+
+```bash
+uv run pytest tests/benchmarks --codspeed
+```
+
+They run as plain tests too, once each, in `poe test`. `uv run poe bench`
+compares a process with Tracepanel and one without: the time per request, the
+time to read 20,000 rows each way, and the memory over many requests.
+
 ## The package
 
 Django is the framework Tracepanel started with. `tracepanel.asgi` covers ASGI
