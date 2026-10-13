@@ -25,8 +25,11 @@ def test_unknown_filter_and_bad_values_are_explained(store: AgentStore) -> None:
 
 
 @pytest.fixture
-def recorded(client: Client, users: list[User], store: AgentStore) -> AgentStore:
+def recorded(client: Client, users: list[User], store: AgentStore, monkeypatch: pytest.MonkeyPatch) -> AgentStore:
     """A few real requests written to the store."""
+    # A slow runner's first queries on a new database can pass the default threshold: these lists expect no slow SQL.
+    monkeypatch.setenv("TRACEPANEL_SLOW_SQL_MS", "60000")
+    conf.reset()
     store.max_traces = 100
     writer = store.writer()
     set_writer(writer)
