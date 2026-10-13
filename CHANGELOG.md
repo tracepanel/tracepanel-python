@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 (2026-10-13)
+
+Needs `tracepanel-agent` 0.1.0 (installed with it): the agent that keeps a
+MongoDB query's values apart from its shape, finds slow datastore and gRPC
+calls with each system's hints, lists the gRPC methods an app serves, and
+shares a trace as one HTML file. Its store format changed: the traces kept by
+an earlier agent aren't carried over.
 
 ### Added
 

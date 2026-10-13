@@ -252,6 +252,7 @@ def test_known_values(client: Client, recorded: AgentStore) -> None:
         "task": no_tasks,
         "queue": no_tasks,
         "job": no_tasks,
+        "rpc": no_tasks,
         # django.request adds request and status_code to its own records.
         "extra": ["extra.order_id", "extra.payment_token", "extra.request", "extra.status_code", "extra.tags"],
     }
@@ -310,7 +311,7 @@ def test_counts(client: Client, recorded: AgentStore) -> None:
     counts = {
         "issues": 3,
         "errors": 1,
-        "sections": {"http": 6, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, **SYSTEMS},
+        "sections": {"http": 6, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, "rpc": 0, **SYSTEMS},
     }
     assert recorded.counts() == counts
     assert client.get("/__tracepanel__/api/counts").json() == counts
@@ -404,7 +405,7 @@ def test_one_app_of_several(client: Client, two_apps: AgentStore) -> None:
     every = {
         "issues": 3,
         "errors": 1,
-        "sections": {"http": 7, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, **SYSTEMS},
+        "sections": {"http": 7, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, "rpc": 0, **SYSTEMS},
     }
 
     assert names(two_apps, "service:shop") == ["/cart/"]
@@ -431,10 +432,10 @@ def test_one_app_of_several(client: Client, two_apps: AgentStore) -> None:
         "issues": 0,
         "errors": 0,
         # The shop app uses no cache.
-        "sections": {"http": 1, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, "systems": [DATABASE]},
+        "sections": {"http": 1, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, "rpc": 0, "systems": [DATABASE]},
     }
     assert two_apps.get("counts", service=django) == every | {
-        "sections": {"http": 6, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, **SYSTEMS}
+        "sections": {"http": 6, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, "rpc": 0, **SYSTEMS}
     }
     assert client.get("/__tracepanel__/api/counts", {"service": "shop"}).json() == two_apps.get(
         "counts", service="shop"
