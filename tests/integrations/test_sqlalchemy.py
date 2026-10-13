@@ -111,3 +111,36 @@ def test_long_transaction_gets_a_sqlalchemy_hint(traces: list[Trace]) -> None:
     (issue,) = [issue for issue in issues(trace) if issue.kind == "long-transaction"]
 
     assert issue.hint == IsStr(regex=r".*commit first, or do it before the `with session.begin\(\)`.*")
+
+
+def returned(trace: Trace) -> list[object]:
+    return [span.attrs.get("db.response.returned_rows") for span in trace.spans if span.kind == "sql"]
+
+
+def test_the_rows_a_result_gave_are_counted(traces: list[Trace]) -> None:
+    engine = memory()
+
+    def work() -> None:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT name FROM item")).all()
+            connection.execute(text("SELECT name FROM item")).first()
+            list(connection.execute(text("SELECT name FROM item")))
+            connection.execute(text("SELECT name FROM item")).scalars().all()
+            connection.execute(text("UPDATE item SET name = 'c'"))
+
+    assert returned(traced(work)) == [2, 1, 2, 2, None]
+
+
+def test_the_agent_finds_a_select_without_a_limit_that_read_many_rows(traces: list[Trace]) -> None:
+    engine = memory()
+    with engine.begin() as connection:
+        connection.execute(text("INSERT INTO item (name) VALUES (:name)"), [{"name": str(n)} for n in range(1200)])
+
+    def work() -> None:
+        with Session(engine) as session:
+            session.execute(text("SELECT id, name FROM item")).all()
+            session.execute(text("SELECT id, name FROM item LIMIT 1100")).all()
+
+    assert [(issue.kind, issue.title) for issue in issues(traced(work))] == [
+        ("large-result", "Large result: 1202 rows · SELECT item"),
+    ]

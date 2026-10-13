@@ -22,6 +22,7 @@ from tracepanel.core import sql
 from tracepanel.core.context import current_trace, now_us, start_span
 from tracepanel.core.frames import origin
 from tracepanel.core.model import Attrs, Scalar
+from tracepanel.core.patching import patch
 from tracepanel.core.services import database
 
 MARKER = "_tracepanel"
@@ -105,7 +106,7 @@ def _finish(conn: Any, statement: str, parameters: Any, context: Any, *, many: b
         return
     start, counter = started
     setattr(context, _STARTED, None)
-    sql.record(
+    span = sql.record(
         statement,
         parameters,
         many=many,
@@ -114,6 +115,38 @@ def _finish(conn: Any, statement: str, parameters: Any, context: Any, *, many: b
         duration=(time.perf_counter_ns() - counter) // 1000,
         status=status,
     )
+    if span is not None and status == "ok":
+        # The result made from this context counts what is fetched from it.
+        sql.counts_into(context, span)
+
+
+# CursorResult's fetches, which every way of reading a result (the ORM's too) goes through: the rows they return count
+# into the span of the statement their context ran.
+def _fetchone(method: Any) -> Any:  # noqa: ANN401
+    def counted(self: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        row = method(self, *args, **kwargs)
+        sql.fetched(self.context, sql.size(row))
+        return row
+
+    return counted
+
+
+def _fetchrows(method: Any) -> Any:  # noqa: ANN401
+    def counted(self: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        rows = method(self, *args, **kwargs)
+        sql.fetched(self.context, len(rows))
+        return rows
+
+    return counted
+
+
+def _fetchiter(method: Any) -> Any:  # noqa: ANN401
+    def counted(self: Any) -> Any:  # noqa: ANN401
+        for row in method(self):
+            sql.fetched(self.context, 1)
+            yield row
+
+    return counted
 
 
 def _after(conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool) -> None:  # noqa: ANN401, ARG001, FBT001, PLR0913, PLR0917
@@ -200,6 +233,15 @@ def install() -> None:
         return
     if getattr(Engine, MARKER, False):
         return
+    from sqlalchemy.engine.cursor import CursorResult  # noqa: PLC0415
+
+    for name, counting in (
+        ("_fetchone_impl", _fetchone),
+        ("_fetchmany_impl", _fetchrows),
+        ("_fetchall_impl", _fetchrows),
+        ("_fetchiter_impl", _fetchiter),
+    ):
+        patch(CursorResult, name, counting(getattr(CursorResult, name)))
     event.listen(Engine, "before_cursor_execute", _before)
     event.listen(Engine, "after_cursor_execute", _after)
     event.listen(Engine, "handle_error", _error)

@@ -1,10 +1,11 @@
 """What every driver shares: who called it, recording the statement, wrapping a cursor class, EXPLAIN."""
 
 import functools
+import inspect
 import sys
 import threading
 import time
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Generator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -54,33 +55,75 @@ def run(  # noqa: PLR0913
     return sql.run(execute, text(statement), params, many=many, database=db, then=lambda span: _rowcount(cursor, span))
 
 
-def _rowcount(cursor: object, span: Span) -> None:
-    """The rows a SELECT found, when the driver says (psycopg, the MySQL drivers); SQLite's says -1, unknown."""
-    rows = getattr(cursor, "rowcount", -1)
+def _select(span: Span) -> bool:
     statement = span.attrs.get("db.statement")
-    if (
-        isinstance(rows, int)
-        and rows > 0
-        and isinstance(statement, str)
-        and statement.lstrip().upper().startswith("SELECT")
-    ):
+    return isinstance(statement, str) and statement.lstrip().upper().startswith("SELECT")
+
+
+def _rowcount(cursor: object, span: Span) -> None:
+    """The rows a SELECT found: the driver's rowcount, else as they are fetched from the cursor.
+
+    psycopg and the MySQL drivers know the rowcount; SQLite's says -1.
+    """
+    if not _select(span):
+        sql.counts_into(cursor, None)
+        return
+    rows = getattr(cursor, "rowcount", -1)
+    if isinstance(rows, int) and rows > 0:
         sql.count_rows(span, rows)
+        sql.counts_into(cursor, None)
+    else:
+        sql.counts_into(cursor, span)
 
 
-async def run_async(
-    execute: Callable[[], Awaitable[T]], statement: object, params: sql.Params, *, many: bool, db: Callable[[], Attrs]
+def _asyncpg_rows(method: str, result: object) -> int | None:
+    """What an asyncpg call returned, in rows: fetch's list, fetchrow's row, execute's status ("SELECT 12")."""
+    if method == "fetch" and isinstance(result, list):
+        return len(result)
+    if method == "fetchrow":
+        return sql.size(result)
+    if method == "execute" and isinstance(result, str) and result.startswith("SELECT "):
+        count = result.removeprefix("SELECT ")
+        return int(count) if count.isdigit() else None
+    return None
+
+
+def _async_rows(owner: object, span: Span, method: str, result: object) -> None:
+    """The rows an async driver's call returned: asyncpg's results, else as for a DB-API cursor.
+
+    That cursor is the one the call returned (aiosqlite's Connection.execute), or the one it ran on.
+    """
+    rows = _asyncpg_rows(method, result)
+    if rows is not None:
+        if _select(span):
+            sql.count_rows(span, rows)
+        return
+    _rowcount(result if hasattr(result, "fetchall") else owner, span)
+
+
+async def run_async(  # noqa: PLR0913
+    execute: Callable[[], Awaitable[T]],
+    statement: object,
+    params: sql.Params,
+    *,
+    many: bool,
+    db: Callable[[], Attrs],
+    owner: object = None,
+    method: str = "",
 ) -> T:
     """run() for an async driver: the check runs once the call is awaited, where the stack shows who awaits it."""
     if current_trace() is None or not CALLERS.app_called(sys._getframe(1)):  # noqa: SLF001
         return await execute()
-    start, counter, status = now_us(), time.perf_counter_ns(), "ok"
+    start, counter, status, result = now_us(), time.perf_counter_ns(), "ok", None
     try:
-        return await execute()
+        result = await execute()
     except Exception:
         status = "error"
         raise
+    else:
+        return result
     finally:
-        sql.record(
+        span = sql.record(
             text(statement),
             params,
             many=many,
@@ -89,6 +132,8 @@ async def run_async(
             duration=(time.perf_counter_ns() - counter) // 1000,
             status=status,
         )
+        if span is not None and status == "ok":
+            _async_rows(owner, span, method, result)
 
 
 def text(statement: object) -> str:
@@ -185,14 +230,66 @@ def _wrapper(
 def _async_wrapper(
     method: Callable[..., Any], reads: Reads, db: Callable[[Any], Attrs], statement: Callable[[object, Any], object]
 ) -> Callable[..., Any]:
-    @functools.wraps(method)
-    async def traced(self: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+    async def call(self: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         query, params, many = reads(args, kwargs)
         return await run_async(
-            lambda: method(self, *args, **kwargs), statement(query, self), params, many=many, db=lambda: db(self)
+            lambda: method(self, *args, **kwargs),
+            statement(query, self),
+            params,
+            many=many,
+            db=lambda: db(self),
+            owner=self,
+            method=method.__name__,
         )
 
+    if inspect.iscoroutinefunction(method):
+        return functools.wraps(method)(call)
+
+    # A plain function returning something to await or to use in `async with` (aiosqlite's execute): the same.
+    @functools.wraps(method)
+    def traced(self: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        return _Call(call(self, *args, **kwargs))
+
     return traced
+
+
+class _Call:
+    """A traced call to await, or to enter with `async with` as what it returns (an aiosqlite cursor)."""
+
+    __slots__ = ("_coroutine", "_result")
+
+    def __init__(self, coroutine: Coroutine[Any, Any, Any]) -> None:
+        self._coroutine = coroutine
+        self._result: Any = None
+
+    def __await__(self) -> Generator[Any, None, Any]:
+        return self._coroutine.__await__()
+
+    async def __aenter__(self) -> Any:  # noqa: ANN401
+        self._result = await self._coroutine
+        return self._result
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        exit_ = getattr(self._result, "__aexit__", None)
+        if exit_ is not None:
+            await exit_(*exc_info)
+
+
+def count_fetches(cls: type) -> None:
+    """The rows an async cursor class's fetchone, fetchmany and fetchall return count into its statement's span."""
+    for name in ("fetchone", "fetchmany", "fetchall"):
+        if defined_on(cls, name):
+            patch(cls, name, _async_fetch(vars(cls)[name]))
+
+
+def _async_fetch(method: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+    @functools.wraps(method)
+    async def counted(self: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 (the driver's own signature)
+        result = await method(self, *args, **kwargs)
+        sql.fetched(self, sql.size(result))
+        return result
+
+    return counted
 
 
 @functools.cache

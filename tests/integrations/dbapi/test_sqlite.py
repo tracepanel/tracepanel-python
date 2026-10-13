@@ -7,6 +7,7 @@ from dirty_equals import IsPartialDict, IsStr
 
 from tests.integrations.dbapi.conftest import sql_spans, statements, traced
 from tracepanel.core.explain import ExplainError
+from tracepanel.core.model import Trace
 from tracepanel.integrations import dbapi
 
 
@@ -170,3 +171,45 @@ def test_sqlalchemy_on_aiosqlite_is_recorded_by_sqlalchemy_only() -> None:
     trace = traced(lambda: asyncio.run(work()))
 
     assert sql_spans(trace) == [("sqlalchemy", "SELECT")]
+
+
+# ---------- the rows a statement returned ----------
+
+
+def returned(trace: Trace) -> list[object]:
+    return [span.attrs.get("db.response.returned_rows") for span in statements(trace)]
+
+
+def test_sqlite3_counts_the_rows_as_they_are_fetched() -> None:
+    connection = shop()
+
+    def work() -> None:
+        connection.execute("SELECT * FROM book").fetchall()
+        connection.execute("SELECT * FROM book WHERE author_id = ?", (1,)).fetchone()
+        cursor = connection.execute("SELECT * FROM book")
+        cursor.fetchmany(2)
+        cursor.fetchmany(2)
+        list(connection.execute("SELECT * FROM author"))
+        # Nothing fetched from it; an UPDATE returns none.
+        connection.execute("SELECT * FROM book")
+        connection.execute("UPDATE book SET title = 'w'").fetchall()
+
+    assert returned(traced(work)) == [3, 1, 3, 2, None, None]
+
+
+def test_aiosqlite_counts_the_rows_as_they_are_fetched() -> None:
+    aiosqlite = pytest.importorskip("aiosqlite")
+
+    async def work() -> None:
+        async with aiosqlite.connect(":memory:") as connection:
+            await connection.execute("CREATE TABLE t (id INTEGER)")
+            await connection.executemany("INSERT INTO t VALUES (?)", [(n,) for n in range(5)])
+            async with connection.execute("SELECT id FROM t") as cursor:
+                await cursor.fetchall()
+            async with connection.cursor() as cursor:
+                await cursor.execute("SELECT id FROM t WHERE id > ?", (1,))
+                [row async for row in cursor]
+                await cursor.execute("SELECT id FROM t WHERE id = ?", (0,))
+                await cursor.fetchone()
+
+    assert returned(traced(lambda: asyncio.run(work()))) == [None, None, 5, 3, 1]
