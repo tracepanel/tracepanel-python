@@ -5,9 +5,11 @@ connection with the same driver (aiomysql's through PyMySQL, which it is built o
 """
 
 import importlib
+from collections.abc import Callable
 from types import ModuleType
 from typing import Any
 
+from tracepanel.core.imports import when_imported
 from tracepanel.core.model import Attrs
 from tracepanel.core.patching import original, patch
 from tracepanel.integrations.dbapi import _core
@@ -112,20 +114,32 @@ def _connector_attrs(cursor: Any) -> Attrs:  # noqa: ANN401 (a mysql.connector c
     return _where("mysql-connector", host, port, name, _explainer(mysql.connector.connect, params))
 
 
+def _pymysql(pymysql: ModuleType) -> None:
+    _core.wrap(pymysql.cursors.Cursor, _core.DBAPI, db=_pymysql_attrs)
+
+
+def _aiomysql(aiomysql: ModuleType) -> None:
+    _core.wrap(aiomysql.cursors.Cursor, _core.DBAPI, db=_aiomysql_attrs, asynchronous=True)
+
+
+def _mysqlclient(connections: ModuleType) -> None:
+    patch(connections.Connection, "__init__", _mysqlclient_init)
+    _core.wrap(importlib.import_module("MySQLdb.cursors").BaseCursor, _core.DBAPI, db=_mysqlclient_attrs)
+
+
+def _connector(names: tuple[str, ...], *, asynchronous: bool = False) -> Callable[[ModuleType], None]:
+    def wrap(module: ModuleType) -> None:
+        for name in names:
+            _core.wrap(getattr(module, name), _core.DBAPI, db=_connector_attrs, asynchronous=asynchronous)
+
+    return wrap
+
+
 def install() -> None:
-    if (pymysql := _optional("pymysql")) is not None:
-        _core.wrap(pymysql.cursors.Cursor, _core.DBAPI, db=_pymysql_attrs)
-    if (aiomysql := _optional("aiomysql")) is not None:
-        _core.wrap(aiomysql.cursors.Cursor, _core.DBAPI, db=_aiomysql_attrs, asynchronous=True)
-    if (mysqldb := _optional("MySQLdb.connections")) is not None:
-        patch(mysqldb.Connection, "__init__", _mysqlclient_init)
-        _core.wrap(importlib.import_module("MySQLdb.cursors").BaseCursor, _core.DBAPI, db=_mysqlclient_attrs)
-    if (connector := _optional("mysql.connector.cursor")) is not None:
-        for name in ("MySQLCursor", "MySQLCursorPrepared"):
-            _core.wrap(getattr(connector, name), _core.DBAPI, db=_connector_attrs)
-    if (cext := _optional("mysql.connector.cursor_cext")) is not None:
-        for name in ("CMySQLCursor", "CMySQLCursorPrepared"):
-            _core.wrap(getattr(cext, name), _core.DBAPI, db=_connector_attrs)
-    if (aio := _optional("mysql.connector.aio.cursor")) is not None:
-        for name in ("MySQLCursor", "MySQLCursorPrepared"):
-            _core.wrap(getattr(aio, name), _core.DBAPI, db=_connector_attrs, asynchronous=True)
+    """Wrap each driver once the app imports it."""
+    when_imported("pymysql", _pymysql)
+    when_imported("aiomysql", _aiomysql)
+    when_imported("MySQLdb.connections", _mysqlclient)
+    when_imported("mysql.connector.cursor", _connector(("MySQLCursor", "MySQLCursorPrepared")))
+    when_imported("mysql.connector.cursor_cext", _connector(("CMySQLCursor", "CMySQLCursorPrepared")))
+    when_imported("mysql.connector.aio.cursor", _connector(("MySQLCursor", "MySQLCursorPrepared"), asynchronous=True))

@@ -2,15 +2,23 @@
 
 One list answers every question about integrations: which to install (tracepanel.django installs all of them, the other
 frameworks those that aren't Django apps), which a `tracepanel run` import hook installs, what `tracepanel config` and
-the startup line report. An integration is installed only when its library is importable and its `<name>_enabled`
-setting is on; its module's install() does the patching.
+the startup line report. An integration is installed only when its `<name>_enabled` setting is on, and only once the
+app imports one of its libraries (tracepanel.core.imports): its module's install() does the patching then. A library
+the app never imports is never loaded.
 """
 
 import importlib
+import importlib.machinery
 import importlib.util
+import sys
+import threading
 from dataclasses import dataclass
+from types import ModuleType
 
-from tracepanel.core import conf
+from tracepanel.core import conf, imports
+
+_installed: set[str] = set()
+_lock = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,7 +26,7 @@ class Integration:
     # Its setting is `<name>_enabled` (TRACEPANEL_<NAME>_ENABLED).
     name: str
     label: str
-    # Any of these importable means the library is installed.
+    # Its libraries: any of these importable means one is installed, and importing one installs the integration.
     modules: tuple[str, ...]
     # The module whose install() patches the library.
     code: str
@@ -27,14 +35,7 @@ class Integration:
 
     @property
     def available(self) -> bool:
-        for module in self.modules:
-            try:
-                if importlib.util.find_spec(module) is not None:
-                    return True
-            except (ImportError, ValueError):
-                # A parent package that isn't there (django.tasks without Django).
-                continue
-        return False
+        return any(_installed_module(module) for module in self.modules)
 
     @property
     def enabled(self) -> bool:
@@ -42,15 +43,53 @@ class Integration:
         return enabled
 
     def install(self) -> None:
-        """Patch the library when it is installed, unless the setting turns it off."""
-        if self.enabled and self.available:
-            importlib.import_module(self.code).install()
+        """Patch the library once the app imports it (now, when it has), unless the setting turns it off."""
+        if self.enabled:
+            for module in self.modules:
+                imports.when_imported(module, self._load)
+
+    def _load(self, module: ModuleType) -> None:
+        del module
+        with _lock:
+            if self.name in _installed:
+                return
+            _installed.add(self.name)
+        importlib.import_module(self.code).install()
+
+
+def _installed_module(name: str) -> bool:
+    """Whether the module can be imported, without importing it or its parent packages (find_spec would)."""
+    if name in sys.modules:
+        return True
+    top, *rest = name.split(".")
+    spec = importlib.machinery.PathFinder.find_spec(top) or importlib.util.find_spec(top)
+    for part in rest:
+        if spec is None or spec.submodule_search_locations is None:
+            return False
+        spec = importlib.machinery.PathFinder.find_spec(part, list(spec.submodule_search_locations))
+    return spec is not None
 
 
 INTEGRATIONS: tuple[Integration, ...] = (
     Integration("logging", "logging", ("logging",), "tracepanel.integrations.logging"),
     Integration("sqlalchemy", "SQLAlchemy", ("sqlalchemy",), "tracepanel.integrations.sqlalchemy"),
-    Integration("dbapi", "Database drivers", ("sqlite3",), "tracepanel.integrations.dbapi"),
+    Integration(
+        "dbapi",
+        "Database drivers",
+        (
+            "sqlite3",
+            "aiosqlite",
+            "psycopg",
+            "psycopg2",
+            "asyncpg",
+            "pymysql",
+            "aiomysql",
+            "MySQLdb",
+            "mysql.connector",
+            "oracledb",
+        ),
+        "tracepanel.integrations.dbapi",
+    ),
     Integration(
         "http_clients",
         "HTTP clients",

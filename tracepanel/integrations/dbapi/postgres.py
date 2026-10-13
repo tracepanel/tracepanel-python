@@ -16,6 +16,7 @@ from types import ModuleType
 from typing import Any
 
 from tracepanel.core import sql
+from tracepanel.core.imports import when_imported
 from tracepanel.core.model import Attrs, Span
 from tracepanel.core.patching import original, patch
 from tracepanel.integrations.dbapi import _core
@@ -88,10 +89,7 @@ def _fetching(method: Callable[..., Generator[Any, Any, Any]]) -> Callable[..., 
     return counted
 
 
-def _install_psycopg() -> None:
-    psycopg = _optional("psycopg")
-    if psycopg is None:
-        return
+def _install_psycopg(psycopg: ModuleType) -> None:
     # Cursor and ServerCursor define execute(); the other cursor classes inherit one of them (likewise async).
     for name in ("Cursor", "ServerCursor"):
         _core.wrap(getattr(psycopg, name), _core.DBAPI, db=_psycopg_attrs, statement=_rendered)
@@ -175,10 +173,8 @@ def _psycopg2_connect(
     return original(psycopg2, "connect")(dsn, connection_factory=factory, cursor_factory=cursor_factory, **kwargs)
 
 
-def _install_psycopg2() -> None:
-    psycopg2 = _optional("psycopg2")
-    if psycopg2 is not None:
-        patch(psycopg2, "connect", _psycopg2_connect)
+def _install_psycopg2(psycopg2: ModuleType) -> None:
+    patch(psycopg2, "connect", _psycopg2_connect)
 
 
 # ---------- asyncpg ----------
@@ -327,10 +323,7 @@ def _cursor_closing(method: Callable[..., Awaitable[Any]]) -> Callable[..., Awai
     return closing
 
 
-def _install_asyncpg() -> None:
-    asyncpg = _optional("asyncpg")
-    if asyncpg is None:
-        return
+def _install_asyncpg(asyncpg: ModuleType) -> None:
     # The pool's methods take a connection and call its own: the connection's wrapper records the statement.
     _core.wrap(asyncpg.connection.Connection, _ASYNCPG, db=_asyncpg_attrs, asynchronous=True)
     _core.wrap(
@@ -348,6 +341,7 @@ def _install_asyncpg() -> None:
 
 
 def install() -> None:
-    _install_psycopg()
-    _install_psycopg2()
-    _install_asyncpg()
+    """Wrap each driver once the app imports it."""
+    when_imported("psycopg", _install_psycopg)
+    when_imported("psycopg2", _install_psycopg2)
+    when_imported("asyncpg", _install_asyncpg)

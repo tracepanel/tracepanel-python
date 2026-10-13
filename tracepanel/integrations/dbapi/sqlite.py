@@ -7,13 +7,14 @@ request's trace isn't current: its methods are wrapped where the app awaits them
 
 import contextlib
 import functools
-import importlib
 import sqlite3
 import sqlite3.dbapi2
 from collections.abc import Iterator
+from types import ModuleType
 from typing import Any
 
 from tracepanel.core import sql
+from tracepanel.core.imports import when_imported
 from tracepanel.core.model import Attrs
 from tracepanel.core.patching import original, patch
 from tracepanel.integrations.dbapi import _core
@@ -152,10 +153,10 @@ def install() -> None:
     patch(sqlite3, "connect", _connect)
     # Django's backend and others import the driver as sqlite3.dbapi2.
     patch(sqlite3.dbapi2, "connect", _connect)
-    try:
-        aiosqlite = importlib.import_module("aiosqlite")
-    except ImportError:
-        return
+    when_imported("aiosqlite", _aiosqlite)
+
+
+def _aiosqlite(aiosqlite: ModuleType) -> None:
     methods = {**_core.DBAPI, "executescript": _core.dbapi_script}
     for cls in (aiosqlite.Connection, aiosqlite.Cursor):
         _core.wrap(cls, methods, db=_aiosqlite_attrs, asynchronous=True)

@@ -3,9 +3,10 @@
 EXPLAIN isn't available: Oracle's plans come from EXPLAIN PLAN FOR and DBMS_XPLAN, which tracepanel doesn't run.
 """
 
-import importlib
+from types import ModuleType
 from typing import Any
 
+from tracepanel.core.imports import when_imported
 from tracepanel.core.model import Attrs
 from tracepanel.integrations.dbapi import _core
 
@@ -20,10 +21,11 @@ def _attrs(cursor: Any) -> Attrs:  # noqa: ANN401 (an oracledb cursor)
     return _core.attrs(_core.Where("oracledb", "oracle", host, port, name))
 
 
-def install() -> None:
-    try:
-        oracledb = importlib.import_module("oracledb")
-    except ImportError:
-        return
+def _oracledb(oracledb: ModuleType) -> None:
     _core.wrap(oracledb.Cursor, _core.DBAPI, db=_attrs)
     _core.wrap(oracledb.AsyncCursor, _core.DBAPI, db=_attrs, asynchronous=True)
+
+
+def install() -> None:
+    """Wrap python-oracledb once the app imports it."""
+    when_imported("oracledb", _oracledb)

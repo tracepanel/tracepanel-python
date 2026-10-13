@@ -26,6 +26,7 @@ from tracepanel.core.callers import Callers
 from tracepanel.core.context import blocking_attrs, current_trace, now_us, record_span
 from tracepanel.core.frames import MASK, SENSITIVE, origin
 from tracepanel.core.ids import new_id
+from tracepanel.core.imports import when_imported
 from tracepanel.core.model import Attrs
 from tracepanel.core.patching import patch
 
@@ -225,20 +226,14 @@ def _aiohttp(aiohttp: ModuleType) -> None:
     patch(session, "_request", traced)
 
 
-def _optional(name: str) -> ModuleType | None:
-    try:
-        return importlib.import_module(name)
-    except ImportError:
-        return None
+def _urllib3_imported(urllib3: ModuleType) -> None:
+    importlib.import_module("urllib3.connectionpool")
+    _urllib3(urllib3)
 
 
 def install() -> None:
-    """Wrap the HTTP clients that are installed."""
-    if (urllib3 := _optional("urllib3")) is not None:
-        importlib.import_module("urllib3.connectionpool")
-        _urllib3(urllib3)
+    """Wrap each HTTP client once the app imports it (requests through urllib3)."""
+    when_imported("urllib3", _urllib3_imported)
     for name in ("httpx", "httpx2"):
-        if (httpx := _optional(name)) is not None:
-            _httpx(httpx)
-    if (aiohttp := _optional("aiohttp")) is not None:
-        _aiohttp(aiohttp)
+        when_imported(name, _httpx)
+    when_imported("aiohttp", _aiohttp)

@@ -30,6 +30,13 @@
 
 ### Changed
 
+- A library is patched once the app imports it, not at startup: Tracepanel no
+  longer loads every library it knows that happens to be installed. In an
+  environment with all of them, Django's startup took 480 ms and 100 MiB
+  more with Tracepanel, now 16 ms and 2 MiB, and the smaller heap makes the
+  garbage collector's work lighter on every request: Tracepanel added 2 ms to
+  a request with 17 queries, now 0.6 ms, and 26 ms to loading 20,000 model
+  objects, now 0.8 ms.
 - Loading model instances costs less: Django's `pre_init` and `post_init`,
   sent twice for every object a query loads, no longer pass through the
   signal tracing at all (about 0.6 µs an object before).
@@ -38,6 +45,9 @@
 
 ### Fixed
 
+- `importlib.resources` on a package Tracepanel waited for under
+  `tracepanel run` (Celery, SQLAlchemy): its loader now answers for the
+  package's own.
 - `async with connection.execute(...)` on aiosqlite raised a `TypeError`
   while Tracepanel recorded it: the traced call can be awaited or entered
   again, as aiosqlite's own.

@@ -9,7 +9,6 @@ agent finds issues on that span, and counts the commands as Redis's load.
 """
 
 import functools
-import importlib
 import sys
 import time
 from collections.abc import Awaitable, Callable
@@ -19,6 +18,7 @@ from typing import Any
 from tracepanel.core.callers import Callers
 from tracepanel.core.context import blocking_attrs, current_trace, now_us, record_span
 from tracepanel.core.frames import origin
+from tracepanel.core.imports import when_imported
 from tracepanel.core.model import Attrs
 from tracepanel.core.patching import patch
 from tracepanel.core.services import location
@@ -166,19 +166,19 @@ def _wrap(module: ModuleType | None, client: str, pipeline: str, *, asynchronous
             patch(cls, method, wrapper(vars(cls)[method], asynchronous=asynchronous))
 
 
-def _optional(name: str) -> ModuleType | None:
-    try:
-        return importlib.import_module(name)
-    except ImportError:
-        return None
-
-
 def install() -> None:
-    """Wrap redis-py and valkey-py when installed: the client, its cluster client and their pipelines."""
+    """Wrap redis-py and valkey-py as the app imports them: the client, its cluster client and their pipelines."""
     for package, client in (("redis", "Redis"), ("valkey", "Valkey")):
-        if _optional(package) is None:
-            continue
-        _wrap(_optional(f"{package}.client"), client, "Pipeline", asynchronous=False)
-        _wrap(_optional(f"{package}.cluster"), f"{client}Cluster", "ClusterPipeline", asynchronous=False)
-        _wrap(_optional(f"{package}.asyncio.client"), client, "Pipeline", asynchronous=True)
-        _wrap(_optional(f"{package}.asyncio.cluster"), f"{client}Cluster", "ClusterPipeline", asynchronous=True)
+        for module, names, asynchronous in (
+            ("client", (client, "Pipeline"), False),
+            ("cluster", (f"{client}Cluster", "ClusterPipeline"), False),
+            ("asyncio.client", (client, "Pipeline"), True),
+            ("asyncio.cluster", (f"{client}Cluster", "ClusterPipeline"), True),
+        ):
+            when_imported(
+                f"{package}.{module}", functools.partial(_wrap_module, names=names, asynchronous=asynchronous)
+            )
+
+
+def _wrap_module(module: ModuleType, *, names: tuple[str, str], asynchronous: bool) -> None:
+    _wrap(module, *names, asynchronous=asynchronous)
