@@ -1,5 +1,8 @@
 # Tracepanel
 
+[![CI](https://github.com/tracepanel/tracepanel-python/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tracepanel/tracepanel-python/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/tracepanel)](https://pypi.org/project/tracepanel/)
+[![Python](https://img.shields.io/pypi/pyversions/tracepanel)](https://pypi.org/project/tracepanel/)
 [![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/tracepanel/tracepanel-python)
 
 **See what your app does on every request.** Tracepanel records each request,
