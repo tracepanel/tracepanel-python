@@ -84,6 +84,8 @@ CASES: list[tuple[str, int, Callable[[Data], str]]] = [
     ("/calls", 200, lambda _: "calls"),
     ("/calls", 200, lambda _: "calls?system=sql"),
     ("/calls", 400, lambda _: "calls?q=colour:red"),
+    ("/calls/summary", 200, lambda _: "calls/summary?system=sql"),
+    ("/calls/summary", 400, lambda _: "calls/summary?q=colour:red"),
     ("/explain", 200, lambda d: f"explain?trace={d['trace']}&span={d['select']}"),
     ("/explain", 422, lambda d: f"explain?trace={d['insert_trace']}&span={d['insert']}"),
     ("/explain", 404, lambda d: f"explain?trace={d['trace']}&span=nope"),
