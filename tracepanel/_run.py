@@ -6,15 +6,12 @@ gets the middleware when it is created, and Celery, SQLAlchemy, Strawberry and l
 worker needs no framework).
 """
 
-import importlib.abc
-import importlib.machinery
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from types import ModuleType
 from typing import Any
 
-from tracepanel._compat import override
-from tracepanel.core import conf
+from tracepanel.core import conf, imports
 
 MARKER = "_tracepanel"
 
@@ -117,54 +114,14 @@ HOOKS: dict[str, Callable[[ModuleType], None]] = {
 }
 
 
-class _Loader(importlib.abc.Loader):
-    """The module's own loader, then the hook."""
-
-    def __init__(self, loader: importlib.abc.Loader, hook: Callable[[ModuleType], None]) -> None:
-        self.loader = loader
-        self.hook = hook
-
-    @override
-    def create_module(self, spec: importlib.machinery.ModuleSpec) -> ModuleType | None:
-        return self.loader.create_module(spec)
-
-    @override
-    def exec_module(self, module: ModuleType) -> None:
-        self.loader.exec_module(module)
-        try:
-            self.hook(module)
-        except Exception as exc:  # noqa: BLE001 (a failed patch must not break the import)
-            sys.stderr.write(f"tracepanel: could not patch {module.__name__}: {exc}\n")
-
-
-class _Finder(importlib.abc.MetaPathFinder):
-    @override
-    def find_spec(
-        self, fullname: str, path: Sequence[str] | None, target: ModuleType | None = None
-    ) -> importlib.machinery.ModuleSpec | None:
-        hook = HOOKS.get(fullname)
-        if hook is None:
-            return None
-        for finder in sys.meta_path:
-            if finder is self or not hasattr(finder, "find_spec"):
-                continue
-            spec = finder.find_spec(fullname, path, target)
-            if spec is not None and spec.loader is not None:
-                spec.loader = _Loader(spec.loader, hook)
-                return spec
-        return None
-
-
 def install() -> None:
     """Hooks for what the project imports later, and what needs no framework: logging, the terminal line."""
     if getattr(sys, MARKER, False):
         return
     setattr(sys, MARKER, True)
-    sys.meta_path.insert(0, _Finder())
     for name, hook in HOOKS.items():
-        # Already imported (rare, before sitecustomize): patch it now.
-        if name in sys.modules:
-            hook(sys.modules[name])
+        # Already imported (rare, before sitecustomize): patched now.
+        imports.when_imported(name, hook)
     if conf.get_config().enabled:
         from tracepanel.console import terminal  # noqa: PLC0415
         from tracepanel.integrations import logging  # noqa: PLC0415
