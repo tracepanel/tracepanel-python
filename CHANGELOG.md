@@ -11,6 +11,11 @@
   links the called app's trace to the call, whichever app recorded it, this
   SDK or OpenTelemetry. Needs an agent that reads the `w3c.*` attributes
   (after 0.0.1a2).
+- SQL, an HTTP call, a Redis command or a Django cache call made
+  synchronously on an event loop's thread (a sync client or driver in an
+  async view or endpoint) is marked `code.blocks_event_loop`: the agent finds
+  it as a `blocking-call` issue. Async clients, and sync calls in a thread
+  (`sync_to_async`, `asyncio.to_thread`, a sync view), aren't marked.
 
 ## 0.0.1a2 (2026-10-12)
 

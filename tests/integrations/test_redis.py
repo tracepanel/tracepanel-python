@@ -172,3 +172,18 @@ def test_outside_a_trace_it_only_runs(port: int) -> None:
     client.set("plain", "1")
 
     assert client.get("plain") == b"1"
+
+
+def test_the_sync_client_on_an_event_loop_blocks_it_the_async_one_doesnt(port: int) -> None:
+    sync, asynchronous = redis.Redis(port=port), redis.asyncio.Redis(port=port)
+
+    async def view() -> Trace:
+        with start_trace("http", "GET /") as trace:
+            sync.get("user:1")
+            await asynchronous.get("user:1")
+            await asynchronous.aclose()
+        return trace
+
+    trace = complete(asyncio.run(view()))
+
+    assert [span.attrs.get("code.blocks_event_loop") for span in commands(trace)] == [True, None]

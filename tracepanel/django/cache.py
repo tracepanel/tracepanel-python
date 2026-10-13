@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from django.core.cache import CacheHandler, caches
 from django.core.cache.backends.base import BaseCache
 
-from tracepanel.core.context import current_trace, start_span
+from tracepanel.core.context import blocking_attrs, current_trace, start_span
 from tracepanel.core.frames import origin
 from tracepanel.core.patching import patch, patched
 from tracepanel.django import services as django_services
@@ -47,6 +47,8 @@ def _wrap(alias: str, op: str, method: Callable[..., object], service: "Attrs") 
             "cache.op": op,
             "cache.key": _key(op, args),
             "code.origin": origin(),
+            # Django's async API (aget…) runs these in a thread: called on the event loop, they block it.
+            **blocking_attrs(),
         }
         # Open while the backend works: its own calls (Redis commands, memcached) land inside.
         with start_span("cache", _name(op, attrs["cache.key"]), attrs) as span:

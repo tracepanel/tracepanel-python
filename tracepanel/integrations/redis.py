@@ -17,7 +17,7 @@ from types import ModuleType
 from typing import Any
 
 from tracepanel.core.callers import Callers
-from tracepanel.core.context import current_trace, now_us, record_span
+from tracepanel.core.context import blocking_attrs, current_trace, now_us, record_span
 from tracepanel.core.frames import origin
 from tracepanel.core.model import Attrs
 from tracepanel.core.patching import patch
@@ -65,15 +65,26 @@ def _command(args: tuple[Any, ...]) -> tuple[str, str | int | None]:
     return name.upper(), key if key is None or isinstance(key, (str, int)) else str(key)
 
 
-def _record(client: Any, command: str, key: str | int | None, start: int, counter: int, status: str) -> None:  # noqa: ANN401, PLR0913, PLR0917
+def _record(  # noqa: PLR0913, PLR0917
+    client: Any,  # noqa: ANN401
+    command: str,
+    key: str | int | None,
+    start: int,
+    counter: int,
+    status: str,
+    blocking: Attrs | None = None,
+) -> None:
     duration = (time.perf_counter_ns() - counter) // 1000
     # A pipeline's key is how many commands it sent: its name is the command alone.
     name = f"{command} {key}" if key is not None and command != "PIPELINE" else command
-    record_span("redis", name, start=start, duration=duration, attrs=_attrs(client, command, key), status=status)
+    attrs = {**_attrs(client, command, key), **(blocking or {})}
+    record_span("redis", name, start=start, duration=duration, attrs=attrs, status=status)
 
 
 def _run(client: Any, op: str, key: str | int | None, send: Callable[[], Any]) -> Any:  # noqa: ANN401
     start, counter, status, result = now_us(), time.perf_counter_ns(), "ok", None
+    # The synchronous client, called on an event loop's thread, blocks it (redis.asyncio's doesn't).
+    blocking = blocking_attrs()
     try:
         result = send()
     except Exception:
@@ -82,7 +93,7 @@ def _run(client: Any, op: str, key: str | int | None, send: Callable[[], Any]) -
     else:
         return result
     finally:
-        _record(client, op, key, start, counter, status)
+        _record(client, op, key, start, counter, status, blocking)
 
 
 async def _run_async(client: Any, op: str, key: str | int | None, send: Callable[[], Awaitable[Any]]) -> Any:  # noqa: ANN401

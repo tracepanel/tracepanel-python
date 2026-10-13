@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import TypeVar
 
 from tracepanel.core import conf
-from tracepanel.core.context import current_span, current_trace, now_us, record_span
+from tracepanel.core.context import blocking_attrs, current_span, current_trace, now_us, record_span
 from tracepanel.core.frames import origin
 from tracepanel.core.model import Attrs, Scalar
 
@@ -111,6 +111,7 @@ def run(execute: Callable[[], T], sql: str, params: Params, *, many: bool, datab
     start = now_us()
     started = time.perf_counter_ns()
     status = "ok"
+    blocking = blocking_attrs()
     try:
         return execute()
     except Exception:
@@ -125,6 +126,7 @@ def run(execute: Callable[[], T], sql: str, params: Params, *, many: bool, datab
             start=start,
             duration=(time.perf_counter_ns() - started) // 1000,
             status=status,
+            extra=blocking,
         )
 
 
@@ -137,8 +139,12 @@ def record(  # noqa: PLR0913 (the statement, where it ran, when, how it went)
     start: int,
     duration: int,
     status: str = "ok",
+    extra: Attrs | None = None,
 ) -> None:
-    """Record a statement that already ran as an `sql` span of the current trace (no-op outside a trace)."""
+    """Record a statement that already ran as an `sql` span of the current trace (no-op outside a trace).
+
+    `extra`: more attributes, such as `code.blocks_event_loop` for a statement run synchronously on an event loop.
+    """
     if current_trace() is None:
         return
     parent = current_span()
@@ -158,6 +164,7 @@ def record(  # noqa: PLR0913 (the statement, where it ran, when, how it went)
             "code.origin": origin(),
             "code.template": template,
             **({} if many else params_attrs(params)),
+            **(extra or {}),
         },
         status=status,
     )
