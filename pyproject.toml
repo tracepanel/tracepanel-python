@@ -51,6 +51,7 @@ starlette = ["starlette>=0.40"]
 flask = ["flask>=3.0"]
 falcon = ["falcon>=4.0"]
 sqlalchemy = ["sqlalchemy>=2.0"]
+mongodb = ["pymongo>=4.13"]
 ninja = ["django-ninja>=1.4"]
 drf = ["djangorestframework>=3.15"]
 otel = ["opentelemetry-sdk>=1.45"]
@@ -117,6 +118,7 @@ drivers = [
     "aiomysql>=0.3.2",
     "oracledb>=26.0.1",
     "sqlalchemy[asyncio]>=2.1.4",
+    "pymongo>=4.18.3",
 ]
 strawberry = [
     "strawberry-graphql>=0.332.0",

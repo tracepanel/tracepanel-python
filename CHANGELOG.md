@@ -4,6 +4,17 @@
 
 ### Added
 
+- MongoDB commands as `mongodb` spans, from pymongo (`MongoClient`,
+  `AsyncMongoClient`, and Motor on top of them), with nothing to install or
+  configure beyond this package: through pymongo's own command monitoring, for
+  every client created after the app imports pymongo. Each span has the
+  command's shape (`{"find": "users", "filter": {"email": "?"}}`), its values
+  apart as SQL's (`db.params`, kept on this machine and only with
+  `capture_sql_params`), the database, the server and the line of code. The
+  agent finds a `find` per item as an N+1 and the same `find` with the same
+  values as a duplicate (needs an agent that reads `db.params_hash` on
+  datastore calls). `mongodb_enabled` turns it off. An app that also runs
+  OpenTelemetry's pymongo instrumentation records each command once.
 - Calls between apps link their traces, by the W3C trace context: an
   outgoing HTTP call (urllib3, requests, httpx, aiohttp) carries a
   `traceparent` header unless the request has its own, and a request that
