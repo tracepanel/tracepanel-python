@@ -234,7 +234,7 @@ ignore_fail = "return_non_zero"
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "tests.project.settings"
-pythonpath = ["src", "."]
+pythonpath = ["."]
 django_debug_mode = true
 
 [tool.pyrefly]
