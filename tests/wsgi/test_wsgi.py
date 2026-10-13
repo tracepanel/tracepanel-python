@@ -129,6 +129,16 @@ def test_off_unless_enabled(traces: list[Trace]) -> None:
     conf.use_source(previous)
 
 
+def test_a_request_from_another_app_continues_its_trace(wrapped: tracepanel.wsgi.WSGIApp, traces: list[Trace]) -> None:
+    call(wrapped, "/page", {"HTTP_TRACEPARENT": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"})
+    (trace,) = traces
+
+    assert (trace.attrs["w3c.trace_id"], trace.attrs["w3c.parent_span_id"]) == (
+        "4bf92f3577b34da6a3ce929d0e0e4736",
+        "00f067aa0ba902b7",
+    )
+
+
 def test_htmx_gets_a_whole_page(wrapped: tracepanel.wsgi.WSGIApp, traces: list[Trace]) -> None:
     call(wrapped, "/page", {"HTTP_HX_REQUEST": "true", "HTTP_HX_TARGET": "rows"})
     (trace,) = traces
