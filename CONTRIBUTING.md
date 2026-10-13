@@ -65,19 +65,19 @@ enforces that. Imports use full paths.
 
 | Module | Contents |
 | --- | --- |
-| `tracepanel/__init__.py`, `api.py` | Public API: `span`, `traced`, `trace`, `set_attr`, `event` |
-| `tracepanel/core/` | Trace model, context, configuration, frames, errors, SQL spans and their fingerprints, EXPLAIN plans, service attributes; `registry` (every integration) and `patching` (every monkeypatch: once, remembered, undoable) |
-| `tracepanel/storage/` | The background writer and the agent: finding it, starting it, sending to it |
-| `tracepanel/console/` | The console under the prefix (forwarded to the agent), the widget's markup, the terminal line after tasks and commands |
-| `tracepanel/django/` | The Django app, middleware, collectors (ORM, cache, mail, signals, views and templates, transactions, commands, auth), user switching, EXPLAIN, Channels, Django Tasks, Django Ninja, Django REST framework |
-| `tracepanel/asgi/` | `tracepanel.asgi.install(app)` and the ASGI middleware. Starlette and FastAPI add the route and the endpoint |
-| `tracepanel/fastapi/` | `tracepanel.fastapi.install(app)`: `tracepanel.asgi` under the name FastAPI users look for |
-| `tracepanel/wsgi/` | `tracepanel.wsgi.install(app)` and the WSGI middleware |
-| `tracepanel/flask/` | Flask on `tracepanel.wsgi`: the URL rule, the view, Jinja renders, errors, Werkzeug's debugger page |
-| `tracepanel/falcon/` | Falcon on `tracepanel.wsgi`: the URI template, the responder, errors |
-| `tracepanel/integrations/` | Libraries traced when installed: `logging`, `celery`, `dramatiq`, `rq`, `strawberry`, `sqlalchemy`, `htmx`, the database drivers (`dbapi`), OpenTelemetry |
-| `tracepanel/_setup.py` | The steps every framework's install takes |
-| `tracepanel/_cli.py`, `_run.py`, `_agent.py` | The command line, `tracepanel run`, the agent's binary |
+| `src/tracepanel/__init__.py`, `api.py` | Public API: `span`, `traced`, `trace`, `set_attr`, `event` |
+| `src/tracepanel/core/` | Trace model, context, configuration, frames, errors, SQL spans and their fingerprints, EXPLAIN plans, service attributes; `registry` (every integration) and `patching` (every monkeypatch: once, remembered, undoable) |
+| `src/tracepanel/storage/` | The background writer and the agent: finding it, starting it, sending to it |
+| `src/tracepanel/console/` | The console under the prefix (forwarded to the agent), the widget's markup, the terminal line after tasks and commands |
+| `src/tracepanel/django/` | The Django app, middleware, collectors (ORM, cache, mail, signals, views and templates, transactions, commands, auth), user switching, EXPLAIN, Channels, Django Tasks, Django Ninja, Django REST framework |
+| `src/tracepanel/asgi/` | `tracepanel.asgi.install(app)` and the ASGI middleware. Starlette and FastAPI add the route and the endpoint |
+| `src/tracepanel/fastapi/` | `tracepanel.fastapi.install(app)`: `tracepanel.asgi` under the name FastAPI users look for |
+| `src/tracepanel/wsgi/` | `tracepanel.wsgi.install(app)` and the WSGI middleware |
+| `src/tracepanel/flask/` | Flask on `tracepanel.wsgi`: the URL rule, the view, Jinja renders, errors, Werkzeug's debugger page |
+| `src/tracepanel/falcon/` | Falcon on `tracepanel.wsgi`: the URI template, the responder, errors |
+| `src/tracepanel/integrations/` | Libraries traced when installed: `logging`, `celery`, `dramatiq`, `rq`, `strawberry`, `sqlalchemy`, `htmx`, the database drivers (`dbapi`), OpenTelemetry |
+| `src/tracepanel/_setup.py` | The steps every framework's install takes |
+| `src/tracepanel/_cli.py`, `_run.py`, `_agent.py` | The command line, `tracepanel run`, the agent's binary |
 
 The tests mirror the package. `tests/project/` is the Django project they run
 against. The tests check every trace they record against the agent's trace

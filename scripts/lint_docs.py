@@ -125,7 +125,7 @@ def main() -> int:
     pages = [ROOT / page for page in PAGES if (ROOT / page).exists()]
     problems = [problem for page in pages for line, code in blocks(page) if (problem := check_block(page, line, code))]
     problems += [problem for page in pages for problem in prose(page)]
-    sources = [*sorted((ROOT / "tracepanel").rglob("*.py")), *sorted((ROOT / "scripts").glob("*.py"))]
+    sources = [*sorted((ROOT / "src" / "tracepanel").rglob("*.py")), *sorted((ROOT / "scripts").glob("*.py"))]
     problems += [problem for path in sources for problem in source(path)]
     for problem in problems:
         print(problem)  # noqa: T201 (the report)
