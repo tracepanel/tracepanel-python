@@ -1,6 +1,6 @@
 ---
 name: docs
-description: "Write or review the tracepanel package's documentation. Use when editing README.md (the package's page on PyPI), CONTRIBUTING.md, CHANGELOG.md, or a docstring or comment in tracepanel/ or scripts/, and before committing such a change. Covers the voice, what belongs where, and the checks that keep it true."
+description: "Write or review the tracepanel package's documentation. Use when editing README.md (the package's page on PyPI), CONTRIBUTING.md, CHANGELOG.md, or a docstring or comment in src/tracepanel/ or scripts/, and before committing such a change. Covers the voice, what belongs where, and the checks that keep it true."
 ---
 
 # Writing Tracepanel's documentation

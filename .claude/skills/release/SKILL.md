@@ -23,7 +23,7 @@ at the tag of the same name, so tag both the same way.
 
 - `[project] version` in `pyproject.toml`
 - the `tracepanel-agent==` pin in its `dependencies`
-- `__version__` in `tracepanel/__init__.py`
+- `__version__` in `src/tracepanel/__init__.py`
 
 Versions are PEP 440: `0.1.0a1` for an alpha, `0.1.0` for a release. The tag is
 the version, without a `v`.
