@@ -12,7 +12,7 @@ from tracepanel.core import explain as plans
 from tracepanel.core import sql
 from tracepanel.core.callers import Callers
 from tracepanel.core.context import current_trace, now_us
-from tracepanel.core.model import Attrs, Scalar
+from tracepanel.core.model import Attrs, Scalar, Span
 from tracepanel.core.patching import patch
 from tracepanel.core.services import database
 
@@ -39,11 +39,32 @@ CALLERS = Callers(
 )
 
 
-def run(execute: Callable[[], T], statement: object, params: sql.Params, *, many: bool, db: Callable[[], Attrs]) -> T:
+def run(  # noqa: PLR0913
+    execute: Callable[[], T],
+    statement: object,
+    params: sql.Params,
+    *,
+    many: bool,
+    db: Callable[[], Attrs],
+    cursor: object = None,
+) -> T:
     """Run a driver call, recorded as an `sql` span when the app made it inside a trace."""
     if current_trace() is None or not CALLERS.app_called(sys._getframe(1)):  # noqa: SLF001 (the stack tells who called)
         return execute()
-    return sql.run(execute, text(statement), params, many=many, database=db)
+    return sql.run(execute, text(statement), params, many=many, database=db, then=lambda span: _rowcount(cursor, span))
+
+
+def _rowcount(cursor: object, span: Span) -> None:
+    """The rows a SELECT found, when the driver says (psycopg, the MySQL drivers); SQLite's says -1, unknown."""
+    rows = getattr(cursor, "rowcount", -1)
+    statement = span.attrs.get("db.statement")
+    if (
+        isinstance(rows, int)
+        and rows > 0
+        and isinstance(statement, str)
+        and statement.lstrip().upper().startswith("SELECT")
+    ):
+        sql.count_rows(span, rows)
 
 
 async def run_async(
@@ -150,7 +171,12 @@ def _wrapper(
     def traced(self: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 (the driver's own signature)
         query, params, many = reads(args, kwargs)
         return run(
-            lambda: method(self, *args, **kwargs), statement(query, self), params, many=many, db=lambda: db(self)
+            lambda: method(self, *args, **kwargs),
+            statement(query, self),
+            params,
+            many=many,
+            db=lambda: db(self),
+            cursor=self,
         )
 
     return traced

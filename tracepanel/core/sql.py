@@ -17,7 +17,7 @@ from typing import TypeVar
 from tracepanel.core import conf
 from tracepanel.core.context import blocking_attrs, current_span, current_trace, now_us, record_span
 from tracepanel.core.frames import origin
-from tracepanel.core.model import Attrs, Scalar
+from tracepanel.core.model import Attrs, Scalar, Span
 
 T = TypeVar("T")
 Params = Sequence[object] | Mapping[str, object] | None
@@ -99,12 +99,31 @@ def params_attrs(params: Params) -> Attrs:
         return {}
 
 
-def run(execute: Callable[[], T], sql: str, params: Params, *, many: bool, database: Callable[[], Attrs]) -> T:
+# How many rows a SELECT returned, OpenTelemetry's name: the agent finds a SELECT without a LIMIT that read many.
+RETURNED_ROWS = "db.response.returned_rows"
+
+
+def count_rows(span: Span, rows: int) -> None:
+    """Add rows a statement returned (fetched now, or known from the driver) to its span."""
+    known = span.attrs.get(RETURNED_ROWS)
+    span.attrs[RETURNED_ROWS] = (known if isinstance(known, int) else 0) + rows
+
+
+def run(  # noqa: PLR0913
+    execute: Callable[[], T],
+    sql: str,
+    params: Params,
+    *,
+    many: bool,
+    database: Callable[[], Attrs],
+    then: Callable[[Span], None] | None = None,
+) -> T:
     """Run a statement and record it as an `sql` span of the current trace (outside a trace it only runs).
 
     `database` describes where it ran (db.alias, db.vendor, db.system, db.namespace, server.*); it is only called
-    when there is a trace to record into. For layers that report statements before and after rather than wrapping
-    them (SQLAlchemy's events), see record().
+    when there is a trace to record into. `then` gets the span once recorded, for what is known only afterwards (the
+    rows fetched). For layers that report statements before and after rather than wrapping them (SQLAlchemy's
+    events), see record().
     """
     if current_trace() is None:
         return execute()
@@ -118,7 +137,7 @@ def run(execute: Callable[[], T], sql: str, params: Params, *, many: bool, datab
         status = "error"
         raise
     finally:
-        record(
+        span = record(
             sql,
             params,
             many=many,
@@ -128,6 +147,8 @@ def run(execute: Callable[[], T], sql: str, params: Params, *, many: bool, datab
             status=status,
             extra=blocking,
         )
+        if span is not None and then is not None and status == "ok":
+            then(span)
 
 
 def record(  # noqa: PLR0913 (the statement, where it ran, when, how it went)
@@ -140,17 +161,17 @@ def record(  # noqa: PLR0913 (the statement, where it ran, when, how it went)
     duration: int,
     status: str = "ok",
     extra: Attrs | None = None,
-) -> None:
+) -> Span | None:
     """Record a statement that already ran as an `sql` span of the current trace (no-op outside a trace).
 
     `extra`: more attributes, such as `code.blocks_event_loop` for a statement run synchronously on an event loop.
     """
     if current_trace() is None:
-        return
+        return None
     parent = current_span()
     template = parent.attrs.get("template.name") if parent is not None and parent.kind == "template" else None
     name, statement, fingerprinted = _parsed(sql)
-    record_span(
+    return record_span(
         "sql",
         name,
         start=start,
