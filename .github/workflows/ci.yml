@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release runs it whole on the tagged commit and publishes only once it passes.
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
