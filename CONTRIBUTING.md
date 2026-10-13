@@ -38,6 +38,11 @@ Debian and Ubuntu.
 `uv run poe build` runs `uv build` and checks that the wheel and the sdist hold
 the package only, none of the agent's files.
 
+`tests/benchmarks/` holds the benchmarks [CodSpeed](https://codspeed.io) runs
+on every pull request (`.github/workflows/codspeed.yml`). They also run as plain
+tests with `uv run poe test`. `uv run pytest tests/benchmarks --codspeed`
+measures them locally.
+
 ## The package
 
 Django is the framework Tracepanel started with. `tracepanel.asgi` covers ASGI

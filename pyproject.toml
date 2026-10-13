@@ -88,6 +88,7 @@ dev = [
     "types-pyyaml>=6.0.12.20260906",
     "celery-types>=0.26.0",
     "import-linter>=2.15",
+    "pytest-codspeed>=5.0.3",
 ]
 django-tasks = [
     "django-tasks>=0.12.0",

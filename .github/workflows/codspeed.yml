@@ -1,0 +1,43 @@
+name: CodSpeed
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Lets CodSpeed trigger backtest runs to build up initial performance data.
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write # OpenID Connect authentication with CodSpeed
+
+jobs:
+  benchmarks:
+    name: Run benchmarks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tracepanel-python
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: tracepanel-python
+      # tracepanel requires tracepanel-agent, built from the tracepanel repository checked out next to this one.
+      - uses: actions/checkout@v7
+        with:
+          repository: tracepanel/tracepanel
+          path: tracepanel
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          working-directory: tracepanel-python
+      - run: uv sync --locked
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v5
+        with:
+          mode: simulation
+          working-directory: tracepanel-python
+          run: uv run --no-sync pytest tests/benchmarks --codspeed
