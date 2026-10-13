@@ -17,7 +17,7 @@ from urllib.parse import parse_qsl
 from tracepanel import _setup
 from tracepanel.console import app as console
 from tracepanel.console import widget
-from tracepanel.core import conf, errors
+from tracepanel.core import conf, errors, w3c
 from tracepanel.core.context import current_trace, start_trace
 from tracepanel.core.model import Trace
 from tracepanel.integrations import htmx
@@ -79,7 +79,14 @@ class TracepanelMiddleware:
             return self.app(environ, start_response)
         method = str(environ.get("REQUEST_METHOD", "GET"))
         response = _Response()
-        attrs = {"http.method": method, "http.path": path, **htmx.request_attrs(_request_headers(environ))}
+        headers = _request_headers(environ)
+        attrs = {
+            "http.method": method,
+            "http.path": path,
+            **htmx.request_attrs(headers),
+            # Called by another app: the W3C trace its request carried.
+            **w3c.incoming(headers.get(w3c.HEADER)),
+        }
         with start_trace("http", f"{method} {path}", attrs) as trace:
             try:
                 result = self.app(environ, response.start_response)

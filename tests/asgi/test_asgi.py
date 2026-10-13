@@ -128,6 +128,16 @@ def test_one_trace_for_a_starlette_app_mounted_in_another(traces: list[Trace], r
     assert (trace.name, views(trace)) == ("GET /v1/items/{item_id}", ["tests.asgi.test_asgi.item"])
 
 
+def test_a_request_from_another_app_continues_its_trace(client: TestClient, traces: list[Trace]) -> None:
+    client.get("/page", headers={"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"})
+    (trace,) = traces
+
+    assert (trace.attrs["w3c.trace_id"], trace.attrs["w3c.parent_span_id"]) == (
+        "4bf92f3577b34da6a3ce929d0e0e4736",
+        "00f067aa0ba902b7",
+    )
+
+
 def test_htmx_gets_a_whole_page(client: TestClient, traces: list[Trace]) -> None:
     client.get("/page", headers={"HX-Request": "true", "HX-Trigger": "load"})
     (trace,) = traces

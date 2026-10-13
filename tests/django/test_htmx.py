@@ -10,6 +10,19 @@ pytestmark = pytest.mark.django_db
 HTMX = {"HX-Request": "true", "HX-Target": "rows", "HX-Trigger": "save"}
 
 
+def test_a_request_from_another_app_continues_its_trace(client: Client, traces: list[Trace]) -> None:
+    client.get("/htmx/row/", headers={"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"})
+
+    (trace,) = traces
+    assert (trace.attrs["w3c.trace_id"], trace.attrs["w3c.parent_span_id"]) == (
+        "4bf92f3577b34da6a3ce929d0e0e4736",
+        "00f067aa0ba902b7",
+    )
+    # A request with none starts its own.
+    client.get("/htmx/row/")
+    assert "w3c.parent_span_id" not in traces[1].attrs
+
+
 def test_htmx_request_and_response_headers(client: Client, traces: list[Trace]) -> None:
     client.get("/htmx/row/", headers=HTMX)
 

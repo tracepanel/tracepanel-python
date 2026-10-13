@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Calls between apps link their traces, by the W3C trace context: an
+  outgoing HTTP call (urllib3, requests, httpx, aiohttp) carries a
+  `traceparent` header unless the request has its own, and a request that
+  comes with one (Django, ASGI, WSGI) continues its W3C trace. The agent then
+  links the called app's trace to the call, whichever app recorded it, this
+  SDK or OpenTelemetry. Needs an agent that reads the `w3c.*` attributes
+  (after 0.0.1a2).
+
 ## 0.0.1a2 (2026-10-12)
 
 Needs `tracepanel-agent` 0.0.1a2 (installed with it): the agent that knows the

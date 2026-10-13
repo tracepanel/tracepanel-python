@@ -9,6 +9,7 @@ from dirty_equals import IsInt, IsPartialDict, IsStr
 from jsonschema import Draft202012Validator
 
 from tracepanel._compat import override
+from tracepanel.core import w3c
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Span, Trace
 from tracepanel.integrations import http_clients
@@ -17,10 +18,13 @@ from tracepanel.storage.transport import complete
 http_clients.install()
 
 ORIGIN = IsStr(regex=r"tests/integrations/test_http_clients\.py:\d+ in work")
+# The traceparent each request reached the server with, in order.
+received: list[str | None] = []
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
+        received.append(self.headers.get("traceparent"))
         path = self.path.split("?", 1)[0]
         if path == "/go":
             self.send_response(302)
@@ -89,7 +93,61 @@ def test_a_requests_call_is_one_span(server: str, validator: Draft202012Validato
         "server.port": IsInt(),
         "http.response.status_code": 200,
         "code.origin": ORIGIN,
+        "w3c.span_id": w3c.span_id(calls(trace)[0].id),
     }
+
+
+def carried(trace: Trace) -> list[str]:
+    """The traceparent each of the trace's calls should have carried."""
+    return [f"00-{trace.attrs['w3c.trace_id']}-{span.attrs['w3c.span_id']}-01" for span in calls(trace)]
+
+
+def test_every_client_carries_the_trace_on(server: str) -> None:
+    requests, urllib3, httpx = (pytest.importorskip(name) for name in ("requests", "urllib3", "httpx"))
+    aiohttp = pytest.importorskip("aiohttp")
+
+    async def asynchronous() -> None:
+        async with httpx.AsyncClient() as client:
+            await client.get(f"{server}/ok")
+        async with aiohttp.ClientSession() as session, session.get(f"{server}/ok") as response:
+            await response.read()
+
+    def work() -> None:
+        requests.get(f"{server}/ok", timeout=5)
+        urllib3.PoolManager().request("GET", f"{server}/ok")
+        httpx.get(f"{server}/ok")
+        asyncio.run(asynchronous())
+
+    received.clear()
+    trace = traced(work)
+
+    assert len(calls(trace)) == 5
+    assert received == carried(trace)
+    # The W3C trace is this trace's own: its id's 128 bits.
+    assert trace.attrs["w3c.trace_id"] == w3c.trace_id(Trace(id=trace.id, kind="http", name="", start=0))
+
+
+def test_a_trace_called_by_another_app_carries_that_one_on(server: str) -> None:
+    requests = pytest.importorskip("requests")
+    incoming = w3c.incoming("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+
+    received.clear()
+    with start_trace("http", "GET /", incoming) as trace:
+        requests.get(f"{server}/ok", timeout=5)
+
+    assert received == [f"00-4bf92f3577b34da6a3ce929d0e0e4736-{calls(trace)[0].attrs['w3c.span_id']}-01"]
+
+
+def test_a_request_with_its_own_traceparent_keeps_it(server: str) -> None:
+    requests = pytest.importorskip("requests")
+    own = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+
+    received.clear()
+    traced(lambda: requests.get(f"{server}/ok", headers={"TraceParent": own}, timeout=5))
+    # Outside a trace: nothing added.
+    requests.get(f"{server}/ok", timeout=5)
+
+    assert received == [own, None]
 
 
 def test_an_error_status_and_a_redirect(server: str) -> None:

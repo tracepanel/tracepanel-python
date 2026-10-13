@@ -11,7 +11,7 @@ from django.http import HttpRequest, HttpResponse
 from django.http.response import HttpResponseBase
 from django.utils.functional import SimpleLazyObject, empty
 
-from tracepanel.core import conf, errors
+from tracepanel.core import conf, errors, w3c
 from tracepanel.django import console, widget
 from tracepanel.integrations import htmx
 
@@ -105,7 +105,13 @@ def finish(trace: Trace, request: HttpRequest, response: HttpResponseBase) -> No
 
 
 def _attrs(request: HttpRequest) -> Attrs:
-    return {"http.method": request.method, "http.path": request.path, **htmx.request_attrs(request.headers)}
+    return {
+        "http.method": request.method,
+        "http.path": request.path,
+        **htmx.request_attrs(request.headers),
+        # Called by another app: the W3C trace its request carried.
+        **w3c.incoming(request.headers.get(w3c.HEADER)),
+    }
 
 
 class TracepanelMiddleware:

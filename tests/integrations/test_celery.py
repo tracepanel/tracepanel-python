@@ -157,6 +157,8 @@ def test_tasks_listing_and_links(client: Client, users: list[User], store: Agent
         "connection_events": [],
         "sent_by": None,
         "delivered": [],
+        "called_by": None,
+        "calls": [],
         "via": {task["id"]: IsStr(min_length=26, max_length=26)},
     }
     assert store.related(str(task["id"])) == {
@@ -166,6 +168,8 @@ def test_tasks_listing_and_links(client: Client, users: list[User], store: Agent
         "connection_events": [],
         "sent_by": None,
         "delivered": [],
+        "called_by": None,
+        "calls": [],
         "via": {},
     }
     assert client.get(f"/__tracepanel__/api/traces/{task['id']}/related").json() == IsPartialDict(
