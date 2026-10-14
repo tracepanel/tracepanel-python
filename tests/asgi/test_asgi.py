@@ -148,3 +148,27 @@ def test_htmx_gets_a_whole_page(client: TestClient, traces: list[Trace]) -> None
         "htmx.full_page": True,
     }
     assert [issue.title for issue in issues(trace)] == ["Whole page sent to htmx · GET /page"]
+
+
+def test_writes_through_the_console_come_from_this_machine_only(
+    restore: None, store: AgentStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = tracepanel.asgi.install(bare, enabled=True)
+    body = b"[]"
+    headers = {"content-type": "application/json"}
+
+    remote = TestClient(app, client=("10.0.0.5", 5000)).post(
+        "/__tracepanel__/api/ingest", content=body, headers=headers
+    )
+    local = TestClient(app, client=("127.0.0.1", 5000)).post(
+        "/__tracepanel__/api/ingest", content=body, headers=headers
+    )
+
+    assert (remote.status_code, local.status_code) == (403, 202)
+
+    monkeypatch.setattr("tracepanel.asgi.middleware.MAX_BODY", 1)
+    large = TestClient(app, client=("127.0.0.1", 5000)).post(
+        "/__tracepanel__/api/ingest", content=body, headers=headers
+    )
+
+    assert (large.status_code, large.json()) == (413, {"error": "too large"})

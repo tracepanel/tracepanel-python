@@ -35,10 +35,15 @@ def available() -> bool:
     )
 
 
+def from_this_machine(request: HttpRequest) -> bool:
+    """From this machine, or from an address the project lists as its own (INTERNAL_IPS)."""
+    address = request.META.get("REMOTE_ADDR", "")
+    return address in LOCAL or address in getattr(settings, "INTERNAL_IPS", ())
+
+
 def trusted(request: HttpRequest) -> bool:
     """From this machine (or INTERNAL_IPS), and for writes, from the page itself."""
-    address = request.META.get("REMOTE_ADDR", "")
-    if address not in LOCAL and address not in getattr(settings, "INTERNAL_IPS", ()):
+    if not from_this_machine(request):
         return False
     if request.method == "GET":
         return True

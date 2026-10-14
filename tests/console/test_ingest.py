@@ -3,6 +3,7 @@ import time
 
 import pytest
 from django.test import Client
+from pytest_django.fixtures import Settings
 
 from tests.agentstore import AgentStore
 
@@ -56,3 +57,30 @@ def test_a_page_s_traces_reach_the_agent_through_the_app_s_console(store: AgentS
         time.sleep(0.05)
     assert stored.json()["kind"] == "page"
     assert client.get("/__tracepanel__/api/pages").json()["pages"][0]["page"] == "/books"
+
+
+@pytest.mark.django_db
+def test_writes_to_the_agent_come_from_this_machine_only(store: AgentStore, settings: Settings) -> None:
+    # Through a dev server's proxy, or with DEBUG on a reachable host: another machine reads nothing in, clears nothing.
+    client = Client(REMOTE_ADDR="10.0.0.5")
+    body = json.dumps([page_view("01M4WPAGE00000000000000002")])
+
+    refused = client.post("/__tracepanel__/api/ingest", data=body, content_type="application/json")
+    cleared = client.delete("/__tracepanel__/api/store")
+
+    assert (refused.status_code, refused.json()) == (403, {"error": "the console takes writes from this machine only"})
+    assert cleared.status_code == 403
+
+    settings.INTERNAL_IPS = ["10.0.0.5"]
+
+    assert client.post("/__tracepanel__/api/ingest", data=body, content_type="application/json").status_code == 202
+
+
+@pytest.mark.django_db
+def test_a_write_over_the_limit_is_not_read(store: AgentStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("tracepanel.django.console.MAX_BODY", 10)
+    body = json.dumps([page_view("01M4WPAGE00000000000000003")])
+
+    response = Client().post("/__tracepanel__/api/ingest", data=body, content_type="application/json")
+
+    assert (response.status_code, response.json()) == (413, {"error": "too large"})
