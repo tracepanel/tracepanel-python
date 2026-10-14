@@ -13,6 +13,9 @@ class Request:
     query: Mapping[str, str] = field(default_factory=dict)
     # The framework's own request, for the handlers an integration registers.
     native: object = None
+    # What a POST sends on to the agent: a page's traces recorded in the browser (`api/ingest`).
+    body: bytes = b""
+    content_type: str = ""
 
 
 @dataclass(slots=True)

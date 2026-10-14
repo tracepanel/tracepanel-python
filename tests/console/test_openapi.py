@@ -115,6 +115,8 @@ CASES: list[tuple[str, int, Callable[[Data], str]]] = [
     ("/jobs", 400, lambda _: "jobs?q=colour:red"),
     ("/rpc", 200, lambda _: "rpc"),
     ("/rpc", 400, lambda _: "rpc?q=colour:red"),
+    ("/pages", 200, lambda _: "pages"),
+    ("/pages", 400, lambda _: "pages?q=colour:red"),
     ("/snapshot/{id}", 200, lambda d: f"snapshot/{d['trace']}"),
     ("/snapshot/{id}", 404, lambda _: "snapshot/" + "0" * 26),
     ("/graphql/detail", 404, lambda _: "graphql/detail?operation=query Nope"),

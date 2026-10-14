@@ -16,7 +16,14 @@ from tracepanel.integrations import dbapi
 
 def dispatch(request: HttpRequest, path: str) -> HttpResponseBase:
     response = app.dispatch(
-        app.Request(method=request.method or "GET", path=path, query=request.GET.dict(), native=request)
+        app.Request(
+            method=request.method or "GET",
+            path=path,
+            query=request.GET.dict(),
+            native=request,
+            body=request.body if request.method == "POST" else b"",
+            content_type=request.content_type or "" if request.method == "POST" else "",
+        )
     )
     if isinstance(response.native, HttpResponseBase):
         return response.native
