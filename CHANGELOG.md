@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-10-14)
+
+Needs `tracepanel-agent` 0.2.0 (installed with it): its Pages section lists
+what users do in a browser, and apps in many more languages and frameworks
+are labelled.
 
 ### Added
 
