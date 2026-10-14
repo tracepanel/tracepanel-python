@@ -79,7 +79,18 @@ def dispatch(request: Request) -> Response:
         if request.method != "GET":
             return json_response({"error": "method not allowed"}, status=405)
         return handler(request)
+    if request.method != "GET" and (refused := _refused_write(request)):
+        return refused
     return proxy.forward(request, request.path) or _no_agent(api=path is not None)
+
+
+def _refused_write(request: Request) -> Response | None:
+    """A write to the agent (a page's traces, clearing the store) from elsewhere than this machine, or too big."""
+    if not request.local:
+        return json_response({"error": "the console takes writes from this machine only"}, status=403)
+    if request.too_large:
+        return json_response({"error": "too large"}, status=413)
+    return None
 
 
 def _no_agent(*, api: bool) -> Response:

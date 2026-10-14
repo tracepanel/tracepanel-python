@@ -14,6 +14,7 @@ from urllib.parse import parse_qsl
 
 from tracepanel.console import app as console
 from tracepanel.console import widget
+from tracepanel.console.messages import MAX_BODY, is_local
 from tracepanel.core import conf, errors, w3c
 from tracepanel.core.context import current_trace, start_span, start_trace
 from tracepanel.core.model import Trace
@@ -164,21 +165,17 @@ class TracepanelMiddleware:
 
     async def _console(self, scope: Scope, receive: Receive, send: Send, path: str) -> None:
         method = str(scope.get("method", "GET"))
-        body = b""
-        if method == "POST":
-            # A page's traces from the browser, sent on to the agent: read whole, as they are small.
-            while True:
-                message = await receive()
-                body += message.get("body", b"")
-                if not message.get("more_body"):
-                    break
+        body, too_large = await _read_body(receive) if method == "POST" else (b"", False)
         headers = dict(scope.get("headers", []))
+        client = scope.get("client") or ("", 0)
         request = console.Request(
             method=method,
             path=path,
             query=dict(parse_qsl(scope.get("query_string", b"").decode("latin-1"))),
             body=body,
             content_type=headers.get(b"content-type", b"").decode("latin-1"),
+            local=is_local(str(client[0])),
+            too_large=too_large,
         )
         # The console reads SQLite (and may wait for the writer): off the event loop.
         response = await asyncio.to_thread(console.dispatch, request)
@@ -197,6 +194,18 @@ class TracepanelMiddleware:
         finally:
             file.close()
         await send({"type": "http.response.body", "body": b""})
+
+
+async def _read_body(receive: Receive) -> tuple[bytes, bool]:
+    """A page's traces from the browser, sent on to the agent: read whole up to the limit, and whether it was over."""
+    body = b""
+    while True:
+        message = await receive()
+        body += message.get("body", b"")
+        if len(body) > MAX_BODY:
+            return b"", True
+        if not message.get("more_body"):
+            return body, False
 
 
 class _Responder:

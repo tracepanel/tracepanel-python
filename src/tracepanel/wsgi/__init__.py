@@ -17,6 +17,7 @@ from urllib.parse import parse_qsl
 from tracepanel import _setup
 from tracepanel.console import app as console
 from tracepanel.console import widget
+from tracepanel.console.messages import MAX_BODY, is_local
 from tracepanel.core import conf, errors, w3c
 from tracepanel.core.context import current_trace, start_trace
 from tracepanel.core.model import Trace
@@ -179,13 +180,17 @@ def _console(environ: dict[str, Any], path: str, start_response: StartResponse) 
     """The console under the prefix (the agent's, forwarded; EXPLAIN needs a framework, so not here)."""
     method = str(environ.get("REQUEST_METHOD", "GET"))
     length = int(environ.get("CONTENT_LENGTH") or 0) if method == "POST" else 0
+    too_large = length > MAX_BODY
+    readable = length if not too_large else 0
     request = console.Request(
         method=method,
         path=path.lstrip("/"),
         query=dict(parse_qsl(str(environ.get("QUERY_STRING", "")))),
         # A page's traces from the browser, sent on to the agent.
-        body=environ["wsgi.input"].read(length) if length else b"",
-        content_type=str(environ.get("CONTENT_TYPE", "")) if length else "",
+        body=environ["wsgi.input"].read(readable) if readable else b"",
+        content_type=str(environ.get("CONTENT_TYPE", "")) if readable else "",
+        local=is_local(str(environ.get("REMOTE_ADDR", ""))),
+        too_large=too_large,
     )
     response = console.dispatch(request)
     status = f"{response.status} {http.HTTPStatus(response.status).phrase}"

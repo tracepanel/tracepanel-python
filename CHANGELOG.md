@@ -9,6 +9,13 @@
   apps: an SPA's dev server (tracepanel-js's Vite plugin) sends them there,
   and the console lists them under Pages.
 
+### Security
+
+- The app's console takes writes to the agent (a page's traces, clearing
+  the store) from this machine only, or from Django's `INTERNAL_IPS`. With
+  DEBUG on a host others can reach, they could fill or clear the store. A
+  write over 8 MB is answered 413 without being read.
+
 ## 0.1.1 (2026-10-13)
 
 Needs `tracepanel-agent` 0.1.1 (installed with it): its Services map fits the

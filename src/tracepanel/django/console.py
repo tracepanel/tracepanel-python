@@ -6,23 +6,40 @@ Also registers what only Django can do: switching the user (sessions, auth) and 
 from collections.abc import Callable
 
 from django.apps import apps
+from django.core.exceptions import RequestDataTooBig
 from django.http import FileResponse, HttpRequest, HttpResponse
 from django.http.response import HttpResponseBase
 
 from tracepanel.console import app
+from tracepanel.console.messages import MAX_BODY
 from tracepanel.django import explain, users
 from tracepanel.integrations import dbapi
 
 
+def _body(request: HttpRequest) -> tuple[bytes, bool]:
+    """A POST's body, and whether it was too large to read (over the console's limit, or Django's own)."""
+    if request.method != "POST":
+        return b"", False
+    if int(request.META.get("CONTENT_LENGTH") or 0) > MAX_BODY:
+        return b"", True
+    try:
+        return request.body, False
+    except RequestDataTooBig:
+        return b"", True
+
+
 def dispatch(request: HttpRequest, path: str) -> HttpResponseBase:
+    body, too_large = _body(request)
     response = app.dispatch(
         app.Request(
             method=request.method or "GET",
             path=path,
             query=request.GET.dict(),
             native=request,
-            body=request.body if request.method == "POST" else b"",
-            content_type=request.content_type or "" if request.method == "POST" else "",
+            body=body,
+            content_type=request.content_type or "" if body else "",
+            local=users.from_this_machine(request),
+            too_large=too_large,
         )
     )
     if isinstance(response.native, HttpResponseBase):
