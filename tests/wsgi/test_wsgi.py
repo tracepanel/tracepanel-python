@@ -155,7 +155,7 @@ def test_htmx_gets_a_whole_page(wrapped: tracepanel.wsgi.WSGIApp, traces: list[T
 def test_writes_through_the_console_come_from_this_machine_only(
     wrapped: tracepanel.wsgi.WSGIApp, store: AgentStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def ingest(address: str) -> str:
+    def ingest(address: str) -> int:
         environ = {
             "REQUEST_METHOD": "POST",
             "REMOTE_ADDR": address,
@@ -163,10 +163,11 @@ def test_writes_through_the_console_come_from_this_machine_only(
             "CONTENT_LENGTH": "2",
             "wsgi.input": BytesIO(b"[]"),
         }
-        return call(wrapped, "/__tracepanel__/api/ingest", environ)[0]
+        # The code: the reason's wording changes between Pythons (413 is "Content Too Large" from 3.13).
+        return int(call(wrapped, "/__tracepanel__/api/ingest", environ)[0].split()[0])
 
-    assert (ingest("10.0.0.5"), ingest("127.0.0.1")) == ("403 Forbidden", "202 Accepted")
+    assert (ingest("10.0.0.5"), ingest("127.0.0.1")) == (403, 202)
 
     monkeypatch.setattr("tracepanel.wsgi.MAX_BODY", 1)
 
-    assert ingest("127.0.0.1") == "413 Request Entity Too Large"
+    assert ingest("127.0.0.1") == 413
