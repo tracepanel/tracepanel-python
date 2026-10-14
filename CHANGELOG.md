@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- The app's console (`/__tracepanel__/`) passes a page's traces recorded in
+  the browser on to the agent (`POST api/ingest`), for Django, ASGI and WSGI
+  apps: an SPA's dev server (tracepanel-js's Vite plugin) sends them there,
+  and the console lists them under Pages.
+
 ## 0.1.1 (2026-10-13)
 
 Needs `tracepanel-agent` 0.1.1 (installed with it): its Services map fits the

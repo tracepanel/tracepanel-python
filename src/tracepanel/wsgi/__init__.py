@@ -177,10 +177,15 @@ def install(app: WSGIApp, **settings: object) -> WSGIApp:
 
 def _console(environ: dict[str, Any], path: str, start_response: StartResponse) -> Iterable[bytes]:
     """The console under the prefix (the agent's, forwarded; EXPLAIN needs a framework, so not here)."""
+    method = str(environ.get("REQUEST_METHOD", "GET"))
+    length = int(environ.get("CONTENT_LENGTH") or 0) if method == "POST" else 0
     request = console.Request(
-        method=str(environ.get("REQUEST_METHOD", "GET")),
+        method=method,
         path=path.lstrip("/"),
         query=dict(parse_qsl(str(environ.get("QUERY_STRING", "")))),
+        # A page's traces from the browser, sent on to the agent.
+        body=environ["wsgi.input"].read(length) if length else b"",
+        content_type=str(environ.get("CONTENT_TYPE", "")) if length else "",
     )
     response = console.dispatch(request)
     status = f"{response.status} {http.HTTPStatus(response.status).phrase}"

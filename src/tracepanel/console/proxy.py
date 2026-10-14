@@ -32,7 +32,7 @@ def forward(request: Request, path: str) -> Response | None:
     if not agent.ensure_started(config) or (base := agent.console_url(config)) is None:
         return None
     url = f"{base}{path}" + (f"?{urlencode(dict(request.query))}" if request.query else "")
-    response = _fetch(url, request.method)
+    response = _fetch(url, request.method, request.body, request.content_type)
     if request.method == "GET" and _not_stored_yet(path, dict(request.query), response):
         # This process's own traces may still be in its queue, then in the agent's: send them, wait a little. The
         # widget asks for a page's issues as soon as it loads; answering once the trace is stored spares it retries.
@@ -67,9 +67,11 @@ def trace(trace_id: str) -> dict[str, object] | None:
     return document if isinstance(document, dict) else None
 
 
-def _fetch(url: str, method: str) -> Response | None:
+def _fetch(url: str, method: str, body: bytes = b"", content_type: str = "") -> Response | None:
+    headers = {"Content-Type": content_type} if content_type else {}
+    sent = urllib.request.Request(url, data=body or None, method=method, headers=headers)  # noqa: S310 (the agent)
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, method=method), timeout=TIMEOUT_S) as answer:  # noqa: S310 (the agent's local address)
+        with urllib.request.urlopen(sent, timeout=TIMEOUT_S) as answer:  # noqa: S310 (the agent's local address)
             return _response(answer.status, answer.headers, answer.read())
     except urllib.error.HTTPError as error:
         return _response(error.code, error.headers, error.read())

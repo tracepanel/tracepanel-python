@@ -126,7 +126,7 @@ class TracepanelMiddleware:
         config = conf.get_config()
         path = str(scope.get("path", ""))
         if path.startswith(config.prefix):
-            await self._console(scope, send, path.removeprefix(config.prefix))
+            await self._console(scope, receive, send, path.removeprefix(config.prefix))
             return
         if not config.enabled or conf.matches(path, config.ignore_paths) or current_trace() is not None:
             # Already traced by an app this one is mounted in (a Starlette app inside FastAPI): one trace per request.
@@ -162,11 +162,23 @@ class TracepanelMiddleware:
         if failure is not None:
             raise failure
 
-    async def _console(self, scope: Scope, send: Send, path: str) -> None:
+    async def _console(self, scope: Scope, receive: Receive, send: Send, path: str) -> None:
+        method = str(scope.get("method", "GET"))
+        body = b""
+        if method == "POST":
+            # A page's traces from the browser, sent on to the agent: read whole, as they are small.
+            while True:
+                message = await receive()
+                body += message.get("body", b"")
+                if not message.get("more_body"):
+                    break
+        headers = dict(scope.get("headers", []))
         request = console.Request(
-            method=str(scope.get("method", "GET")),
+            method=method,
             path=path,
             query=dict(parse_qsl(scope.get("query_string", b"").decode("latin-1"))),
+            body=body,
+            content_type=headers.get(b"content-type", b"").decode("latin-1"),
         )
         # The console reads SQLite (and may wait for the writer): off the event loop.
         response = await asyncio.to_thread(console.dispatch, request)
