@@ -2,7 +2,7 @@ import re
 from datetime import UTC, datetime
 
 import pytest
-from dirty_equals import IsInt, IsList, IsPartialDict, IsPositiveFloat, IsPositiveInt, IsStr
+from dirty_equals import Contains, IsInt, IsList, IsPartialDict, IsPositiveFloat, IsPositiveInt, IsStr
 from django.contrib.auth.models import User
 from django.test import Client
 
@@ -269,7 +269,8 @@ def test_known_values(client: Client, recorded: AgentStore) -> None:
             "log_route": ["/error/", "/logs/"],
             # What the records were logged inside: the view that wrote them.
             "in": ["view"],
-            "span": ["tests.project.views.logs"],
+            # Spans by name: the view that logged them, and from an agent after 0.2.0 every span that isn't a call.
+            "span": Contains("tests.project.views.logs"),
         },
     )
 
@@ -306,6 +307,8 @@ def test_issues(client: Client, recorded: AgentStore) -> None:
         "last_trace_id": IsStr,
         "endpoints": ["GET /error/"],
     }
+    # How many of its traces the store still holds, from an agent after 0.2.0.
+    error = newer(error, recorded.list_issues("kind:error")[0], {"stored": 1})
 
     assert [(issue["kind"], issue["endpoints"]) for issue in recorded.list_issues()] == IsList(
         ("error", ["GET /error/"]),
