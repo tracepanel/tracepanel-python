@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- A page's widget says whether the app can switch the user (Django with
+  its auth and sessions, in DEBUG): the panel offers it, and asks who the
+  user is, only then.
+
 ## 0.2.0 (2026-10-14)
 
 Needs `tracepanel-agent` 0.2.0 (installed with it): its Pages section lists

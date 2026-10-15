@@ -32,6 +32,18 @@ def test_script_injected_into_html(client: Client, traces: list[Trace], db: None
     assert body.index("<script") < body.index("</body>")
 
 
+def test_the_page_says_when_the_user_can_be_switched(
+    client: Client, traces: list[Trace], db: None, store: AgentStore, settings: Settings
+) -> None:
+    settings.DEBUG = True
+    switchable = client.get("/html/").content.decode()
+    settings.TRACEPANEL = {"user_switch": False}
+    fixed = client.get("/html/").content.decode()
+
+    assert 'data-tracepanel-users="1"' in switchable
+    assert "data-tracepanel-users" not in fixed
+
+
 def test_script_runs_before_the_page_scripts(client: Client, traces: list[Trace], db: None, store: AgentStore) -> None:
     # GraphiQL and Swagger keep a reference to fetch while loading: the widget must wrap it first.
     body = client.get("/html-page/").content.decode()

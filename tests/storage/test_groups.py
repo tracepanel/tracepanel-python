@@ -68,5 +68,6 @@ def test_any_group_is_a_search(client: Client, traces: list[Trace], store: Agent
         "jobs": 1,
         "rpc": 0,
         "pages": 0,
+        "mails": 0,
         "systems": [{"system": "sql", "family": "sql", "label": "Database"}],
     }
