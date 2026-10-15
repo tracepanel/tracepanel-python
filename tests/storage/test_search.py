@@ -306,6 +306,8 @@ def test_issues(client: Client, recorded: AgentStore) -> None:
         "last_trace_id": IsStr,
         "endpoints": ["GET /error/"],
     }
+    # How many of its traces the store still holds, from an agent after 0.2.0.
+    error = newer(error, recorded.list_issues("kind:error")[0], {"stored": 1})
 
     assert [(issue["kind"], issue["endpoints"]) for issue in recorded.list_issues()] == IsList(
         ("error", ["GET /error/"]),
