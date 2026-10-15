@@ -5,7 +5,7 @@ from django.test import Client
 from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
-from tests.agentstore import AgentStore, issues
+from tests.agentstore import AgentStore, issues, newer
 from tracepanel.core.model import Link, Trace
 from tracepanel.storage.transport import set_writer
 
@@ -150,28 +150,39 @@ def test_tasks_listing_and_links(client: Client, users: list[User], store: Agent
         check_order=False,
     )
     assert store.list_tasks("state:failure") == [IsPartialDict(task="tests.project.jobs.broken")]
-    assert store.related(str(request["id"])) == {
-        "enqueued_by": None,
-        "enqueued": [IsPartialDict(id=task["id"])],
-        "connection": None,
-        "connection_events": [],
-        "sent_by": None,
-        "delivered": [],
-        "called_by": None,
-        "calls": [],
-        "via": {task["id"]: IsStr(min_length=26, max_length=26)},
-    }
-    assert store.related(str(task["id"])) == {
-        "enqueued_by": IsPartialDict(id=request["id"]),
-        "enqueued": [],
-        "connection": None,
-        "connection_events": [],
-        "sent_by": None,
-        "delivered": [],
-        "called_by": None,
-        "calls": [],
-        "via": {},
-    }
+    by_request = store.related(str(request["id"]))
+    by_task = store.related(str(task["id"]))
+    # Calls served in other projects, from an agent after 0.2.0: none here.
+    assert by_request == newer(
+        {
+            "enqueued_by": None,
+            "enqueued": [IsPartialDict(id=task["id"])],
+            "connection": None,
+            "connection_events": [],
+            "sent_by": None,
+            "delivered": [],
+            "called_by": None,
+            "calls": [],
+            "via": {task["id"]: IsStr(min_length=26, max_length=26)},
+        },
+        by_request,
+        {"remote_calls": []},
+    )
+    assert by_task == newer(
+        {
+            "enqueued_by": IsPartialDict(id=request["id"]),
+            "enqueued": [],
+            "connection": None,
+            "connection_events": [],
+            "sent_by": None,
+            "delivered": [],
+            "called_by": None,
+            "calls": [],
+            "via": {},
+        },
+        by_task,
+        {"remote_calls": []},
+    )
     assert client.get(f"/__tracepanel__/api/traces/{task['id']}/related").json() == IsPartialDict(
         enqueued_by=IsPartialDict(id=request["id"])
     )
