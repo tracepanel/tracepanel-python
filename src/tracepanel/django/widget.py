@@ -6,16 +6,13 @@ from django.http.response import HttpResponseBase
 from tracepanel.console import widget
 from tracepanel.core.conf import Config
 from tracepanel.core.model import Trace
-from tracepanel.django import users
 
 
 def decorate(request: HttpRequest, response: HttpResponseBase, trace: Trace, config: Config) -> None:
     api = request.META.get("SCRIPT_NAME", "").rstrip("/") + config.prefix
     origin = request.build_absolute_uri("/").rstrip("/")
     timing = widget.Timing.of(trace)
-    page = widget.Page(
-        request.method or "GET", response.status_code, origin, api, timing, response.charset, users=users.available()
-    )
+    page = widget.Page(request.method or "GET", response.status_code, origin, api, timing, response.charset)
     headers = list(response.items())
     # A plain HttpResponse can get the script; streaming and file responses get the headers only.
     body = response.content if isinstance(response, HttpResponse) else None

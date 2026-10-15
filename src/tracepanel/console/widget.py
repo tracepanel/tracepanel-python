@@ -69,8 +69,6 @@ class Page:
     api: str
     timing: Timing
     charset: str = "utf-8"
-    # Whether the app can switch the user it runs as (Django's auth): only then does the panel offer it.
-    users: bool = False
 
 
 def decorate(trace: Trace, page: Page, headers: Headers, body: bytes | None, config: Config) -> bytes | None:
@@ -93,7 +91,7 @@ def decorate(trace: Trace, page: Page, headers: Headers, body: bytes | None, con
     html_page = "text/html" in (header(headers, "Content-Type") or "") and header(headers, "Content-Encoding") is None
     # The panel is the agent's: without one there is nothing to open.
     if config.widget and html_page and agent.ensure_started(config):
-        tag = script_tag(page, trace)
+        tag = script_tag(page.api, trace, page.method, page.status, page.timing)
         injected = inject(body.decode(page.charset, errors="replace"), tag)
         if injected is not None:
             body = injected.encode(page.charset)
@@ -133,24 +131,21 @@ def exposed(existing: str) -> str:
     return ", ".join(dict.fromkeys([*names, *EXPOSED_HEADERS]))
 
 
-def script_tag(page: Page, trace: Trace) -> str:
+def script_tag(api: str, trace: Trace, method: str, status: int, timing: Timing) -> str:
     """widget.min.js with the page's own request in data-tracepanel-* attributes."""
-    api, method, timing = page.api, page.method, page.timing
     name = display_name(trace, method)
     values = {
         "api": api,
         "id": trace.id,
         **({"name": name} if name else {}),
         "method": method,
-        "status": page.status,
+        "status": status,
         "total": f"{timing.total_ms:.1f}",
         "db": f"{timing.db_ms:.1f}",
         "queries": timing.queries,
         "issues": PENDING,
         # What served the page: the panel shows it next to its logo.
         "runtime": runtime.label(),
-        # The panel asks who the user is, and offers to switch, only when the app can.
-        **({"users": 1} if page.users else {}),
     }
     attrs = " ".join(f'data-tracepanel-{name}="{html.escape(str(value))}"' for name, value in values.items())
     return f'<script src="{html.escape(api)}widget.min.js" {attrs}></script>'

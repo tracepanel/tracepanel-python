@@ -89,6 +89,15 @@ def test_errors(client: Client, users: list[User], settings: Settings) -> None:
     assert client.get(API).status_code == 404
 
 
+def test_the_console_offers_switching_only_where_it_works(client: Client, settings: Settings) -> None:
+    offered = client.get("/__tracepanel__/api/capabilities").json()
+    settings.TRACEPANEL = {"user_switch": False}
+    turned_off = client.get("/__tracepanel__/api/capabilities").json()
+
+    assert offered == {"explain": True, "users": True}
+    assert turned_off == {"explain": True, "users": False}
+
+
 def test_custom_user_model() -> None:
     # AUTH_USER_MODEL is fixed per process: the custom-model tests run in their own pytest.
     result = subprocess.run(  # noqa: S603 (our own interpreter and test files)

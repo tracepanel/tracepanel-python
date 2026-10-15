@@ -173,8 +173,6 @@ def test_widget_in_html_pages(client: FlaskClient, traces: list[Trace], store: A
 
     assert body.index("<head>") < body.index('<script src="/__tracepanel__/widget.min.js"') < body.index("<title>")
     assert f'data-tracepanel-id="{traces[0].id}"' in body
-    # Flask can't switch the user: the panel doesn't ask.
-    assert "data-tracepanel-users" not in body
     assert response.headers["Content-Length"] == str(len(response.get_data()))
 
 

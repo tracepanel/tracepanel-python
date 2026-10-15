@@ -4,9 +4,10 @@
 
 ### Changed
 
-- A page's widget says whether the app can switch the user (Django with
-  its auth and sessions, in DEBUG): the panel offers it, and asks who the
-  user is, only then.
+- The app's console answers what it adds to the agent's
+  (`api/capabilities`): EXPLAIN where it has the database, switching users
+  in Django with its auth and sessions, in DEBUG. The console shows those
+  only then, and asks nothing of an app that can't answer.
 
 ## 0.2.0 (2026-10-14)
 
