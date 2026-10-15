@@ -72,3 +72,4 @@ def install() -> None:
         app.register("users", _view(users.search))
         app.register("users/me", _view(users.me))
         app.register("users/switch", _view(users.switch), write=True)
+        app.capability("users", users.available)

@@ -99,6 +99,8 @@ CASES: list[tuple[str, int, Callable[[Data], str]]] = [
     ("/issues/detail", 404, lambda _: "issues/detail?fingerprint=0000000000000000"),
     ("/issues/detail", 400, lambda d: f"issues/detail?fingerprint={d['issue']}&q=colour:red"),
     ("/counts", 200, lambda _: "counts"),
+    # What the app adds to the agent's console: EXPLAIN, switching users.
+    ("/capabilities", 200, lambda _: "capabilities"),
     ("/values", 200, lambda _: "values"),
     ("/search", 200, lambda _: "search"),
     ("/tasks", 200, lambda _: "tasks"),

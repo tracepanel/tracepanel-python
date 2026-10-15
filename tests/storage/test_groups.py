@@ -7,7 +7,7 @@ from django.core.management import call_command
 from django.test import Client
 
 import tracepanel
-from tests.agentstore import AgentStore
+from tests.agentstore import AgentStore, newer
 from tracepanel.core.model import Trace
 
 
@@ -60,13 +60,18 @@ def test_any_group_is_a_search(client: Client, traces: list[Trace], store: Agent
     )
     assert store.summary("kind:command name:sync-prices") == IsPartialDict(summary=IsPartialDict(calls=1))
     assert store.summary("kind:websocket") is None
-    assert store.counts()["sections"] == {
-        "http": 2,
-        "graphql": 0,
-        "tasks": 0,
-        "websockets": 0,
-        "jobs": 1,
-        "rpc": 0,
-        "pages": 0,
-        "systems": [{"system": "sql", "family": "sql", "label": "Database"}],
-    }
+    sections = store.counts()["sections"]
+    assert sections == newer(
+        {
+            "http": 2,
+            "graphql": 0,
+            "tasks": 0,
+            "websockets": 0,
+            "jobs": 1,
+            "rpc": 0,
+            "pages": 0,
+            "systems": [{"system": "sql", "family": "sql", "label": "Database"}],
+        },
+        sections,
+        {"mails": 0},
+    )

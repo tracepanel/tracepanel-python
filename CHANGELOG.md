@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The app's console answers what it adds to the agent's
+  (`api/capabilities`): EXPLAIN where it has the database, switching users
+  in Django with its auth and sessions, in DEBUG. The console shows those
+  only then, and asks nothing of an app that can't answer.
+
 ## 0.2.0 (2026-10-14)
 
 Needs `tracepanel-agent` 0.2.0 (installed with it): its Pages section lists

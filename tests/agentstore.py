@@ -15,6 +15,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,15 @@ from tracepanel._compat import override
 from tracepanel.core import conf
 from tracepanel.core.model import Issue, Trace
 from tracepanel.storage import agent
+
+
+def newer(expected: dict[str, Any], answer: Mapping[str, Any], fields: dict[str, Any]) -> dict[str, Any]:
+    """The expected answer, with the fields an agent newer than the released one adds, where this agent has them.
+
+    CI runs the released agent, a local run the sibling one, ahead of it: both are held to their whole answer.
+    """
+    return {**expected, **{key: value for key, value in fields.items() if key in answer}}
+
 
 # The agent's schemas (store, search, the console's API): its checkout next to this one, or $TRACEPANEL_AGENT_DIR.
 AGENT_SCHEMAS = (

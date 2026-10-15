@@ -64,9 +64,27 @@ def _span(trace_id: str, span_id: str) -> dict[str, object] | None:
     return next((span for span in spans if isinstance(span, dict) and span.get("id") == span_id), None)
 
 
+# What the app adds to its agent's console beyond EXPLAIN (Django: switching users), each checked when asked.
+CAPABILITIES: dict[str, Callable[[], bool]] = {}
+
+
+def capability(name: str, check: Callable[[], bool]) -> None:
+    """A feature only the framework offers, told to the console by `api/capabilities` so it shows it only then."""
+    CAPABILITIES[name] = check
+
+
+def capabilities() -> dict[str, bool]:
+    """The agent answers none of these: the console shows EXPLAIN, or a user switcher, only where the app runs them."""
+    added = {name: check() for name, check in CAPABILITIES.items()}
+    return {"explain": "explain" in EXTENSIONS, "users": False} | added
+
+
 def register(path: str, handler: Handler, *, write: bool = False) -> None:
     """Add an API resource (`api/<path>`) only the framework can serve; `write` ones accept POST."""
     (WRITES if write else EXTENSIONS)[path] = handler
+
+
+register("capabilities", lambda _request: json_response(capabilities()))
 
 
 def dispatch(request: Request) -> Response:
