@@ -255,6 +255,8 @@ def test_known_values(client: Client, recorded: AgentStore) -> None:
         "rpc": no_tasks,
         "page": no_tasks,
         # django.request adds request and status_code to its own records.
+        # The routes whose requests logged anything: the logs' Route menu.
+        "log_route": ["/error/", "/logs/"],
         # What the records were logged inside: the view that wrote them.
         "in": ["view"],
         "span": ["tests.project.views.logs"],
