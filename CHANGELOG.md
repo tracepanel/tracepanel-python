@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-10-15)
+
+Needs `tracepanel-agent` 0.3.0 (installed with it): its console finds logs by
+the spans they were written in, follows calls to another project's agent,
+and keeps issues whole when old traces go. The store starts empty after the
+upgrade.
 
 ### Changed
 
