@@ -4,6 +4,8 @@
 
 ### Changed
 
+- A trace keeps up to 1,000 log records, not 200: the limit every SDK and
+  the agent now share. The rest are counted (`tracepanel.dropped_logs`).
 - The app's console answers what it adds to the agent's
   (`api/capabilities`): EXPLAIN where it has the database, switching users
   in Django with its auth and sessions, in DEBUG. The console shows those
