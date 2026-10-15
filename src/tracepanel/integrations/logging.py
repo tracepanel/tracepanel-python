@@ -16,7 +16,7 @@ from tracepanel.core.frames import MASK, SENSITIVE, relative, safe_repr
 from tracepanel.core.model import Attrs, Log
 from tracepanel.core.patching import patch, patched
 
-MAX_LOGS = 200
+MAX_LOGS = 1000
 # tracepanel's own records, SQL echo, and the task queues' per-task bookkeeping ("Task x succeeded in 0.1s"), which the
 # task trace already shows as its state and duration.
 IGNORED = (
