@@ -263,6 +263,8 @@ def test_known_values(client: Client, recorded: AgentStore) -> None:
         expected,
         known,
         {
+            # What ran the tasks: none in the test project.
+            "task_system": no_tasks,
             # The routes whose requests logged anything: the logs' Route menu.
             "log_route": ["/error/", "/logs/"],
             # What the records were logged inside: the view that wrote them.
@@ -347,12 +349,14 @@ def test_counts(client: Client, recorded: AgentStore) -> None:
 def test_issue_detail(client: Client, recorded: AgentStore) -> None:
     (error,) = recorded.list_issues("kind:error")
 
-    assert recorded.issue_detail(str(error["fingerprint"])) == {
+    detail = recorded.issue_detail(str(error["fingerprint"]))
+    assert detail == {
         **error,
-        # 40 buckets from the first event up to now: the only event opens the series.
-        "series": [IsPartialDict(calls=1, errors=1), *[IsPartialDict(calls=0)] * 39],
+        # 40 buckets up to now, from the first event or, an agent after 0.2.0, at least 10 minutes back.
+        "series": IsList(*[IsPartialDict(calls=IsInt(ge=0))] * 40),
         "traces": [IsPartialDict(id=error["last_trace_id"], path="/error/", http_status=500)],
     }
+    assert [bucket for bucket in detail["series"] if bucket["calls"]] == [IsPartialDict(calls=1, errors=1)]
     assert recorded.issue_detail("nope") is None
     assert client.get(f"/__tracepanel__/api/issues/detail?fingerprint={error['fingerprint']}").json() == IsPartialDict(
         title="ZeroDivisionError: division by zero", endpoints=["GET /error/"]
