@@ -350,6 +350,7 @@ def test_issue_detail(client: Client, recorded: AgentStore) -> None:
     (error,) = recorded.list_issues("kind:error")
 
     detail = recorded.issue_detail(str(error["fingerprint"]))
+    assert detail is not None
     assert detail == {
         **error,
         # 40 buckets up to now, from the first event or, an agent after 0.2.0, at least 10 minutes back.
