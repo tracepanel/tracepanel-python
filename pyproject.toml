@@ -1,6 +1,6 @@
 [project]
 name = "tracepanel"
-version = "0.2.0"
+version = "0.3.0"
 description = "Traces and logs for Python apps: every request, task and command with its SQL and log lines, N+1 queries found"
 readme = "README.md"
 license = "MIT"
@@ -9,7 +9,7 @@ requires-python = ">=3.11"
 # The agent stores, analyzes and serves the console; released together with this package, at the same version. It has
 # wheels for these platforms: elsewhere tracepanel installs without it (its sdist needs Rust to build).
 dependencies = [
-    """tracepanel-agent==0.2.0; \
+    """tracepanel-agent==0.3.0; \
     (sys_platform == "linux" and (platform_machine == "x86_64" or platform_machine == "aarch64" \
         or platform_machine == "armv7l" or platform_machine == "armv6l" or platform_machine == "i686" \
         or platform_machine == "ppc64le" or platform_machine == "s390x" or platform_machine == "riscv64")) \
