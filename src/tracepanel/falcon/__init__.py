@@ -11,10 +11,11 @@ named after it (`app.resources.PostResource.on_get`) and records errors Falcon t
 """
 
 from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Unpack
 
 from tracepanel import _setup
 from tracepanel.core import errors, patching
+from tracepanel.core.conf import Settings
 from tracepanel.core.context import current_trace, start_span
 from tracepanel.core.patching import patch, patched
 from tracepanel.wsgi import TracepanelMiddleware
@@ -118,7 +119,7 @@ def _call(app_class: type) -> Callable[..., Iterable[bytes]]:
     return original
 
 
-def install(app: "falcon.App[Any, Any]", **settings: object) -> None:
+def install(app: "falcon.App[Any, Any]", **settings: Unpack[Settings]) -> None:
     import falcon  # noqa: PLC0415
     import falcon.asgi  # noqa: PLC0415
 

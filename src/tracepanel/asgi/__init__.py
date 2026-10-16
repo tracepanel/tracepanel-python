@@ -12,17 +12,18 @@ logging. Settings are keyword arguments (the same names as Django's TRACEPANEL d
 them.
 """
 
-from typing import Any
+from typing import Any, Unpack
 
 from tracepanel import _setup
 from tracepanel.asgi.middleware import TracepanelMiddleware
+from tracepanel.core.conf import Settings
 
 MARKER = "_tracepanel"
 
 __all__ = ["TracepanelMiddleware", "install"]
 
 
-def install(app: Any, **settings: object) -> Any:  # noqa: ANN401 (any ASGI app)
+def install(app: Any, **settings: Unpack[Settings]) -> Any:  # noqa: ANN401 (any ASGI app)
     """Trace the app's requests; returns the app to serve (the same app for Starlette and FastAPI)."""
     if getattr(app, MARKER, False):
         return app

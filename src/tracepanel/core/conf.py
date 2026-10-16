@@ -17,6 +17,7 @@ import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields
 from pathlib import Path
+from typing import TypedDict, Unpack
 
 TRUE = ("1", "true", "yes", "on")
 FALSE = ("0", "false", "no", "off")
@@ -108,6 +109,50 @@ class Config:
     )
 
 
+class Settings(TypedDict, total=False):
+    """Config's fields as keyword arguments (`install(app, slow_sql_ms=50)`): see Config for what each one does."""
+
+    enabled: bool
+    root: str
+    service: str
+    widget: bool
+    prefix: str
+    dir: str
+    agent: str
+    console_url: str
+    terminal_summary: bool
+    max_traces: int
+    n_plus_one_threshold: int
+    n_plus_one_min_ms: int
+    slow_sql_ms: int
+    slow_http_ms: int
+    long_transaction_ms: int
+    capture_locals: bool
+    capture_mail_body: bool
+    capture_sql_params: bool
+    user_switch: bool
+    capture_task_args: bool
+    celery_enabled: bool
+    channels_enabled: bool
+    dbapi_enabled: bool
+    django_tasks_enabled: bool
+    dramatiq_enabled: bool
+    drf_enabled: bool
+    http_clients_enabled: bool
+    logging_enabled: bool
+    mongodb_enabled: bool
+    ninja_enabled: bool
+    otel_enabled: bool
+    redis_enabled: bool
+    rq_enabled: bool
+    sqlalchemy_enabled: bool
+    strawberry_enabled: bool
+    ignore_paths: list[str] | tuple[str, ...]
+    ignore_tasks: list[str] | tuple[str, ...]
+    ignore_loggers: list[str] | tuple[str, ...]
+    ignore_commands: list[str] | tuple[str, ...]
+
+
 def matches(value: str, patterns: tuple[str, ...]) -> bool:
     """Glob match (`*`, `?`) against any pattern."""
     return any(fnmatch.fnmatchcase(value, pattern) for pattern in patterns)
@@ -125,7 +170,7 @@ def use_source(source: Callable[[], Mapping[str, object]]) -> None:
     reset()
 
 
-def configure(**values: object) -> None:
+def configure(**values: Unpack[Settings]) -> None:
     """Set values in code; they win over the framework's settings, TRACEPANEL_* variables still win over them."""
     _configured.update(values)
     reset()

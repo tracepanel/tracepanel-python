@@ -4,7 +4,9 @@ Starlette and FastAPI put the matched route and endpoint in the scope: the trace
 and the endpoint runs inside a `view` span. Other frameworks' requests are named after their path.
 
 The response's start is held until its body is complete (a normal response): its headers then carry the trace's
-timing for the widget, and an HTML page gets widget.min.js. Streaming responses go out at once, with Tracepanel-Id only.
+timing for the widget, and an HTML page gets widget.min.js. A body in several messages is still a normal response when
+its Content-Length is declared (Starlette's BaseHTTPMiddleware sends every response so); without one it is a stream,
+and goes out at once, with Tracepanel-Id only.
 """
 
 import asyncio
@@ -13,7 +15,7 @@ from typing import Any
 from urllib.parse import parse_qsl
 
 from tracepanel.console import app as console
-from tracepanel.console import widget
+from tracepanel.console import terminal, widget
 from tracepanel.console.messages import MAX_BODY, is_local
 from tracepanel.core import conf, errors, w3c
 from tracepanel.core.context import current_trace, start_span, start_trace
@@ -28,6 +30,8 @@ Send = Callable[[Message], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 CHUNK = 64 * 1024
+# A body in several messages is held whole up to this size (a declared Content-Length); larger ones are streamed.
+MAX_HELD = 8 << 20
 MARKER = "_tracepanel"
 
 
@@ -236,7 +240,10 @@ class _Responder:
             await self.downstream(message)
             return
         self.body.append(message.get("body", b""))
-        if message.get("more_body") and len(self.body) == 1:
+        if not message.get("more_body"):
+            await self._flush()
+            return
+        if len(self.body) == 1 and not self._held():
             self._htmx(None)
             # Streaming: send what there is, with the id only (the timing isn't known yet).
             _set_header(self.start, "Tracepanel-Id", self.trace.id)
@@ -244,10 +251,22 @@ class _Responder:
             await self.downstream(self.start)
             self.start = None
             await self.downstream(message)
-            return
-        if message.get("more_body"):
-            return
-        await self._flush()
+
+    def _held(self) -> bool:
+        """Whether a body in several messages is held until its end: its size is declared, and small enough.
+
+        Otherwise it is a stream; an HTML page streamed so goes without the widget, and the terminal says why once.
+        """
+        if self.start is None:
+            return False
+        headers = _headers(self.start)
+        length = headers.get("content-length", "")
+        if length.isdigit() and int(length) <= MAX_HELD:
+            return True
+        if self.config.widget and "text/html" in headers.get("content-type", ""):
+            reason = "has no Content-Length" if not length.isdigit() else f"is over {MAX_HELD >> 20} MB"
+            terminal.notice(f"{self.trace.name}: an HTML page streamed (it {reason}), so without the widget")
+        return False
 
     def _htmx(self, body: bytes | None) -> None:
         if self.start is not None:

@@ -1,5 +1,6 @@
 import os
 from collections.abc import Generator
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -104,3 +105,14 @@ def test_integrations_can_be_turned_off(project: Path, monkeypatch: pytest.Monke
         registry.get("drf").enabled,
         registry.get("django_tasks").enabled,
     ) == (False, False, False)
+
+
+def test_settings_are_the_config_fields() -> None:
+    # install(app, **settings) and configure() take these: a field added to Config is a keyword argument too.
+    plain = {f.name: f.type for f in fields(conf.Config) if f.type in {bool, int, str}}
+    lists = {f.name for f in fields(conf.Config)} - plain.keys()
+
+    assert {name: kind for name, kind in conf.Settings.__annotations__.items() if name not in lists} == plain
+    assert {name: conf.Settings.__annotations__[name] for name in lists} == dict.fromkeys(
+        lists, list[str] | tuple[str, ...]
+    )

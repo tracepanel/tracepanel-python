@@ -11,7 +11,7 @@ Django's TRACEPANEL dict); TRACEPANEL_* variables override them.
 
 import http
 from collections.abc import Callable, Iterable, Iterator
-from typing import Any
+from typing import Any, Unpack
 from urllib.parse import parse_qsl
 
 from tracepanel import _setup
@@ -19,6 +19,7 @@ from tracepanel.console import app as console
 from tracepanel.console import widget
 from tracepanel.console.messages import MAX_BODY, is_local
 from tracepanel.core import conf, errors, w3c
+from tracepanel.core.conf import Settings
 from tracepanel.core.context import current_trace, start_trace
 from tracepanel.core.model import Trace
 from tracepanel.integrations import htmx
@@ -167,7 +168,7 @@ def _decorate(environ: dict[str, Any], response: _Response, trace: Trace, config
     return body if decorated is None else decorated
 
 
-def install(app: WSGIApp, **settings: object) -> WSGIApp:
+def install(app: WSGIApp, **settings: Unpack[Settings]) -> WSGIApp:
     """Trace the app's requests; returns the app to serve (the app itself when tracepanel is off)."""
     values = {"enabled": bool(getattr(app, "debug", False)), **settings}
     if not _setup.enable(lambda: values):

@@ -4,13 +4,14 @@
 `FastAPI(debug=True)` or TRACEPANEL_ENABLED=1. See tracepanel.asgi for what is traced.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Unpack
 
 from tracepanel import asgi
+from tracepanel.core.conf import Settings
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 
-def install(app: "FastAPI", **settings: object) -> None:
+def install(app: "FastAPI", **settings: Unpack[Settings]) -> None:
     asgi.install(app, **settings)
