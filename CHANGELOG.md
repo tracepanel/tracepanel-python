@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A query whose stack holds no project frame, such as one a response schema's
+  resolver runs under Django Ninja or FastAPI, is no longer placed in the
+  environment's scripts (`.venv/bin/uvicorn:10 in <module>`): they count as
+  installed code, as site-packages does.
+
 ## 0.3.0 (2026-10-15)
 
 Needs `tracepanel-agent` 0.3.0 (installed with it): its console finds logs by
