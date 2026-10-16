@@ -1,4 +1,4 @@
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator
 from typing import Any
 
 import pytest
@@ -7,13 +7,16 @@ from dirty_equals import IsPartialDict
 starlette = pytest.importorskip("starlette")
 
 from starlette.applications import Starlette  # noqa: E402 (optional test group)
+from starlette.middleware import Middleware  # noqa: E402
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint  # noqa: E402
 from starlette.requests import Request  # noqa: E402
-from starlette.responses import HTMLResponse, JSONResponse  # noqa: E402
+from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse  # noqa: E402
 from starlette.routing import Mount, Route  # noqa: E402
 from starlette.testclient import TestClient  # noqa: E402
 
 import tracepanel.asgi  # noqa: E402
 from tests.agentstore import AgentStore, issues  # noqa: E402
+from tracepanel._compat import override  # noqa: E402
 from tracepanel.core import conf  # noqa: E402
 from tracepanel.core.model import Trace  # noqa: E402
 
@@ -88,6 +91,54 @@ def test_error_and_widget(client: TestClient, traces: list[Trace], store: AgentS
 
     assert (error.status_code, [e.type for e in traces[0].errors]) == (500, ["builtins.ValueError"])
     assert f'data-tracepanel-id="{traces[1].id}"' in html
+
+
+class Logging(BaseHTTPMiddleware):
+    @override
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        return await call_next(request)
+
+
+def test_widget_through_a_base_http_middleware(traces: list[Trace], restore: None, store: AgentStore) -> None:
+    # BaseHTTPMiddleware sends every response in several messages: one with a Content-Length is still whole.
+    app = Starlette(debug=True, routes=[Route("/page", page)], middleware=[Middleware(Logging)])
+    tracepanel.asgi.install(app)
+
+    response = TestClient(app).get("/page")
+    (trace,) = traces
+
+    assert f'data-tracepanel-id="{trace.id}"' in response.text
+    assert response.headers["Content-Length"] == str(len(response.content))
+    assert response.headers["Tracepanel-Url"] == f"http://testserver/__tracepanel__/#/t/{trace.id}"
+    assert "total;dur=" in response.headers["Server-Timing"]
+
+
+async def chunks() -> AsyncIterator[str]:
+    yield "<html><head></head><body>"
+    yield "streamed</body></html>"
+
+
+async def streamed(request: Request) -> StreamingResponse:
+    del request
+    return StreamingResponse(chunks(), media_type="text/html")
+
+
+def test_a_streamed_page_goes_out_as_it_is_made(
+    traces: list[Trace], restore: None, store: AgentStore, capsys: pytest.CaptureFixture[str]
+) -> None:
+    app = Starlette(debug=True, routes=[Route("/streamed", streamed)])
+    tracepanel.asgi.install(app)
+
+    response = TestClient(app).get("/streamed")
+    (trace,) = traces
+
+    assert response.text == "<html><head></head><body>streamed</body></html>"
+    assert (response.headers["Tracepanel-Id"], "Tracepanel-Url" in response.headers) == (trace.id, False)
+
+    # Said in the terminal: a page without the widget looks like tracepanel being off.
+    assert capsys.readouterr().err == (
+        "tracepanel ▸ GET /streamed: an HTML page streamed (it has no Content-Length), so without the widget\n"
+    )
 
 
 def test_off_outside_debug_mode(traces: list[Trace], restore: None) -> None:

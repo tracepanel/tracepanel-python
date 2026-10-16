@@ -13,10 +13,11 @@ arguments; TRACEPANEL_* variables override them. There is no user switching: Fla
 """
 
 from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Unpack, cast
 
 from tracepanel import _setup
 from tracepanel.core import errors
+from tracepanel.core.conf import Settings
 from tracepanel.core.context import current_trace, start_span
 from tracepanel.core.patching import patch, patched
 from tracepanel.wsgi import TRACE_KEY, URL_KEY, TracepanelMiddleware
@@ -117,7 +118,7 @@ def _on_exception(sender: object, exception: BaseException, **extra: object) -> 
         trace.status = "error"
 
 
-def install(app: "Flask", **settings: object) -> None:
+def install(app: "Flask", **settings: Unpack[Settings]) -> None:
     from flask import got_request_exception  # noqa: PLC0415
 
     if getattr(app, MARKER, False):

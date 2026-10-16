@@ -69,5 +69,19 @@ def announce(framework: str, *, debug: str = "debug mode", out: TextIO | None = 
     stream.flush()
 
 
+_noticed: set[str] = set()
+
+
+def notice(text: str, out: TextIO | None = None) -> None:
+    """A line about something tracepanel couldn't do (the widget left out of a page); each line once per process."""
+    config = conf.get_config()
+    if not config.terminal_summary or text in _noticed:
+        return
+    _noticed.add(text)
+    stream = out or sys.stderr
+    stream.write(f"tracepanel ▸ {text}\n")
+    stream.flush()
+
+
 def install() -> None:
     transport.on_complete(summarize)
