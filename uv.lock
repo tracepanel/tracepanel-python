@@ -3299,7 +3299,7 @@ wheels = [
 
 [[package]]
 name = "tracepanel"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "tracepanel-agent", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'armv6l' and sys_platform == 'linux') or (platform_machine == 'armv7l' and sys_platform == 'linux') or (platform_machine == 'i686' and sys_platform == 'linux') or (platform_machine == 'ppc64le' and sys_platform == 'linux') or (platform_machine == 'riscv64' and sys_platform == 'linux') or (platform_machine == 's390x' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (platform_machine == 'ARM64' and sys_platform == 'win32') or (platform_machine == 'x86' and sys_platform == 'win32') or sys_platform == 'darwin'" },
@@ -3535,7 +3535,7 @@ strawberry = [{ name = "strawberry-graphql", specifier = ">=0.332.0" }]
 
 [[package]]
 name = "tracepanel-agent"
-version = "0.3.0"
+version = "0.3.1"
 source = { directory = "../tracepanel" }
 
 [[package]]
