@@ -6,7 +6,7 @@
 
 - `install(app, **settings)` (FastAPI, Starlette and any ASGI app, Flask,
   Falcon, WSGI) and `conf.configure()` take typed keyword arguments
-  (`Settings`): a type checker and the editor know every setting's name and
+  (`Settings`). A type checker and the editor know every setting's name and
   type.
 
 ### Fixed
@@ -14,7 +14,7 @@
 - The widget is injected again behind a Starlette `BaseHTTPMiddleware`. It
   sends every response in several messages, so each looked streamed and went
   out without the widget, `Tracepanel-Url` and `Server-Timing`. A response
-  with a `Content-Length` (up to 8 MB) is now held whole; an HTML page that
+  with a `Content-Length` (up to 8 MB) is now held whole. An HTML page that
   is streamed says so once in the terminal.
 
 - A query whose stack holds no project frame, such as one a response schema's
