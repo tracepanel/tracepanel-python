@@ -14,7 +14,14 @@ from types import CodeType, FrameType, TracebackType
 from tracepanel.core import conf
 from tracepanel.core.model import Frame
 
-_LIBRARY_PATHS = tuple({str(Path(sysconfig.get_paths()[key]).resolve()) for key in ("stdlib", "purelib")})
+# The standard library, installed packages, and the environment's scripts (.venv/bin/uvicorn, the entry point a
+# server's stack starts in): none of them is the project's code, even inside the project's directory.
+_LIBRARY_PATHS = tuple(
+    {
+        str(Path(sysconfig.get_paths()[key]).resolve())
+        for key in ("stdlib", "platstdlib", "purelib", "platlib", "scripts")
+    }
+)
 _SKIP_MODULES = ("tracepanel", "django", "asgiref")
 
 CONTEXT_LINES = 5
