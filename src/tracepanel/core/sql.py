@@ -206,14 +206,16 @@ def record(  # noqa: PLR0913 (the statement, where it ran, when, how it went)
     duration: int,
     status: str = "ok",
     extra: Attrs | None = None,
+    parent: Span | None = None,
 ) -> Span | None:
     """Record a statement that already ran as an `sql` span of the current trace (no-op outside a trace).
 
     `extra`: more attributes, such as `code.blocks_event_loop` for a statement run synchronously on an event loop.
+    `parent`: its span when not the current one (the transaction open on its connection).
     """
     if current_trace() is None:
         return None
-    parent = current_span()
+    parent = parent or current_span()
     template = parent.attrs.get("template.name") if parent is not None and parent.kind == "template" else None
     name, statement, fingerprinted = _parsed(sql)
     return record_span(
@@ -233,4 +235,5 @@ def record(  # noqa: PLR0913 (the statement, where it ran, when, how it went)
             **(extra or {}),
         },
         status=status,
+        parent=parent,
     )

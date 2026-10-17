@@ -15,6 +15,7 @@ them.
 from typing import Any, Unpack
 
 from tracepanel import _setup
+from tracepanel.asgi import threads
 from tracepanel.asgi.middleware import TracepanelMiddleware
 from tracepanel.core.conf import Settings
 
@@ -31,6 +32,7 @@ def install(app: Any, **settings: Unpack[Settings]) -> Any:  # noqa: ANN401 (any
     values = {"enabled": bool(getattr(app, "debug", False)), **settings}
     if not _setup.enable(lambda: values):
         return app
+    threads.install()
     router = getattr(app, "router", None)
     if hasattr(app, "add_middleware") and router is not None:
         # Starlette and FastAPI: the middleware goes on the app itself, and sees its routes.

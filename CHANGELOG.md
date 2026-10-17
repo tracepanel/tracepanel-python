@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- FastAPI: a SQLAlchemy transaction that begins in a sync dependency now
+  holds what the endpoint does until it commits. FastAPI runs each sync
+  dependency and endpoint in a worker thread, in a copy of the request's
+  context. The transaction's span stayed current only in the dependency's
+  copy, so the endpoint's queries and HTTP calls were drawn beside it. Calls
+  made before the commit were not reported as made inside a transaction.
+
 ## 0.3.2 (2026-10-17)
 
 ### Changed
