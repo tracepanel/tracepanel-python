@@ -10,6 +10,9 @@
   context. The transaction's span stayed current only in the dependency's
   copy, so the endpoint's queries and HTTP calls were drawn beside it. Calls
   made before the commit were not reported as made inside a transaction.
+- FastAPI: the routes of a router added with `include_router()` run in a
+  `view` span, as routes declared on the app do. FastAPI 0.142 includes
+  routers lazily, and their routes had none.
 
 ## 0.3.2 (2026-10-17)
 

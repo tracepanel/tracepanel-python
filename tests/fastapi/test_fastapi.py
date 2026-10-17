@@ -195,6 +195,16 @@ def test_routes_of_included_routers_keep_their_prefix(client: TestClient, traces
     assert [trace.attrs["http.route"] for trace in traces] == ["/teams/{team_id}/players", "/graphql"]
 
 
+def test_routes_of_included_routers_run_in_a_view(client: TestClient, traces: list[Trace]) -> None:
+    client.get("/teams/7/players")
+    (trace,) = traces
+
+    assert [(span.kind, span.name) for span in trace.spans] == [
+        ("http", "GET /teams/{team_id}/players"),
+        ("view", IsStr(regex=r".*make_app\.<locals>\.team_players")),
+    ]
+
+
 class Pong(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         self.send_response(200)
