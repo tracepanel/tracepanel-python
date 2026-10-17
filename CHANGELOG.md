@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.3.2 (2026-10-17)
+
+### Changed
+
+- Requires any `tracepanel-agent` 0.3 from 0.3.1 on, rather than exactly its
+  own version. A minor version is still released together with the agent's.
+  A patch of either now comes out on its own.
 
 ### Fixed
 

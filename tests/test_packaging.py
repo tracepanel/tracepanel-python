@@ -1,6 +1,7 @@
 import tomllib
 from pathlib import Path
 
+from dirty_equals import IsStr
 from packaging.requirements import Requirement
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,8 +17,14 @@ def test_django_is_an_extra_not_a_requirement() -> None:
     tracepanel = project(ROOT / "pyproject.toml")
     requirements = [Requirement(line) for line in tracepanel["dependencies"]]  # type: ignore[union-attr]
 
-    # Only the agent, at tracepanel's own version: they are released together.
-    assert [(r.name, str(r.specifier)) for r in requirements] == [("tracepanel-agent", f"=={tracepanel['version']}")]
+    (agent,) = requirements
+    major, minor = (int(part) for part in str(tracepanel["version"]).split(".")[:2])
+
+    # Only the agent, any patch of tracepanel's minor version: a breaking change is a new minor of both.
+    assert (agent.name, str(agent.specifier)) == (
+        "tracepanel-agent",
+        IsStr(regex=rf"<{major}\.{minor + 1},>={major}\.{minor}\.\d+"),
+    )
     assert tracepanel["optional-dependencies"]["django"] == ["django>=5.2"]  # type: ignore[index]
 
 
