@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A SQLAlchemy connection in `AUTOCOMMIT`, set on the engine or the
+  connection, no longer shows as a transaction. SQLAlchemy begins one there
+  too, but nothing is held open. Statements on it, and calls between them,
+  were drawn inside a transaction that never existed, and could be reported
+  as a long transaction or as work done before commit.
+
 ## 0.3.1 (2026-10-16)
 
 Needs `tracepanel-agent` 0.3.1 (installed with it).

@@ -99,6 +99,21 @@ def test_session_closed_without_commit_ends_its_transaction(traces: list[Trace])
     assert trace.spans[0].parent_id is None
 
 
+def test_autocommit_holds_no_transaction(traces: list[Trace]) -> None:
+    engine = memory()
+
+    def work() -> None:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+            connection.execute(text("SELECT name FROM item"))
+        with create_engine("sqlite://", isolation_level="AUTOCOMMIT").connect() as connection:
+            connection.execute(text("SELECT 1"))
+
+    trace = traced(work)
+
+    # Each statement commits on its own: a call between them runs outside any transaction.
+    assert [span.kind for span in trace.spans] == ["http", "sql", "sql"]
+
+
 def test_long_transaction_gets_a_sqlalchemy_hint(traces: list[Trace]) -> None:
     engine = memory()
 

@@ -203,8 +203,17 @@ def _close_spans(info: dict[str, Any], outcome: str, *, savepoint_only: bool = F
             return
 
 
+def _autocommit(conn: Any) -> bool:  # noqa: ANN401
+    """AUTOCOMMIT, on the engine or the connection: SQLAlchemy still begins, but no transaction is held open."""
+    check = getattr(conn, "_is_autocommit_isolation", None)
+    if callable(check):
+        return bool(check())
+    return conn.get_execution_options().get("isolation_level") == "AUTOCOMMIT"
+
+
 def _begin(conn: Any) -> None:  # noqa: ANN401
-    _open_span(conn, savepoint=False)
+    if not _autocommit(conn):
+        _open_span(conn, savepoint=False)
 
 
 def _commit(conn: Any) -> None:  # noqa: ANN401
