@@ -64,7 +64,8 @@ jobs:
           python-version: "3.13"
           working-directory: tracepanel-python
 
-      - name: The tag is the version, and the agent's
+      # A minor is released with the agent's, a patch on its own: the agent's pin covers this version's minor.
+      - name: The tag is the version, and the agent's pin covers its minor
         run: |
           uv run --no-project --with packaging python - <<'EOF'
           import os, sys, tomllib
@@ -73,29 +74,45 @@ jobs:
           project = tomllib.load(open("pyproject.toml", "rb"))["project"]
           agent = next(Requirement(dep) for dep in project["dependencies"] if dep.startswith("tracepanel-agent"))
           tag, version = Version(os.environ["GITHUB_REF_NAME"]), Version(project["version"])
-          if not tag == version or str(agent.specifier) != f"=={version}":
-              sys.exit(f"::error::tag {tag}, version {version}, agent {agent.specifier}: they must agree")
+          major, minor = version.release[:2]
+          lower = next((Version(s.version) for s in agent.specifier if s.operator == ">="), None)
+          covers = (
+              lower is not None
+              and lower.release[:2] == (major, minor)
+              and {s.operator + s.version for s in agent.specifier} == {f">={lower}", f"<{major}.{minor + 1}"}
+          )
+          if tag != version or not covers:
+              sys.exit(f"::error::tag {tag}, version {version}, agent {agent.specifier}: the tag must be the version, "
+                       f"the agent >={major}.{minor}.N,<{major}.{minor + 1}")
           EOF
-
-      # The published agent of this version, and the schemas of its release: what a user installs.
-      - uses: actions/checkout@v7
-        with:
-          repository: tracepanel/tracepanel
-          ref: ${{ github.ref_name }}
-          path: tracepanel
-          sparse-checkout: schema
 
       # mysqlclient (the drivers group) builds against the MySQL client library.
       - run: sudo apt-get install -y --no-install-recommends pkg-config default-libmysqlclient-dev
 
-      - name: Lint and test against the published agent
-        # poe runs each task through `uv run`, which would sync again with the sources and build the agent from
-        # ../tracepanel, where only schema/ is checked out. The environment synced here, with the published agent, is
-        # the one to check.
+      # What a user installs: the newest published agent the pin allows.
+      - name: The published agent
+        id: agent
         env:
           UV_NO_SYNC: "1"
         run: |
           uv sync --no-sources $GROUPS
+          echo "version=$(uv run --no-sync python -c "from importlib.metadata import version; print(version('tracepanel-agent'))")" >> "$GITHUB_OUTPUT"
+
+      # The schemas of that agent's release.
+      - uses: actions/checkout@v7
+        with:
+          repository: tracepanel/tracepanel
+          ref: ${{ steps.agent.outputs.version }}
+          path: tracepanel
+          sparse-checkout: schema
+
+      - name: Lint and test against the published agent
+        # poe runs each task through `uv run`, which would sync again with the sources and build the agent from
+        # ../tracepanel, where only schema/ is checked out. The environment synced above, with the published agent, is
+        # the one to check.
+        env:
+          UV_NO_SYNC: "1"
+        run: |
           uv run --no-sync poe lint
           TRACEPANEL_AGENT_BIN=$PWD/.venv/bin/tracepanel-agent uv run --no-sync pytest
 
