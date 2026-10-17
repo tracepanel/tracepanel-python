@@ -1,4 +1,7 @@
-from collections.abc import Generator
+import threading
+from collections.abc import Generator, Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Annotated, Any
 
 import pytest
 from dirty_equals import IsPartialDict, IsStr
@@ -7,16 +10,18 @@ fastapi = pytest.importorskip("fastapi")
 sqlalchemy = pytest.importorskip("sqlalchemy")
 strawberry = pytest.importorskip("strawberry")
 
-from fastapi import APIRouter, FastAPI  # noqa: E402 (optional test group)
+import httpx  # noqa: E402 (optional test group)
+from fastapi import APIRouter, Depends, FastAPI  # noqa: E402
 from fastapi.responses import HTMLResponse  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import ForeignKey, create_engine, select  # noqa: E402
+from sqlalchemy import ForeignKey, create_engine, select, text  # noqa: E402
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 from strawberry.fastapi import GraphQLRouter  # noqa: E402
 
 import tracepanel.fastapi  # noqa: E402
 from tests.agentstore import AgentStore, issues  # noqa: E402
+from tracepanel._compat import override  # noqa: E402
 from tracepanel.core import conf  # noqa: E402
 from tracepanel.core.model import Trace  # noqa: E402
 
@@ -188,3 +193,75 @@ def test_routes_of_included_routers_keep_their_prefix(client: TestClient, traces
     client.post("/graphql", json={"query": "{ roster }"})
 
     assert [trace.attrs["http.route"] for trace in traces] == ["/teams/{team_id}/players", "/graphql"]
+
+
+def test_routes_of_included_routers_run_in_a_view(client: TestClient, traces: list[Trace]) -> None:
+    client.get("/teams/7/players")
+    (trace,) = traces
+
+    assert [(span.kind, span.name) for span in trace.spans] == [
+        ("http", "GET /teams/{team_id}/players"),
+        ("view", IsStr(regex=r".*make_app\.<locals>\.team_players")),
+    ]
+
+
+class Pong(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Length", "4")
+        self.end_headers()
+        self.wfile.write(b"pong")
+
+    @override
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002, ANN401 (http.server's signature)
+        pass
+
+
+@pytest.fixture(scope="module")
+def pong() -> Iterator[str]:
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Pong)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}/ping"
+    httpd.shutdown()
+    httpd.server_close()
+
+
+def test_a_transaction_opened_in_a_dependency_holds_the_endpoint_calls(traces: list[Trace], pong: str) -> None:
+    app = FastAPI(debug=True)
+
+    # Sync dependencies and endpoints: FastAPI runs each one in a worker thread, in a copy of the request's context.
+    def get_db() -> Iterator[Session]:
+        with Session(engine) as db:
+            yield db
+
+    def current_user(db: Annotated[Session, Depends(get_db)]) -> int:
+        # The session's transaction begins here.
+        return int(db.execute(text("SELECT 1")).scalar_one())
+
+    @app.post("/pay")
+    def pay(db: Annotated[Session, Depends(get_db)], user: Annotated[int, Depends(current_user)]) -> int:
+        httpx.get(pong)
+        db.execute(text("SELECT 2"))
+        db.commit()
+        return user
+
+    previous = conf._framework  # noqa: SLF001
+    tracepanel.fastapi.install(app)
+    with TestClient(app) as test_client:
+        test_client.post("/pay")
+    # The Django tests go on with their own settings.
+    conf.use_source(previous)
+    (trace,) = traces
+    by_id = {span.id: span for span in trace.spans}
+
+    # Everything the request did while the transaction was open is inside it, the call to another service included.
+    assert [(span.kind, span.name, by_id[span.parent_id].kind) for span in trace.spans if span.parent_id] == [
+        ("view", IsStr(regex=r".*<locals>\.pay"), "http"),
+        ("transaction", IsStr(regex=r"transaction sqlite(#\d+)?"), "view"),
+        ("sql", "SELECT", "transaction"),
+        ("http.client", "GET 127.0.0.1/ping", "transaction"),
+        ("sql", "SELECT", "transaction"),
+    ]
+
+    assert [issue.kind for issue in issues(trace)] == ["in-transaction"]

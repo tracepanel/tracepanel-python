@@ -95,6 +95,19 @@ def test_http_errors_are_not_errors(client: falcon.testing.TestClient, traces: l
     assert (result.status_code, trace.name, trace.status, trace.errors) == (404, "GET /nowhere", "ok", [])
 
 
+def test_errors_the_app_handles_are_not_errors(app: App, traces: list[Trace]) -> None:
+    def unprocessable(req: falcon.Request, resp: falcon.Response, ex: Exception, params: object) -> None:
+        del req, ex, params
+        resp.status = falcon.HTTP_422
+
+    app.add_error_handler(ValueError, unprocessable)
+    result = falcon.testing.TestClient(app).simulate_delete("/posts/7")
+    (trace,) = traces
+
+    # The app's own handler answered: Falcon's default one (the 500) didn't run.
+    assert (result.status_code, trace.status, trace.errors) == (422, "ok", [])
+
+
 def test_widget_in_html_pages(client: falcon.testing.TestClient, traces: list[Trace], store: AgentStore) -> None:
     body = client.simulate_get("/page").text
 

@@ -5,6 +5,7 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Span, Trace
@@ -98,6 +99,48 @@ def start_span(kind: str, name: str, attrs: Attrs | None = None) -> Generator[Sp
         _span.reset(token)
 
 
+def set_current_span(span: Span | None) -> None:
+    """Make the span current in this context: one a worker thread left current, as a call made here would have."""
+    _span.set(span)
+
+
+@dataclass(slots=True, eq=False)
+class OpenSpan:
+    """A span one event begins and another ends (SQLAlchemy's BEGIN and COMMIT), perhaps in another context.
+
+    It is current from its start, as a `with start_span()` block's span is. Ending it makes the span it began under
+    current again, in whatever context it ends: a worker thread's copy of the request's context has no token to reset.
+    """
+
+    span: Span
+    parent: Span | None
+    started: int
+
+    def end(self) -> None:
+        self.span.duration = (time.perf_counter_ns() - self.started) // 1000
+        if _span.get() is self.span:
+            _span.set(self.parent)
+
+
+def open_span(kind: str, name: str, attrs: Attrs | None = None) -> OpenSpan | None:
+    """Begin a span, current until its end(): a child of the current one; None outside a trace."""
+    trace = _trace.get()
+    if trace is None or len(trace.spans) >= MAX_SPANS:
+        return None
+    parent = _span.get()
+    span = Span(
+        id=new_id(),
+        parent_id=parent.id if parent else None,
+        kind=kind,
+        name=name,
+        start=now_us(),
+        attrs=dict(attrs or {}),
+    )
+    trace.spans.append(span)
+    _span.set(span)
+    return OpenSpan(span, parent, time.perf_counter_ns())
+
+
 def record_span(  # noqa: PLR0913
     kind: str,
     name: str,
@@ -107,8 +150,12 @@ def record_span(  # noqa: PLR0913
     attrs: Attrs,
     status: str = "ok",
     span_id: str | None = None,
+    parent: Span | None = None,
 ) -> Span | None:
-    """Append a finished leaf span to the current trace; cheaper than start_span for hot paths like SQL."""
+    """Append a finished leaf span to the current trace; cheaper than start_span for hot paths like SQL.
+
+    Its parent is the current span, unless `parent` says (a statement's transaction, open on its connection).
+    """
     trace = _trace.get()
     if trace is None:
         return None
@@ -116,7 +163,7 @@ def record_span(  # noqa: PLR0913
         dropped = trace.attrs.get("tracepanel.dropped_spans")
         trace.attrs["tracepanel.dropped_spans"] = (dropped if isinstance(dropped, int) else 0) + 1
         return None
-    parent = _span.get()
+    parent = parent or _span.get()
     span = Span(
         id=span_id or new_id(),
         parent_id=parent.id if parent else None,

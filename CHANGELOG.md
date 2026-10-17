@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- FastAPI: a SQLAlchemy transaction that begins in a sync dependency now
+  holds what the endpoint does until it commits. FastAPI runs each sync
+  dependency and endpoint in a worker thread, in a copy of the request's
+  context. The transaction's span stayed current only in the dependency's
+  copy, so the endpoint's queries and HTTP calls were drawn beside it. Calls
+  made before the commit were not reported as made inside a transaction.
+- FastAPI: the routes of a router added with `include_router()` run in a
+  `view` span, as routes declared on the app do. FastAPI 0.142 includes
+  routers lazily, and their routes had none.
+- Falcon: an exception the app answers with an error handler of its own
+  (`app.add_error_handler()`) is no longer recorded as an error. Only one
+  that Falcon's default handler turns into a 500 is.
+- The console reaches the local agent without the system's or the
+  environment's proxy settings. On macOS, looking the system's proxy up
+  crashed a forked gunicorn worker.
+
 ## 0.3.2 (2026-10-17)
 
 ### Changed

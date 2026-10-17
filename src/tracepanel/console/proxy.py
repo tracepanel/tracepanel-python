@@ -24,6 +24,8 @@ TRACE_POLL_S = 0.05
 COLLECTIONS = frozenset({"summary", "overview"})
 # The agent's headers the browser needs: versioned files and fonts are cached for good; the page, widget.min.js never.
 PASSED = ("Cache-Control",)
+# The agent is on this machine: no proxy, and no lookup of the system's (on macOS it crashes a forked worker).
+OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def forward(request: Request, path: str) -> Response | None:
@@ -71,7 +73,7 @@ def _fetch(url: str, method: str, body: bytes = b"", content_type: str = "") -> 
     headers = {"Content-Type": content_type} if content_type else {}
     sent = urllib.request.Request(url, data=body or None, method=method, headers=headers)  # noqa: S310 (the agent)
     try:
-        with urllib.request.urlopen(sent, timeout=TIMEOUT_S) as answer:  # noqa: S310 (the agent's local address)
+        with OPENER.open(sent, timeout=TIMEOUT_S) as answer:
             return _response(answer.status, answer.headers, answer.read())
     except urllib.error.HTTPError as error:
         return _response(error.code, error.headers, error.read())

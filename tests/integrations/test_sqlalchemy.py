@@ -1,3 +1,4 @@
+import contextvars
 import time
 
 import pytest
@@ -82,6 +83,28 @@ def test_transaction_holds_its_statements(traces: list[Trace]) -> None:
     )
     assert (savepoint.parent_id, savepoint.attrs["db.transaction.outcome"]) == (transaction.id, "rollback")
     assert [span.parent_id for span in updates] == [transaction.id, savepoint.id]
+
+
+def test_statements_join_the_transaction_open_on_their_connection(traces: list[Trace]) -> None:
+    engine = memory()
+
+    def work() -> None:
+        with Session(engine) as session:
+            # The transaction begins in a copy of this context (a worker thread's): its span is current only there.
+            contextvars.copy_context().run(session.execute, text("SELECT 1"))
+            session.execute(text("SELECT name FROM item"))
+            session.commit()
+
+    trace = traced(work)
+    root, transaction, *_ = trace.spans
+
+    assert [(span.kind, span.parent_id) for span in trace.spans] == [
+        ("http", None),
+        ("transaction", root.id),
+        ("sql", transaction.id),
+        ("sql", transaction.id),
+    ]
+    assert transaction.attrs["db.transaction.outcome"] == "commit"
 
 
 def test_session_closed_without_commit_ends_its_transaction(traces: list[Trace]) -> None:

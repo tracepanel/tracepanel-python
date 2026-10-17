@@ -34,3 +34,18 @@ def test_the_ui_comes_from_the_agent_with_its_caching(client: Client, store: Age
 @pytest.mark.parametrize("path", ["/__tracepanel__/../settings.py", "/__tracepanel__/assets/../../widget.min.js"])
 def test_no_path_traversal(client: Client, store: AgentStore, path: str) -> None:
     assert client.get(path).status_code == 404
+
+
+def test_the_agent_is_called_past_the_proxy_settings(
+    client: Client, store: AgentStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A proxy for every call, and urllib's shared opener built afresh: it would read them.
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.setattr("urllib.request._opener", None)
+
+    # The agent is on this machine: the console reaches it without the proxy (on macOS, looking the system's proxy up
+    # crashes a forked worker).
+    assert client.get("/__tracepanel__/widget.min.js").status_code == 200

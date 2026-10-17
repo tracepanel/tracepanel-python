@@ -9,7 +9,6 @@ logging_name="replica")`), else the database's name, made unique with the host (
 already has it. EXPLAIN runs on the engine of that alias.
 """
 
-import contextlib
 import threading
 import time
 import weakref
@@ -19,9 +18,9 @@ from typing import Any
 
 from tracepanel.core import explain as plans
 from tracepanel.core import sql
-from tracepanel.core.context import current_trace, now_us, start_span
+from tracepanel.core.context import OpenSpan, current_span, current_trace, now_us, open_span
 from tracepanel.core.frames import origin
-from tracepanel.core.model import Attrs, Scalar
+from tracepanel.core.model import Attrs, Scalar, Span, Trace
 from tracepanel.core.patching import patch
 from tracepanel.core.services import database
 
@@ -114,6 +113,7 @@ def _finish(conn: Any, statement: str, parameters: Any, context: Any, *, many: b
         start=start,
         duration=(time.perf_counter_ns() - counter) // 1000,
         status=status,
+        parent=_transaction(conn),
     )
     if span is not None and status == "ok":
         # The result made from this context counts what is fetched from it.
@@ -176,29 +176,47 @@ def _error(exception_context: Any) -> None:  # noqa: ANN401 (sqlalchemy.engine.E
     )
 
 
-# Transactions and savepoints open on a connection, innermost last (kept in its info: it outlives a checkout).
+# Transactions and savepoints open on a connection, innermost last (kept in its info: it outlives a checkout), each
+# with its trace (None: the trace had no room left for it).
 _OPEN = "tracepanel_transactions"
 
 
+def _transaction(conn: Any) -> Span | None:  # noqa: ANN401 (sqlalchemy.engine.Connection)
+    """The transaction a statement on the connection runs in, when it isn't already the current span or above it.
+
+    A transaction can begin where its span doesn't stay current: FastAPI runs a sync dependency in a worker thread,
+    in a copy of the request's context. A statement is in the connection's transaction all the same. A current span
+    that began before the transaction can't be inside it; a later one may be (a template the statement runs in).
+    """
+    info = getattr(conn, "info", None)
+    stack: list[tuple[OpenSpan | None, Trace]] = (info or {}).get(_OPEN) or []
+    if not stack:
+        return None
+    opened, trace = stack[-1]
+    current = current_span()
+    if opened is None or trace is not current_trace() or current is None or current.start >= opened.span.start:
+        return None
+    return opened.span
+
+
 def _open_span(conn: Any, *, savepoint: bool) -> None:  # noqa: ANN401 (sqlalchemy.engine.Connection)
-    if current_trace() is None:
+    trace = current_trace()
+    if trace is None:
         return
     attrs: Attrs = {**_database(conn), "db.transaction.savepoint": savepoint, "code.origin": origin()}
     name = f"{'savepoint' if savepoint else 'transaction'} {engine_alias(conn.engine)}"
-    context = start_span("transaction", name, attrs)
-    conn.info.setdefault(_OPEN, []).append((context, context.__enter__()))
+    conn.info.setdefault(_OPEN, []).append((open_span("transaction", name, attrs), trace))
 
 
 def _close_spans(info: dict[str, Any], outcome: str, *, savepoint_only: bool = False) -> None:
     """End the innermost savepoint (savepoint_only), or everything still open on the connection."""
-    stack: list[tuple[Any, Any]] = info.get(_OPEN) or []
+    stack: list[tuple[OpenSpan | None, Trace]] = info.get(_OPEN) or []
     while stack:
-        context, span = stack.pop()
-        if span is not None:
-            span.attrs["db.transaction.outcome"] = outcome
-        # Ended in another context (a connection handed between tasks): the span stack can't be restored there.
-        with contextlib.suppress(ValueError):
-            context.__exit__(None, None, None)
+        opened, _ = stack.pop()
+        if opened is not None:
+            opened.span.attrs["db.transaction.outcome"] = outcome
+            # In whatever context it ends (another worker thread than the one it began in): its parent is current.
+            opened.end()
         if savepoint_only:
             return
 

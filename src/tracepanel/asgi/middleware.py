@@ -107,6 +107,12 @@ def wrap_routes(routes: list[Any]) -> None:
         if isinstance(nested, list) and nested is not routes:
             # Mount and Host: their own routes (a mounted Starlette app's included).
             wrap_routes(nested)
+        contexts = getattr(route, "effective_route_contexts", None)
+        if callable(contexts):
+            # A router FastAPI 0.14x includes lazily: each of its routes has a context of its own (the prefix and
+            # dependencies of the include), whose app (or Starlette route) runs instead of the router's route.
+            wrap_routes([context.starlette_route or context for context in contexts()])
+            continue
         endpoint = getattr(route, "endpoint", None)
         route_app = getattr(route, "app", None)
         if endpoint is None or route_app is None or getattr(route_app, MARKER, False):
