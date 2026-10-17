@@ -12,15 +12,46 @@ concurrency:
 permissions:
   contents: read
 
-# tracepanel requires tracepanel-agent, built from the tracepanel repository checked out next to this one (uv.lock
-# expects ../tracepanel).
+# tracepanel requires tracepanel-agent, from the tracepanel repository checked out next to this one (uv.lock expects
+# ../tracepanel). The agent job builds its wheel once per tracepanel commit, cached by that commit; every other job
+# installs it rather than building the Rust binary itself (two minutes apiece).
 env:
   GROUPS: >-
     --group celery --group channels --group strawberry --group django-tasks --group fastapi --group dramatiq
     --group rq --group ninja --group drf --group flask --group falcon --group otel --group clients
 
 jobs:
+  agent:
+    name: tracepanel-agent wheel
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: tracepanel/tracepanel
+          path: tracepanel
+      # The commit every job checks out: tracepanel's main may move during the run.
+      - id: commit
+        run: echo "sha=$(git -C tracepanel rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - id: cache
+        uses: actions/cache@v6.1.0
+        with:
+          path: wheel
+          key: tracepanel-agent-wheel-${{ steps.commit.outputs.sha }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: astral-sh/setup-uv@v10.3.0
+      # A binary, no Python code: one py3-none wheel serves every Python of the matrix.
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: uv build --wheel tracepanel --out-dir wheel
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tracepanel-agent
+          path: wheel/*.whl
+          retention-days: 1
+
   lint:
+    needs: agent
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -32,16 +63,26 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: tracepanel/tracepanel
+          ref: ${{ needs.agent.outputs.sha }}
           path: tracepanel
+      - uses: actions/download-artifact@v8
+        with:
+          name: tracepanel-agent
+          path: agent
       - uses: astral-sh/setup-uv@v10.3.0
         with:
           working-directory: tracepanel-python
       # mysqlclient builds against the MySQL client library.
       - run: sudo apt-get install -y --no-install-recommends pkg-config default-libmysqlclient-dev
-      - run: uv sync --locked $GROUPS --group postgres --group drivers --group bench
-      - run: uv run poe lint
+      - run: uv sync --locked $GROUPS --group postgres --group drivers --group bench --no-install-package tracepanel-agent
+      - run: uv pip install --no-deps ../agent/*.whl
+      # poe runs its tasks through `uv run`, which would sync, and build the agent from ../tracepanel after all.
+      - run: uv run --no-sync poe lint
+        env:
+          UV_NO_SYNC: "1"
 
   test:
+    needs: agent
     name: test (python ${{ matrix.python }}, django ${{ matrix.django }}, ${{ matrix.db }})
     runs-on: ubuntu-latest
     strategy:
@@ -82,16 +123,22 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: tracepanel/tracepanel
+          ref: ${{ needs.agent.outputs.sha }}
           path: tracepanel
+      - uses: actions/download-artifact@v8
+        with:
+          name: tracepanel-agent
+          path: agent
       - uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: ${{ matrix.python }}
           working-directory: tracepanel-python
-      - run: uv sync --locked $GROUPS ${{ matrix.db == 'postgres' && '--group postgres' || '' }}
+      - run: uv sync --locked $GROUPS ${{ matrix.db == 'postgres' && '--group postgres' || '' }} --no-install-package tracepanel-agent
+      - run: uv pip install --no-deps ../agent/*.whl
       - name: Pin Django ${{ matrix.django }}
         run: uv pip install "django~=${{ matrix.django }}.0"
       - run: uv run --no-sync python -c "import django, sys; print('django', django.get_version(), 'python', sys.version)"
-      # The agent uv built is the one the tests compare with (tests/storage/test_agent.py).
+      # The agent installed from the wheel is the one the tests compare with (tests/storage/test_agent.py).
       - run: uv run --no-sync pytest
         env:
           TRACEPANEL_AGENT_BIN: ${{ github.workspace }}/tracepanel-python/.venv/bin/tracepanel-agent
@@ -99,7 +146,9 @@ jobs:
   drivers:
     # The database drivers on their servers, with Django and SQLAlchemy on the same drivers: each statement once; and
     # MongoDB's commands.
-    name: drivers (PostgreSQL, MySQL, Oracle, MongoDB)
+    # Oracle's image takes over a minute to start: it runs on main only, not on each pull request.
+    name: drivers (PostgreSQL, MySQL, ${{ github.event_name == 'push' && 'Oracle, ' || '' }}MongoDB)
+    needs: agent
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -120,7 +169,7 @@ jobs:
           --health-cmd "mysqladmin ping -h 127.0.0.1 -pmysql" --health-interval 5s --health-timeout 5s
           --health-retries 20
       oracle:
-        image: gvenzl/oracle-free:23-slim-faststart
+        image: ${{ github.event_name == 'push' && 'gvenzl/oracle-free:23-slim-faststart' || '' }}
         env:
           ORACLE_PASSWORD: oracle
           APP_USER: tracepanel
@@ -138,7 +187,7 @@ jobs:
       TRACEPANEL_TEST_DB: postgres
       PGHOST: localhost
       TRACEPANEL_TEST_MYSQL: "1"
-      TRACEPANEL_TEST_ORACLE: "1"
+      TRACEPANEL_TEST_ORACLE: ${{ github.event_name == 'push' && '1' || '' }}
       ORACLE_DSN: localhost:1521/FREEPDB1
       TRACEPANEL_TEST_MONGO: mongodb://localhost:27017
     defaults:
@@ -151,13 +200,19 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: tracepanel/tracepanel
+          ref: ${{ needs.agent.outputs.sha }}
           path: tracepanel
+      - uses: actions/download-artifact@v8
+        with:
+          name: tracepanel-agent
+          path: agent
       - uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: "3.14"
           working-directory: tracepanel-python
       - run: sudo apt-get install -y --no-install-recommends pkg-config default-libmysqlclient-dev
-      - run: uv sync --locked $GROUPS --group postgres --group drivers
+      - run: uv sync --locked $GROUPS --group postgres --group drivers --no-install-package tracepanel-agent
+      - run: uv pip install --no-deps ../agent/*.whl
       - run: uv run --no-sync pytest
         env:
           TRACEPANEL_AGENT_BIN: ${{ github.workspace }}/tracepanel-python/.venv/bin/tracepanel-agent
