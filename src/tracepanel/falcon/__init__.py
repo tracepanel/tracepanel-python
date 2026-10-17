@@ -68,16 +68,19 @@ class _Views:
 
 
 def _errors(app_class: type) -> None:
-    """Errors Falcon turns into a 500 (its default handler for Exception) are the trace's errors."""
+    """Errors Falcon turns into a 500 (its default handler for Exception) are the trace's errors.
+
+    One the app handles itself (`app.add_error_handler(ValueError, ...)`) is an answer, as an HTTPError is.
+    """
     if patched(app_class, "_handle_exception"):
         return
     original = app_class._handle_exception  # noqa: SLF001
 
     def handle(self: Any, req: Any, resp: Any, ex: Exception, params: Any) -> bool:  # noqa: ANN401 (Falcon's)
-        import falcon  # noqa: PLC0415
-
         trace = current_trace()
-        if trace is not None and not isinstance(ex, falcon.HTTPError | falcon.HTTPStatus):
+        handler = self._find_error_handler(ex)
+        default = getattr(type(self), "_python_error_handler", None)
+        if trace is not None and default is not None and getattr(handler, "__func__", handler) is default:
             errors.capture(ex, handled=False)
             trace.status = "error"
         handled: bool = original(self, req, resp, ex, params)

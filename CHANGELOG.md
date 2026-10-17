@@ -13,6 +13,9 @@
 - FastAPI: the routes of a router added with `include_router()` run in a
   `view` span, as routes declared on the app do. FastAPI 0.142 includes
   routers lazily, and their routes had none.
+- Falcon: an exception the app answers with an error handler of its own
+  (`app.add_error_handler()`) is no longer recorded as an error. Only one
+  that Falcon's default handler turns into a 500 is.
 
 ## 0.3.2 (2026-10-17)
 
