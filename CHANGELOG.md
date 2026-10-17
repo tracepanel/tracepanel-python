@@ -16,6 +16,9 @@
 - Falcon: an exception the app answers with an error handler of its own
   (`app.add_error_handler()`) is no longer recorded as an error. Only one
   that Falcon's default handler turns into a 500 is.
+- The console reaches the local agent without the system's or the
+  environment's proxy settings. On macOS, looking the system's proxy up
+  crashed a forked gunicorn worker.
 
 ## 0.3.2 (2026-10-17)
 
