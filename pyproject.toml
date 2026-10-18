@@ -61,7 +61,8 @@ otel = ["opentelemetry-sdk>=1.45"]
 tracepanel = "tracepanel._cli:main"
 
 [project.urls]
-Homepage = "https://github.com/tracepanel/tracepanel"
+Homepage = "https://tracepanel.dev"
+Documentation = "https://tracepanel.dev/docs/python"
 Repository = "https://github.com/tracepanel/tracepanel-python"
 Issues = "https://github.com/tracepanel/tracepanel-python/issues"
 Changelog = "https://github.com/tracepanel/tracepanel-python/blob/main/CHANGELOG.md"
