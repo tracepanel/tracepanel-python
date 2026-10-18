@@ -143,6 +143,15 @@ can leave them in.
 | 3.12, 3.13, 3.14 | 5.2, 6.0, 6.1 |
 | 3.15 | 6.1 |
 
+## Documentation
+
+The documentation is at
+[tracepanel.dev/docs/python](https://tracepanel.dev/docs/python): installing,
+the integrations, settings, tracing your own code and the command line. The
+panel, the console and the issues are the same in every framework, under
+[tracepanel.dev/docs](https://tracepanel.dev/docs). Django has a guide of its
+own at [tracepanel.dev/docs/django](https://tracepanel.dev/docs/django).
+
 ## Links
 
 - [tracepanel](https://github.com/tracepanel/tracepanel): what Tracepanel finds,
