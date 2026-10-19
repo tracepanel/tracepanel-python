@@ -69,6 +69,26 @@ def test_explain_refuses(statement: str, params: list[Scalar] | None, message: s
         explain.explain(statement, params, "default")
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "SELECT username FROM auth_user WHERE username IN ('ann', 'bob?') ORDER BY username",
+        "SELECT username FROM auth_user WHERE username = ':name' -- by %s",
+        "SELECT id::text FROM auth_user" if connection.vendor == "postgresql" else "SELECT id FROM auth_user",
+    ],
+)
+def test_a_query_with_no_parameters_explains_with_none_captured(statement: str) -> None:
+    plan = explain.explain(statement, None, "default")
+
+    assert plan.to_dict() == {
+        "vendor": connection.vendor,
+        "alias": "default",
+        "analyzed": False,
+        "lines": IsList(length=(1, ...)),
+    }
+
+
 @SQLITE
 @pytest.mark.django_db
 def test_sqlite_plan_flags_full_scans() -> None:

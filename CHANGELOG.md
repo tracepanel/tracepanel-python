@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- EXPLAIN in the console runs a query that has no parameters, such as
+  `SELECT name FROM sqlite_master WHERE type = 'table'`. It answered that the
+  query's parameters were not captured, since there were none to keep. A
+  query with placeholders still needs its captured parameters.
+
 ## 0.3.3 (2026-10-17)
 
 ### Fixed
