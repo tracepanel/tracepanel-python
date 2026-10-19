@@ -3535,7 +3535,7 @@ strawberry = [{ name = "strawberry-graphql", specifier = ">=0.332.0" }]
 
 [[package]]
 name = "tracepanel-agent"
-version = "0.3.3"
+version = "0.3.4"
 source = { directory = "../tracepanel" }
 
 [[package]]
