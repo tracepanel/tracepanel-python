@@ -13,6 +13,10 @@ from dataclasses import dataclass, field
 from tracepanel.core.model import Scalar
 
 _SELECT = re.compile(r"^\s*SELECT\b", re.IGNORECASE)
+# What a placeholder can't be inside: quoted strings and names, and comments.
+_QUOTED = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|`[^`]*`|--[^\n]*|/\*.*?\*/", re.DOTALL)
+# %s, %(name)s, ?, ?1, :name (not a :: cast), $1.
+_PLACEHOLDER = re.compile(r"%s|%\(\w+\)s|\?|(?<!:):(?!:)[A-Za-z_]\w*|\$\d+")
 _SQLITE_SCAN = re.compile(r"^SCAN (?:TABLE )?(\w+)(?!.*\bUSING\b)")
 _PG_SEQ_SCAN = re.compile(r"Seq Scan on (\w+)")
 
@@ -123,7 +127,7 @@ def explain(  # noqa: PLR0913 (the statement, where it ran, how to run it)
     if not _SELECT.match(statement):
         msg = "Only SELECT statements can be explained."
         raise ExplainError(msg)
-    if params is None:
+    if params is None and _PLACEHOLDER.search(_QUOTED.sub("", statement)):
         msg = "Parameters of this query were not captured (capture_sql_params is off, or a value was too large)."
         raise ExplainError(msg)
     if vendor == "sqlite":
