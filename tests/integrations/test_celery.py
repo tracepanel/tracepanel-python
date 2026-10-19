@@ -152,7 +152,7 @@ def test_tasks_listing_and_links(client: Client, users: list[User], store: Agent
     assert store.list_tasks("state:failure") == [IsPartialDict(task="tests.project.jobs.broken")]
     by_request = store.related(str(request["id"]))
     by_task = store.related(str(task["id"]))
-    # Calls served in other projects, from an agent after 0.2.0: none here.
+    # Calls served in other projects (an agent after 0.2.0) and the calls' whole traces (after 0.3.4): none here.
     assert by_request == newer(
         {
             "enqueued_by": None,
@@ -166,7 +166,7 @@ def test_tasks_listing_and_links(client: Client, users: list[User], store: Agent
             "via": {task["id"]: IsStr(min_length=26, max_length=26)},
         },
         by_request,
-        {"remote_calls": []},
+        {"remote_calls": [], "call_traces": {}},
     )
     assert by_task == newer(
         {
@@ -181,7 +181,7 @@ def test_tasks_listing_and_links(client: Client, users: list[User], store: Agent
             "via": {},
         },
         by_task,
-        {"remote_calls": []},
+        {"remote_calls": [], "call_traces": {}},
     )
     assert client.get(f"/__tracepanel__/api/traces/{task['id']}/related").json() == IsPartialDict(
         enqueued_by=IsPartialDict(id=request["id"])
