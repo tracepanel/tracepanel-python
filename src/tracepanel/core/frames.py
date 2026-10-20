@@ -114,6 +114,48 @@ def origin(skip: int = 2) -> str | None:
     return awaited_from.get()
 
 
+# What makes a query rather than asks for one: the ORM and drivers, the helpers around their calls, Tracepanel itself.
+# Past these is the library code that wanted the rows (Django's admin, a form, a template tag).
+_QUERY_LAYERS = (
+    "tracepanel",
+    "django.db",
+    "django.utils.functional",
+    "django.utils.asyncio",
+    "sqlalchemy",
+    "psycopg",
+    "psycopg2",
+    "sqlite3",
+    "asyncpg",
+    "pymysql",
+    "MySQLdb",
+    "oracledb",
+    "asgiref",
+    "contextlib",
+    "functools",
+    "threading",
+    "concurrent",
+)
+
+
+@functools.lru_cache(maxsize=4096)
+def _in_query_layer(module: str) -> bool:
+    return any(module == layer or module.startswith(f"{layer}.") for layer in _QUERY_LAYERS)
+
+
+def library_caller(skip: int = 2) -> str | None:
+    """`path:line in function` of the library code that asked for a query no project code made.
+
+    The first frame past the ORM and the driver: django/contrib/admin/views/main.py:… in get_results.
+    """
+    frame: FrameType | None = sys._getframe(skip)  # noqa: SLF001
+    while frame is not None:
+        if not _in_query_layer(str(frame.f_globals.get("__name__", ""))):
+            code = frame.f_code
+            return f"{library_path(code.co_filename)}:{frame.f_lineno} in {code.co_qualname}"
+        frame = frame.f_back
+    return None
+
+
 def safe_repr(name: str, value: object) -> str:
     if SENSITIVE.search(name):
         return MASK

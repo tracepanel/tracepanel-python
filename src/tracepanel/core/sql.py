@@ -18,7 +18,7 @@ from typing import TypeVar
 
 from tracepanel.core import conf
 from tracepanel.core.context import blocking_attrs, current_span, current_trace, now_us, record_span
-from tracepanel.core.frames import origin
+from tracepanel.core.frames import library_caller, origin
 from tracepanel.core.model import Attrs, Scalar, Span
 
 T = TypeVar("T")
@@ -28,6 +28,12 @@ _WHITESPACE = re.compile(r"\s+")
 _IN_LIST = re.compile(r"\bIN \((?:%s|\?)(?:, ?(?:%s|\?))*\)", re.IGNORECASE)
 _TABLE = re.compile(r'\b(?:FROM|INTO|UPDATE|JOIN)\s+[`"\[]?([\w.]+)', re.IGNORECASE)
 _COUNT = re.compile(r"^\s*SELECT\s+COUNT\(", re.IGNORECASE)
+
+
+def _origin() -> dict[str, str | None]:
+    """Where the project's code made the query; for a query only library code made, which library code (code.caller)."""
+    made = origin(3)
+    return {"code.origin": made} if made is not None else {"code.origin": None, "code.caller": library_caller(3)}
 
 
 def fingerprint(sql: str) -> str:
@@ -229,7 +235,7 @@ def record(  # noqa: PLR0913 (the statement, where it ran, when, how it went)
             "db.fingerprint": fingerprinted,
             "db.params_hash": params_hash(params),
             "db.many": many,
-            "code.origin": origin(),
+            **_origin(),
             "code.template": template,
             **({} if many else params_attrs(params)),
             **(extra or {}),

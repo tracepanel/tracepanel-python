@@ -4,6 +4,10 @@
 
 ### Added
 
+- A query no project code made (Django's admin, a paginator, a template tag)
+  records the library code that asked for it as `code.caller`: the first
+  frame past the ORM and the driver. The panel shows it where it showed
+  nothing.
 - A page's navigation answered with a redirect (a form's POST, then 302) is
   named in a short-lived `tracepanel_redirect` cookie, so the panel on the page
   it leads to lists it first.
