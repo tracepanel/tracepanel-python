@@ -171,3 +171,64 @@ def test_writes_through_the_console_come_from_this_machine_only(
     monkeypatch.setattr("tracepanel.wsgi.MAX_BODY", 1)
 
     assert ingest("127.0.0.1") == 413
+
+
+def reads_its_body(environ: dict[str, Any], start_response: StartResponse) -> Iterable[bytes]:
+    length = int(environ.get("CONTENT_LENGTH") or 0)
+    read = environ["wsgi.input"].read(length) if environ["PATH_INFO"] == "/read" else b""
+    start_response(
+        "200 OK", [("Content-Type", "text/plain"), ("Set-Cookie", "sessionid=s"), ("X-Read", str(len(read)))]
+    )
+    return [b"ok"]
+
+
+@pytest.fixture
+def reading(traces: list[Trace]) -> Generator[tracepanel.wsgi.WSGIApp, None, None]:
+    previous = conf._framework  # noqa: SLF001
+    yield tracepanel.wsgi.install(reads_its_body, enabled=True)
+    conf.use_source(previous)
+
+
+def posted(body: bytes) -> dict[str, Any]:
+    return {
+        "REQUEST_METHOD": "POST",
+        "QUERY_STRING": "page=2&token=abc",
+        "CONTENT_TYPE": "application/json",
+        "CONTENT_LENGTH": str(len(body)),
+        "HTTP_X_REQUEST_ID": "r-1",
+        "HTTP_COOKIE": "theme=dark; sessionid=s-1",
+        "wsgi.input": BytesIO(body),
+    }
+
+
+def test_a_request_records_what_it_carried_with_secrets_masked(
+    reading: tracepanel.wsgi.WSGIApp, traces: list[Trace]
+) -> None:
+    body = b'{"email": "ann@example.com", "password": "p"}'
+
+    call(reading, "/read", posted(body))
+
+    (trace,) = traces
+    assert {
+        key: value for key, value in trace.attrs.items() if key.startswith(("http.request.", "http.response.", "url."))
+    } == {
+        "http.request.header.content_type": "application/json",
+        "http.request.header.content_length": str(len(body)),
+        "http.request.header.x_request_id": "r-1",
+        "http.request.header.host": "127.0.0.1",
+        "url.query": "page=2&token=********",
+        "http.request.cookie.theme": "dark",
+        "http.request.cookie.sessionid": "********",
+        "http.response.header.content_type": "text/plain",
+        "http.response.header.set_cookie": "********",
+        "http.response.header.x_read": str(len(body)),
+        "http.request.body": '{"email":"ann@example.com","password":"********"}',
+    }
+
+
+def test_a_body_the_app_never_read_is_not_read_for_it(reading: tracepanel.wsgi.WSGIApp, traces: list[Trace]) -> None:
+    call(reading, "/ignore", posted(b'{"password": "p"}'))
+
+    (trace,) = traces
+    assert "http.request.body" not in trace.attrs
+    assert trace.attrs["http.response.header.x_read"] == "0"

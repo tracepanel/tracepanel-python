@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- A request records what it carried, as django-debug-toolbar's Request and
+  Headers panels show it: its headers and the response's, its query, its
+  cookies, the body as far as the app read it (a form's files by name and
+  size), and the session the view used. Values under a secret's name
+  (`password`, `token`, `sessionid`, `Authorization`, `Set-Cookie`…) are
+  masked, and none of it leaves the machine. Tracepanel never reads a body
+  the app didn't. `capture_request = false` (or
+  `TRACEPANEL_CAPTURE_REQUEST=0`) turns it off. The console's
+  `api/capabilities` says whether it is on.
+
 ## 0.3.4 (2026-10-19)
 
 ### Fixed

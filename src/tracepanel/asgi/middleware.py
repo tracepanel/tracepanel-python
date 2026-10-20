@@ -18,6 +18,7 @@ from tracepanel.console import app as console
 from tracepanel.console import terminal, widget
 from tracepanel.console.messages import MAX_BODY, is_local
 from tracepanel.core import conf, errors, w3c
+from tracepanel.core import request as details
 from tracepanel.core.context import current_trace, start_span, start_trace
 from tracepanel.core.model import Trace
 from tracepanel.integrations import htmx
@@ -156,10 +157,13 @@ class TracepanelMiddleware:
             # Called by another app: the W3C trace its request carried.
             **w3c.incoming(headers.get(w3c.HEADER)),
         }
+        reader = _BodyReader(receive) if config.capture_request else None
+        if reader is not None:
+            attrs.update(_request_details(scope))
         with start_trace("http", f"{method} {path}", attrs) as trace:
             responder = _Responder(scope, send, trace, config)
             try:
-                await self.app(scope, receive, responder.send)
+                await self.app(scope, receive if reader is None else reader.receive, responder.send)
             except Exception as exc:  # noqa: BLE001 (recorded, then raised again for the server to log)
                 errors.capture(exc, handled=False)
                 trace.status = "error"
@@ -169,6 +173,8 @@ class TracepanelMiddleware:
                 # plain response with them, so the widget (and a fetch() caller) can open the failed request.
                 await responder.error()
             _name(trace, scope, method)
+            if reader is not None:
+                trace.attrs.update(reader.attrs(headers.get("content-type", "")))
         complete(trace)
         if failure is not None:
             raise failure
@@ -206,6 +212,41 @@ class TracepanelMiddleware:
         await send({"type": "http.response.body", "body": b""})
 
 
+def _request_details(scope: Scope) -> dict[str, Any]:
+    pairs = [(key.decode("latin-1"), value.decode("latin-1")) for key, value in scope.get("headers", [])]
+    return {
+        **details.request_headers(pairs),
+        **details.query(scope.get("query_string", b"").decode("latin-1")),
+        **details.cookies(", ".join(value for name, value in pairs if name.lower() == "cookie")),
+    }
+
+
+class _BodyReader:
+    """Passes the app the messages it asks for, keeping the start of the body they carry: only what the app read."""
+
+    def __init__(self, receive: Receive) -> None:
+        self.upstream = receive
+        self.chunks: list[bytes] = []
+        self.size = 0
+        self.complete = False
+
+    async def receive(self) -> Message:
+        message = await self.upstream()
+        if message.get("type") == "http.request":
+            chunk = message.get("body", b"")
+            # Kept up to the limit (and a byte past it, to know it was cut), never the rest of an upload.
+            if self.size <= details.MAX_BODY:
+                self.chunks.append(chunk[: details.MAX_BODY + 1 - self.size])
+            self.size += len(chunk)
+            self.complete = not message.get("more_body")
+        return message
+
+    def attrs(self, content_type: str) -> dict[str, Any]:
+        data = b"".join(self.chunks)
+        whole = self.complete and self.size <= details.MAX_BODY
+        return details.body(content_type, data, complete=whole)
+
+
 async def _read_body(receive: Receive) -> tuple[bytes, bool]:
     """A page's traces from the browser, sent on to the agent: read whole up to the limit, and whether it was over."""
     body = b""
@@ -239,6 +280,9 @@ class _Responder:
         if kind == "http.response.start":
             self.start = dict(message)
             self.trace.attrs["http.status_code"] = int(message["status"])
+            if self.config.capture_request:
+                pairs = [(key.decode("latin-1"), value.decode("latin-1")) for key, value in message.get("headers", [])]
+                self.trace.attrs.update(details.response_headers(pairs))
             if int(message["status"]) >= 500:  # noqa: PLR2004
                 self.trace.status = "error"
             return

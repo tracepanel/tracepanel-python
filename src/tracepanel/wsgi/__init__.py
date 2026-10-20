@@ -11,7 +11,8 @@ Django's TRACEPANEL dict); TRACEPANEL_* variables override them.
 
 import http
 from collections.abc import Callable, Iterable, Iterator
-from typing import Any, Unpack
+from io import BytesIO
+from typing import IO, Any, Unpack
 from urllib.parse import parse_qsl
 
 from tracepanel import _setup
@@ -19,6 +20,7 @@ from tracepanel.console import app as console
 from tracepanel.console import widget
 from tracepanel.console.messages import MAX_BODY, is_local
 from tracepanel.core import conf, errors, w3c
+from tracepanel.core import request as details
 from tracepanel.core.conf import Settings
 from tracepanel.core.context import current_trace, start_trace
 from tracepanel.core.model import Trace
@@ -89,6 +91,7 @@ class TracepanelMiddleware:
             # Called by another app: the W3C trace its request carried.
             **w3c.incoming(headers.get(w3c.HEADER)),
         }
+        reader = _capture(environ, headers, attrs) if config.capture_request else None
         with start_trace("http", f"{method} {path}", attrs) as trace:
             try:
                 result = self.app(environ, response.start_response)
@@ -114,6 +117,8 @@ class TracepanelMiddleware:
                 trace.status = "error"
             headers = {name.lower(): value for name, value in response.headers}
             trace.attrs.update(htmx.response_attrs(trace.attrs, response.code, headers, body))
+            if reader is not None:
+                trace.attrs.update(reader.attrs(str(environ.get("CONTENT_TYPE", "")), response.headers))
             widget.set_header(response.headers, "Tracepanel-Id", trace.id)
             if body is not None:
                 body = _decorate(environ, response, trace, config, body)
@@ -129,6 +134,55 @@ class TracepanelMiddleware:
 def _request_headers(environ: dict[str, Any]) -> dict[str, str]:
     """HTTP_HX_REQUEST -> hx-request: the request's headers by lower-case name."""
     return {key[5:].lower().replace("_", "-"): str(value) for key, value in environ.items() if key.startswith("HTTP_")}
+
+
+def _capture(environ: dict[str, Any], headers: dict[str, str], attrs: dict[str, Any]) -> "_BodyReader":
+    """The request's headers, query and cookies into its attributes, and a reader keeping what the app reads."""
+    # CONTENT_TYPE and CONTENT_LENGTH are the two headers WSGI doesn't prefix with HTTP_.
+    unprefixed = [(name, str(environ[key])) for key, name in _UNPREFIXED if environ.get(key)]
+    attrs.update(details.request_headers([*unprefixed, *headers.items()]))
+    attrs.update(details.query(str(environ.get("QUERY_STRING", ""))))
+    attrs.update(details.cookies(headers.get("cookie", "")))
+    return _BodyReader(environ)
+
+
+_UNPREFIXED = (("CONTENT_TYPE", "content-type"), ("CONTENT_LENGTH", "content-length"))
+
+
+class _BodyReader:
+    """Stands in for wsgi.input, keeping the start of what the app reads: never more, never the rest of an upload."""
+
+    def __init__(self, environ: dict[str, Any]) -> None:
+        self.stream: IO[bytes] = environ.get("wsgi.input") or BytesIO()
+        self.chunks: list[bytes] = []
+        self.size = 0
+        length = str(environ.get("CONTENT_LENGTH") or "")
+        self.length = int(length) if length.isdigit() else 0
+        environ["wsgi.input"] = self
+
+    def _kept(self, data: bytes) -> bytes:
+        if self.size <= details.MAX_BODY:
+            self.chunks.append(data[: details.MAX_BODY + 1 - self.size])
+        self.size += len(data)
+        return data
+
+    def read(self, size: int = -1) -> bytes:
+        return self._kept(self.stream.read(size) if size is not None and size >= 0 else self.stream.read())
+
+    def readline(self, size: int = -1) -> bytes:
+        return self._kept(self.stream.readline(size))
+
+    def readlines(self, hint: int = -1) -> list[bytes]:
+        return [self._kept(line) for line in self.stream.readlines(hint)]
+
+    def __iter__(self) -> Iterator[bytes]:
+        return (self._kept(line) for line in self.stream)
+
+    def attrs(self, content_type: str, response_headers: Headers) -> dict[str, Any]:
+        """The response's headers, and the body as far as the app read it."""
+        data = b"".join(self.chunks)
+        whole = self.size <= details.MAX_BODY and (self.length == 0 or self.size >= self.length)
+        return {**details.response_headers(response_headers), **details.body(content_type, data, complete=whole)}
 
 
 def _first(chunks: Iterator[bytes]) -> Iterator[bytes]:

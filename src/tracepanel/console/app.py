@@ -76,7 +76,8 @@ def capability(name: str, check: Callable[[], bool]) -> None:
 def capabilities() -> dict[str, bool]:
     """The agent answers none of these: the console shows EXPLAIN, or a user switcher, only where the app runs them."""
     added = {name: check() for name, check in CAPABILITIES.items()}
-    return {"explain": "explain" in EXTENSIONS, "users": False} | added
+    request = conf.get_config().capture_request
+    return {"explain": "explain" in EXTENSIONS, "users": False, "profile": False, "request": request} | added
 
 
 def register(path: str, handler: Handler, *, write: bool = False) -> None:

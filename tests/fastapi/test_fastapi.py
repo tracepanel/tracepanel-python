@@ -14,6 +14,7 @@ import httpx  # noqa: E402 (optional test group)
 from fastapi import APIRouter, Depends, FastAPI  # noqa: E402
 from fastapi.responses import HTMLResponse  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
 from sqlalchemy import ForeignKey, create_engine, select, text  # noqa: E402
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
@@ -65,6 +66,11 @@ class Query:
         return players()
 
 
+class Account(BaseModel):
+    email: str
+    password: str
+
+
 def make_app() -> FastAPI:
     # install() turns tracepanel on in development only: debug=True (or TRACEPANEL_ENABLED=1).
     app = FastAPI(debug=True)
@@ -77,6 +83,10 @@ def make_app() -> FastAPI:
     def boom() -> None:
         message = "nope"
         raise ValueError(message)
+
+    @app.post("/signup")
+    def signup(account: Account) -> dict[str, str]:
+        return {"email": account.email}
 
     @app.get("/page", response_class=HTMLResponse)
     def page() -> str:
@@ -265,3 +275,13 @@ def test_a_transaction_opened_in_a_dependency_holds_the_endpoint_calls(traces: l
     ]
 
     assert [issue.kind for issue in issues(trace)] == ["in-transaction"]
+
+
+def test_a_body_the_endpoint_read_is_recorded_masked(client: TestClient, traces: list[Trace]) -> None:
+    client.post("/signup", json={"email": "ann@example.com", "password": "p"}, headers={"X-Request-Id": "r-1"})
+
+    (trace,) = traces
+    assert (trace.attrs["http.request.header.x_request_id"], trace.attrs["http.request.body"]) == (
+        "r-1",
+        '{"email":"ann@example.com","password":"********"}',
+    )

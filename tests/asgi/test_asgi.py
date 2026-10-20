@@ -223,3 +223,72 @@ def test_writes_through_the_console_come_from_this_machine_only(
     )
 
     assert (large.status_code, large.json()) == (413, {"error": "too large"})
+
+
+async def echo(request: Request) -> JSONResponse:
+    return JSONResponse({"read": len(await request.body())})
+
+
+async def ignores(request: Request) -> JSONResponse:
+    del request
+    return JSONResponse({"read": 0})
+
+
+@pytest.fixture
+def bodies(traces: list[Trace], restore: None) -> TestClient:
+    app = Starlette(
+        debug=True, routes=[Route("/echo", echo, methods=["POST"]), Route("/ignore", ignores, methods=["POST"])]
+    )
+    tracepanel.asgi.install(app)
+    return TestClient(app)
+
+
+def carried(trace: Trace) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in trace.attrs.items()
+        if key.startswith(("http.request.cookie.", "http.request.body", "url."))
+        or key.endswith(("x_request_id", "set_cookie"))
+    }
+
+
+def test_a_request_records_what_it_carried_with_secrets_masked(bodies: TestClient, traces: list[Trace]) -> None:
+    bodies.cookies.set("theme", "dark")
+    bodies.cookies.set("sessionid", "s-1")
+
+    bodies.post(
+        "/echo?page=2&token=abc",
+        content=b'{"email": "ann@example.com", "password": "p"}',
+        headers={"Content-Type": "application/json", "X-Request-Id": "r-1"},
+    )
+
+    (trace,) = traces
+    assert carried(trace) == {
+        "http.request.header.x_request_id": "r-1",
+        "url.query": "page=2&token=********",
+        "http.request.cookie.theme": "dark",
+        "http.request.cookie.sessionid": "********",
+        "http.request.body": '{"email":"ann@example.com","password":"********"}',
+    }
+
+    assert trace.attrs["http.response.header.content_type"] == "application/json"
+
+
+def test_a_body_the_endpoint_never_read_is_not_read_for_it(bodies: TestClient, traces: list[Trace]) -> None:
+    bodies.post("/ignore", content=b'{"password": "p"}', headers={"Content-Type": "application/json"})
+
+    (trace,) = traces
+    assert "http.request.body" not in trace.attrs
+
+
+def test_nothing_is_recorded_with_capture_request_off(
+    bodies: TestClient, traces: list[Trace], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRACEPANEL_CAPTURE_REQUEST", "0")
+    conf.reset()
+
+    bodies.post("/echo?page=2", content=b'{"a": 1}', headers={"Content-Type": "application/json", "X-Request-Id": "r"})
+
+    (trace,) = traces
+    assert carried(trace) == {}
+    assert not [key for key in trace.attrs if key.startswith("http.response.header.")]

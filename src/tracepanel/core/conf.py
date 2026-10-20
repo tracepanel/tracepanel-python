@@ -66,6 +66,9 @@ class Config:
     user_switch: bool = True
     # Keep repr() of Celery task arguments and results (development only, masked; they never leave this machine).
     capture_task_args: bool = True
+    # Keep a request's headers, query, body (what the app read), cookies and session (development only, masked; they
+    # never leave this machine).
+    capture_request: bool = True
     # Integrations, each on when its library is installed; `false` leaves the library unpatched. Read at startup.
     celery_enabled: bool = True
     channels_enabled: bool = True
@@ -132,6 +135,7 @@ class Settings(TypedDict, total=False):
     capture_sql_params: bool
     user_switch: bool
     capture_task_args: bool
+    capture_request: bool
     celery_enabled: bool
     channels_enabled: bool
     dbapi_enabled: bool

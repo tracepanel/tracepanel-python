@@ -122,6 +122,20 @@ def home(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"page": "home"})
 
 
+def echo_json(request: HttpRequest) -> JsonResponse:
+    return JsonResponse({"read": len(request.body)})
+
+
+def upload(request: HttpRequest) -> JsonResponse:
+    return JsonResponse({"fields": len(request.POST), "files": len(request.FILES)})
+
+
+def remember(request: HttpRequest) -> JsonResponse:
+    request.session["cart"] = [1, 2]
+    request.session["oauth_token"] = "t-123"
+    return JsonResponse({"saved": True})
+
+
 def enqueue(request: HttpRequest) -> JsonResponse:
     from tests.project.jobs import count_users  # noqa: PLC0415 (Celery is an optional test group)
 
