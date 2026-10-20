@@ -12,7 +12,7 @@ from collections.abc import Callable
 from tracepanel.console import proxy
 from tracepanel.console.messages import Request, Response
 from tracepanel.core import conf, explain
-from tracepanel.storage import agent
+from tracepanel.storage import agent, transport
 
 Handler = Callable[[Request], Response]
 
@@ -64,28 +64,19 @@ def _span(trace_id: str, span_id: str) -> dict[str, object] | None:
     return next((span for span in spans if isinstance(span, dict) and span.get("id") == span_id), None)
 
 
-# What the app adds to its agent's console beyond EXPLAIN (Django: switching users), each checked when asked.
-CAPABILITIES: dict[str, Callable[[], bool]] = {}
-
-
 def capability(name: str, check: Callable[[], bool]) -> None:
-    """A feature only the framework offers, told to the console by `api/capabilities` so it shows it only then."""
-    CAPABILITIES[name] = check
+    """A feature only the framework offers at its console (Django: switching users), while `check()` holds.
 
-
-def capabilities() -> dict[str, bool]:
-    """The agent answers none of these: the console shows EXPLAIN, or a user switcher, only where the app runs them."""
-    added = {name: check() for name, check in CAPABILITIES.items()}
-    own = {"profile": conf.get_config().profile_enabled, "request": conf.get_config().capture_request}
-    return {"explain": "explain" in EXTENSIONS, "users": False} | own | added
+    It is told to the agent in the hello, and the agent answers the console's `api/capabilities` from it.
+    """
+    agent.offer(name, check)
 
 
 def register(path: str, handler: Handler, *, write: bool = False) -> None:
     """Add an API resource (`api/<path>`) only the framework can serve; `write` ones accept POST."""
     (WRITES if write else EXTENSIONS)[path] = handler
-
-
-register("capabilities", lambda _request: json_response(capabilities()))
+    if path == "explain":
+        agent.offer("explain", lambda: True)
 
 
 def dispatch(request: Request) -> Response:
@@ -100,6 +91,11 @@ def dispatch(request: Request) -> Response:
         return handler(request)
     if request.method != "GET" and (refused := _refused_write(request)):
         return refused
+    if path == "capabilities":
+        # The agent answers what the console can offer, from the app's hello: connected now, it has heard it.
+        connected = getattr(transport.get_writer(), "connected", None)
+        if callable(connected):
+            connected()
     return proxy.forward(request, request.path) or _no_agent(api=path is not None)
 
 

@@ -96,6 +96,29 @@ class AgentStore:
         """Settings whose writer sends to this agent."""
         return dataclasses.replace(conf.get_config(), agent=self.address, max_traces=self.max_traces)
 
+    def offers_at_app_consoles(self) -> bool:
+        """Whether this agent offers an app's console what the app said it answers there (agents after 0.3.7).
+
+        CI runs the released agent, which knows nothing of it: the tests of it run against a newer one.
+        """
+        sock = agent.connect(self.address, self.max_traces, console=["users"], service="probe")
+        if sock is None:
+            return False
+        with sock:
+            # The agent registers the app once it has read the hello: a moment after it answered it.
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                if self._capabilities(via="probe")["users"]:
+                    return True
+                time.sleep(POLL_S)
+        return False
+
+    def _capabilities(self, via: str) -> Json:
+        url = f"{self.console}api/capabilities"
+        asked = urllib.request.Request(url, headers={"Tracepanel-Console": via})  # noqa: S310 (the agent)
+        with urllib.request.urlopen(asked, timeout=WAIT_S) as answer:  # noqa: S310
+            return json.loads(answer.read())
+
     # ---------- writing ----------
 
     def write(self, traces: list[Trace]) -> None:
