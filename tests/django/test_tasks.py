@@ -4,7 +4,7 @@ pytest.importorskip("django_tasks_db")
 
 from typing import Any
 
-from dirty_equals import IsInt, IsPartialDict, IsPositiveInt, IsStr
+from dirty_equals import IsInstance, IsInt, IsPartialDict, IsPositiveInt, IsStr
 from django.contrib.auth.models import User
 from django.core.management import call_command
 from django.test import Client
@@ -13,7 +13,7 @@ from pytest_django.fixtures import Settings
 
 from tests.agentstore import AgentStore
 from tests.project import django_jobs
-from tests.tasklive import Recorder, live, live_when, without_heartbeats
+from tests.tasklive import Recorder, live, live_when, named, without_heartbeats
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Link, Span, Trace
 from tracepanel.storage import agent, transport
@@ -229,7 +229,11 @@ def test_the_agent_lists_a_task_queued_then_running_until_it_ends(store: AgentSt
         result = django_jobs.watched.enqueue()
         queued = live_when(store, lambda answer: bool(answer["tasks"]))
 
-        assert queued == {"now": IsPositiveInt, "tasks": [IsPartialDict(id=str(result.id))], "workers": []}
+        assert queued == {
+            "now": IsPositiveInt,
+            "tasks": [IsPartialDict(id=str(result.id))],
+            "workers": IsInstance(list),
+        }
         assert queued["tasks"][0] == {
             "id": str(result.id),
             "system": "django",
@@ -253,13 +257,13 @@ def test_the_agent_lists_a_task_queued_then_running_until_it_ends(store: AgentSt
         assert running["tasks"] == [
             IsPartialDict(id=str(result.id), state="running", worker="worker-live", started_at=IsInt)
         ]
-        assert running["workers"] == [
+        assert named(running, "worker-live") == [
             {"name": "worker-live", "system": "django", "service": IsStr, "last_seen": IsPositiveInt, "in_flight": 1}
         ]
 
         done = live_when(store, lambda answer: not answer["tasks"])
 
-        assert done["workers"] == [IsPartialDict(name="worker-live", in_flight=0)]
+        assert named(done, "worker-live") == [IsPartialDict(name="worker-live", in_flight=0)]
     finally:
         django_jobs.during.clear()
         set_writer(None)

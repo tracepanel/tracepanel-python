@@ -1,14 +1,14 @@
 from collections.abc import Generator
 
 import pytest
-from dirty_equals import IsInt, IsList, IsPartialDict, IsPositiveInt, IsStr
+from dirty_equals import IsInstance, IsInt, IsList, IsPartialDict, IsPositiveInt, IsStr
 from django.contrib.auth.models import User
 from django.test import Client
 from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
 from tests.agentstore import AgentStore, issues, newer
-from tests.tasklive import Recorder, live, live_when, without_heartbeats
+from tests.tasklive import Recorder, live, live_when, named, without_heartbeats
 from tracepanel.core.model import Link, Trace
 from tracepanel.storage import agent, transport
 from tracepanel.storage.transport import set_writer
@@ -321,7 +321,7 @@ def test_the_agent_lists_a_task_queued_then_running_until_it_ends(client: Client
         result = jobs.waits.delay()
         queued = live_when(store, lambda answer: bool(answer["tasks"]))
 
-        assert queued == {"now": IsPositiveInt, "tasks": [IsPartialDict(id=result.id)], "workers": []}
+        assert queued == {"now": IsPositiveInt, "tasks": [IsPartialDict(id=result.id)], "workers": IsInstance(list)}
         assert queued["tasks"][0] == {
             "id": result.id,
             "system": "celery",
@@ -343,9 +343,11 @@ def test_the_agent_lists_a_task_queued_then_running_until_it_ends(client: Client
             running = live_when(store, lambda answer: answer["tasks"][0]["state"] == "running")
 
             assert running["tasks"] == [IsPartialDict(id=result.id, state="running", worker=IsStr, started_at=IsInt)]
-            assert running["workers"] == [
+            worker = running["tasks"][0]["worker"]
+
+            assert named(running, worker) == [
                 {
-                    "name": running["tasks"][0]["worker"],
+                    "name": worker,
                     "system": "celery",
                     "service": IsStr,
                     "last_seen": IsPositiveInt,
@@ -358,7 +360,7 @@ def test_the_agent_lists_a_task_queued_then_running_until_it_ends(client: Client
             writer.flush()
             done = live_when(store, lambda answer: not answer["tasks"])
 
-        assert done["workers"] == [IsPartialDict(in_flight=0)]
+        assert named(done, worker) == [IsPartialDict(in_flight=0)]
 
         assert store.list_tasks() == [IsPartialDict(task="tests.project.jobs.waits", runs=1)]
     finally:

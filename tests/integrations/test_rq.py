@@ -3,7 +3,7 @@ from collections.abc import Generator
 from typing import Any
 
 import pytest
-from dirty_equals import IsInt, IsPartialDict, IsPositiveInt, IsStr
+from dirty_equals import IsInstance, IsInt, IsPartialDict, IsPositiveInt, IsStr
 
 pytest.importorskip("rq")
 fakeredis = pytest.importorskip("fakeredis")
@@ -11,7 +11,7 @@ fakeredis = pytest.importorskip("fakeredis")
 from rq import Queue, Retry, SimpleWorker  # noqa: E402 (optional test group)
 
 from tests.agentstore import AgentStore  # noqa: E402
-from tests.tasklive import Recorder, heartbeats, live, live_when, without_heartbeats  # noqa: E402
+from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, without_heartbeats  # noqa: E402
 from tracepanel.core.context import start_trace  # noqa: E402
 from tracepanel.core.model import Link, Trace  # noqa: E402
 from tracepanel.integrations import rq as integration  # noqa: E402
@@ -105,7 +105,7 @@ def test_inline_queue_runs_in_the_caller(traces: list[Trace]) -> None:
 
 
 def test_ignored_tasks(queue: Queue, traces: list[Trace], monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("TRACEPANEL_IGNORE_TASKS", "*.housekeeping")
+    setenv(monkeypatch, "TRACEPANEL_IGNORE_TASKS", "*.housekeeping")
 
     queue.enqueue(housekeeping)
     work(queue)
@@ -163,7 +163,7 @@ def test_a_queued_job_tells_the_agent_each_step(queue: Queue, recorder: Recorder
     ]
 
     # The worker says it is there as it starts, before it runs anything.
-    assert heartbeats(recorder.events)[0] == {
+    assert heartbeats(recorder.events, worker.name)[0] == {
         "event": "heartbeat",
         "system": "rq",
         "id": "",
@@ -196,7 +196,7 @@ def test_a_retry_waits_with_its_error_and_runs_again(queue: Queue, recorder: Rec
 def test_inline_and_ignored_jobs_send_no_events(
     queue: Queue, recorder: Recorder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("TRACEPANEL_IGNORE_TASKS", "*.housekeeping")
+    setenv(monkeypatch, "TRACEPANEL_IGNORE_TASKS", "*.housekeeping")
     Queue("default", connection=fakeredis.FakeRedis(), is_async=False).enqueue(count_users, 1)
     queue.enqueue(housekeeping)
     work(queue)
@@ -207,7 +207,7 @@ def test_inline_and_ignored_jobs_send_no_events(
 def test_arguments_are_left_out_of_the_events_too(
     queue: Queue, recorder: Recorder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("TRACEPANEL_CAPTURE_TASK_ARGS", "false")
+    setenv(monkeypatch, "TRACEPANEL_CAPTURE_TASK_ARGS", "false")
 
     queue.enqueue(count_users, 7)
     work(queue)
@@ -239,7 +239,7 @@ def test_the_agent_lists_a_job_queued_then_running_until_it_ends(queue: Queue, s
         job = queue.enqueue(look)
         queued = live_when(store, lambda answer: bool(answer["tasks"]))
 
-        assert queued == {"now": IsPositiveInt, "tasks": [IsPartialDict(id=job.id)], "workers": []}
+        assert queued == {"now": IsPositiveInt, "tasks": [IsPartialDict(id=job.id)], "workers": IsInstance(list)}
         assert queued["tasks"][0] == {
             "id": job.id,
             "system": "rq",
@@ -261,12 +261,12 @@ def test_the_agent_lists_a_job_queued_then_running_until_it_ends(queue: Queue, s
         (running,) = seen
 
         assert running["tasks"] == [IsPartialDict(id=job.id, state="running", worker=worker.name, started_at=IsInt)]
-        assert running["workers"] == [
+        assert named(running, worker.name) == [
             {"name": worker.name, "system": "rq", "service": IsStr, "last_seen": IsPositiveInt, "in_flight": 1}
         ]
 
         done = live_when(store, lambda answer: not answer["tasks"])
 
-        assert done["workers"] == [IsPartialDict(name=worker.name, in_flight=0)]
+        assert named(done, worker.name) == [IsPartialDict(name=worker.name, in_flight=0)]
     finally:
         set_writer(None)

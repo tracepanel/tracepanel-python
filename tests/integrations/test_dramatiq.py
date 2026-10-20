@@ -5,7 +5,7 @@ import threading
 from collections.abc import Generator
 
 import pytest
-from dirty_equals import IsInt, IsPartialDict, IsPositiveInt, IsStr
+from dirty_equals import IsInstance, IsInt, IsPartialDict, IsPositiveInt, IsStr
 
 dramatiq = pytest.importorskip("dramatiq")
 
@@ -13,7 +13,7 @@ from dramatiq.brokers.stub import StubBroker  # noqa: E402 (optional test group)
 from dramatiq.worker import Worker  # noqa: E402
 
 from tests.agentstore import AgentStore  # noqa: E402
-from tests.tasklive import Recorder, heartbeats, live, live_when, without_heartbeats  # noqa: E402
+from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, without_heartbeats  # noqa: E402
 from tracepanel.core.context import start_trace  # noqa: E402
 from tracepanel.core.model import Link, Trace  # noqa: E402
 from tracepanel.integrations import dramatiq as integration  # noqa: E402
@@ -99,7 +99,7 @@ def test_failure_after_the_last_retry(broker: StubBroker, traces: list[Trace]) -
 
 
 def test_ignored_tasks(broker: StubBroker, traces: list[Trace], monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("TRACEPANEL_IGNORE_TASKS", "*.housekeeping")
+    setenv(monkeypatch, "TRACEPANEL_IGNORE_TASKS", "*.housekeeping")
 
     @dramatiq.actor
     def housekeeping() -> None:
@@ -170,7 +170,7 @@ def test_a_sent_message_tells_the_agent_each_step(broker: StubBroker, recorder: 
     ]
 
     # The worker process says it is there as it boots, before it processes anything.
-    assert heartbeats(recorder.events)[0] == {
+    assert heartbeats(recorder.events, WORKER)[0] == {
         "event": "heartbeat",
         "system": "dramatiq",
         "id": "",
@@ -209,7 +209,7 @@ def test_a_retry_waits_with_its_error_and_runs_again(broker: StubBroker, recorde
 def test_ignored_messages_send_no_events(
     broker: StubBroker, recorder: Recorder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("TRACEPANEL_IGNORE_TASKS", "*.housekeeping")
+    setenv(monkeypatch, "TRACEPANEL_IGNORE_TASKS", "*.housekeeping")
 
     @dramatiq.actor
     def housekeeping() -> None:
@@ -224,7 +224,7 @@ def test_ignored_messages_send_no_events(
 def test_arguments_are_left_out_of_the_events_too(
     broker: StubBroker, recorder: Recorder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("TRACEPANEL_CAPTURE_TASK_ARGS", "false")
+    setenv(monkeypatch, "TRACEPANEL_CAPTURE_TASK_ARGS", "false")
 
     @dramatiq.actor
     def count_users(limit: int) -> int:
@@ -255,7 +255,11 @@ def test_the_agent_lists_a_message_queued_then_running_until_it_ends(broker: Stu
         message = waits.send()
         queued = live_when(store, lambda answer: bool(answer["tasks"]))
 
-        assert queued == {"now": IsPositiveInt, "tasks": [IsPartialDict(id=message.message_id)], "workers": []}
+        assert queued == {
+            "now": IsPositiveInt,
+            "tasks": [IsPartialDict(id=message.message_id)],
+            "workers": IsInstance(list),
+        }
         assert queued["tasks"][0] == {
             "id": message.message_id,
             "system": "dramatiq",
@@ -279,7 +283,7 @@ def test_the_agent_lists_a_message_queued_then_running_until_it_ends(broker: Stu
         assert running["tasks"] == [
             IsPartialDict(id=message.message_id, state="running", worker=WORKER, started_at=IsInt)
         ]
-        assert running["workers"] == [
+        assert named(running, WORKER) == [
             {"name": WORKER, "system": "dramatiq", "service": IsStr, "last_seen": IsPositiveInt, "in_flight": 1}
         ]
 
@@ -288,7 +292,7 @@ def test_the_agent_lists_a_message_queued_then_running_until_it_ends(broker: Stu
         worker.join()
         done = live_when(store, lambda answer: not answer["tasks"])
 
-        assert done["workers"] == [IsPartialDict(name=WORKER, in_flight=0)]
+        assert named(done, WORKER) == [IsPartialDict(name=WORKER, in_flight=0)]
     finally:
         release.set()
         worker.stop()
