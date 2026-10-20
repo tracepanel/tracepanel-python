@@ -1,6 +1,4 @@
-import time
-from collections.abc import Callable, Generator
-from typing import Any
+from collections.abc import Generator
 
 import pytest
 from dirty_equals import IsInt, IsList, IsPartialDict, IsPositiveInt, IsStr
@@ -10,6 +8,7 @@ from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
 from tests.agentstore import AgentStore, issues, newer
+from tests.tasklive import Recorder, live, live_when, without_heartbeats
 from tracepanel.core.model import Link, Trace
 from tracepanel.storage import agent, transport
 from tracepanel.storage.transport import set_writer
@@ -211,23 +210,6 @@ def test_ignored_tasks(traces: list[Trace], settings: Settings) -> None:
     assert traces == []
 
 
-class Recorder:
-    """A writer that keeps the traces and the task events, in the order they were sent."""
-
-    def __init__(self) -> None:
-        self.traces: list[Trace] = []
-        self.events: list[dict[str, Any]] = []
-
-    def submit(self, trace: Trace) -> None:
-        self.traces.append(trace)
-
-    def submit_event(self, event: dict[str, Any]) -> None:
-        self.events.append(event)
-
-    def flush(self, timeout: float = 5.0) -> None:
-        pass
-
-
 @pytest.fixture
 def recorder(monkeypatch: pytest.MonkeyPatch) -> Generator[Recorder, None, None]:
     recorded = Recorder()
@@ -235,11 +217,6 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> Generator[Recorder, None, None]
     yield recorded
     # What a test enqueued and no worker ran would run in the next test's worker.
     jobs.app.control.purge()
-
-
-def without_heartbeats(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    # A worker says it is there when it starts (worker_ready), however the test starts it.
-    return [event for event in events if event["event"] != "heartbeat"]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -332,24 +309,6 @@ def test_arguments_are_left_out_of_the_events_too(recorder: Recorder, settings: 
 
 def test_celery_says_in_the_hello_that_it_sends_task_events() -> None:
     assert "live_tasks" in agent.SENDS
-
-
-def live(store: AgentStore) -> dict[str, Any]:
-    answer = store.call("tasks/live")
-    if answer is None:
-        pytest.skip("the released agent lists no tasks in flight: a newer one does")
-    return answer
-
-
-def live_when(store: AgentStore, ready: Callable[[dict[str, Any]], bool]) -> dict[str, Any]:
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        answer = live(store)
-        if ready(answer):
-            return answer
-        time.sleep(0.02)
-    msg = f"api/tasks/live never got there: {live(store)}"
-    raise AssertionError(msg)
 
 
 @pytest.mark.django_db(transaction=True)

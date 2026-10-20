@@ -20,6 +20,12 @@
   running and waiting to be retried, and the workers. The hello says
   `live_tasks`. Eager tasks send none, and `capture_task_args` and
   `ignore_tasks` apply to the events too.
+- RQ, Dramatiq and Django Tasks send the same task events, so the Tasks
+  page's Live lists their jobs, messages and tasks in flight and their
+  workers too. A worker says it is there as it starts (RQ, Dramatiq) or with
+  its first task (Django Tasks). Dramatiq's retries are told before the next
+  attempt can start. Jobs of an RQ queue with `is_async=False` and tasks of
+  Django's ImmediateBackend and DummyBackend send none.
 - Falcon's ASGI app (`falcon.asgi.App`) is traced as its WSGI app is:
   `tracepanel run uvicorn app:app`, or `tracepanel.falcon.install(app)` in
   code. A request is named after its route's URI template, its responder
