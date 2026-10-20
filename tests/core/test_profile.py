@@ -1,5 +1,6 @@
 import sys
 import threading
+import time
 from pathlib import Path
 from types import FrameType
 
@@ -134,3 +135,43 @@ def test_a_library_frame_is_named_by_its_package_path() -> None:
     handlers = str(Path(django.__file__).parent / "core" / "handlers" / "base.py")
 
     assert frames.library_path(handlers) == "django/core/handlers/base.py"
+
+
+def test_a_trace_starting_as_the_idle_sampler_leaves_is_still_sampled(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The sampler leaves after two idle ticks: traces a tick or two apart start just as it goes.
+    monkeypatch.setattr(profile, "IDLE_TICKS", 2)
+    monkeypatch.setenv("TRACEPANEL_PROFILE_INTERVAL_MS", "1")
+    conf.reset()
+    sampler = profile.Sampler()
+    missed = 0
+    # Long enough that the OS gives the sampler a turn whatever else runs: only the race could leave it out.
+    for gap in [0.0, 0.001, 0.002, 0.003] * 5:
+        time.sleep(gap)
+        recording = sampler.start()
+        busy(0.1)
+        if sampler.stop(recording) is None:
+            missed += 1
+
+    assert missed == 0
+
+
+def test_while_traces_are_profiled_the_gil_changes_hands_as_often_as_the_sampler_wakes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRACEPANEL_PROFILE_INTERVAL_MS", "1")
+    conf.reset()
+    before = sys.getswitchinterval()
+    sampler = profile.Sampler()
+
+    recording = sampler.start()
+    during = sys.getswitchinterval()
+    sampler.stop(recording)
+
+    assert during == 0.001
+    assert sys.getswitchinterval() == before
+
+
+def busy(seconds: float) -> None:
+    end = time.perf_counter() + seconds
+    while time.perf_counter() < end:
+        pass

@@ -4,7 +4,9 @@ from django.test import Client
 from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
+from tracepanel.core import conf
 from tracepanel.core.model import Trace
+from tracepanel.storage import agent
 
 pytestmark = pytest.mark.django_db
 
@@ -80,10 +82,9 @@ def test_with_profiling_off_nothing_is_profiled(client: Client, traces: list[Tra
     assert trace.profile is None
 
 
-def test_the_console_offers_profiling_while_it_is_on(client: Client, settings: Settings) -> None:
-    offered = client.get("/__tracepanel__/api/capabilities").json()
+def test_the_hello_offers_profiling_while_it_is_on(settings: Settings) -> None:
+    offered = agent.capabilities(conf.get_config())
     settings.TRACEPANEL = {"profile_enabled": False}
-    turned_off = client.get("/__tracepanel__/api/capabilities").json()
 
-    assert offered == {"explain": True, "users": True, "profile": True, "request": True}
-    assert turned_off == {"explain": True, "users": True, "profile": False, "request": True}
+    assert "profile" in offered
+    assert "profile" not in agent.capabilities(conf.get_config())

@@ -7,6 +7,10 @@ from django.contrib.auth.models import User
 from django.test import Client
 from pytest_django.fixtures import Settings
 
+from tests.agentstore import AgentStore
+from tracepanel.core import conf
+from tracepanel.storage import agent
+
 API = "/__tracepanel__/api/users"
 WIDGET = {"X-Tracepanel": "1"}
 
@@ -89,22 +93,26 @@ def test_errors(client: Client, users: list[User], settings: Settings) -> None:
     assert client.get(API).status_code == 404
 
 
-def test_the_console_offers_switching_only_where_it_works(client: Client, settings: Settings) -> None:
+def test_the_console_offers_what_the_app_said_in_its_hello(client: Client, app_console: AgentStore) -> None:
     offered = client.get("/__tracepanel__/api/capabilities").json()
-    settings.TRACEPANEL = {"user_switch": False}
-    turned_off = client.get("/__tracepanel__/api/capabilities").json()
 
     assert offered == {"explain": True, "users": True, "profile": True, "request": True}
-    assert turned_off == {"explain": True, "users": False, "profile": True, "request": True}
 
 
-def test_the_console_says_whether_requests_are_recorded_in_detail(client: Client, settings: Settings) -> None:
-    recorded = client.get("/__tracepanel__/api/capabilities").json()
-    settings.TRACEPANEL = {"capture_request": False}
-    not_recorded = client.get("/__tracepanel__/api/capabilities").json()
+def test_the_agent_s_own_console_is_not_offered_what_only_the_app_s_answers(
+    client: Client, app_console: AgentStore
+) -> None:
+    client.get("/__tracepanel__/api/capabilities")
 
-    assert recorded["request"] is True
-    assert not_recorded["request"] is False
+    # EXPLAIN and switching users run at the app's console: the agent's has nowhere to run them.
+    assert app_console.get("capabilities") == {"explain": False, "users": False, "profile": True, "request": True}
+
+
+def test_what_is_turned_off_is_left_out_of_the_hello(settings: Settings, users: list[User]) -> None:
+    settings.TRACEPANEL = {"user_switch": False, "capture_request": False}
+
+    assert "users" not in agent.console_offers()
+    assert "request" not in agent.capabilities(conf.get_config())
 
 
 def test_custom_user_model() -> None:

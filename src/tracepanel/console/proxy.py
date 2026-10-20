@@ -69,8 +69,13 @@ def trace(trace_id: str) -> dict[str, object] | None:
     return document if isinstance(document, dict) else None
 
 
+# Which app's console a request came through: the agent offers this console what the app answers here (EXPLAIN,
+# switching users), as the app said in its hello.
+VIA_APP = "Tracepanel-Console"
+
+
 def _fetch(url: str, method: str, body: bytes = b"", content_type: str = "") -> Response | None:
-    headers = {"Content-Type": content_type} if content_type else {}
+    headers = {VIA_APP: conf.get_config().service, **({"Content-Type": content_type} if content_type else {})}
     sent = urllib.request.Request(url, data=body or None, method=method, headers=headers)  # noqa: S310 (the agent)
     try:
         with OPENER.open(sent, timeout=TIMEOUT_S) as answer:

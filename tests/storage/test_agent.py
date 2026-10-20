@@ -187,13 +187,23 @@ def _hello(tmp_path: Path, config: conf.Config) -> dict[str, object]:
     return json.loads(heard[0])
 
 
-def test_the_hello_says_the_app_records_request_details(tmp_path: Path) -> None:
-    hello = _hello(tmp_path, dataclasses.replace(conf.get_config(), capture_request=True))
+def test_the_hello_says_what_the_app_offers_the_console(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # EXPLAIN answered at the app's console; switching users offered, but off here.
+    monkeypatch.setattr(agent, "CONSOLE", {"explain": lambda: True, "users": lambda: False})
+    config = dataclasses.replace(conf.get_config(), capture_request=True, profile_enabled=True, service="shop")
 
-    assert hello == IsPartialDict({"protocol": agent.PROTOCOL, "capabilities": ["request"]})
+    hello = _hello(tmp_path, config)
+
+    assert hello == IsPartialDict(
+        {"protocol": agent.PROTOCOL, "service": "shop", "capabilities": ["profile", "request"], "console": ["explain"]}
+    )
 
 
-def test_the_hello_says_nothing_of_request_details_when_they_are_not_kept(tmp_path: Path) -> None:
-    hello = _hello(tmp_path, dataclasses.replace(conf.get_config(), capture_request=False))
+def test_an_app_that_offers_nothing_says_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(agent, "CONSOLE", {})
+    config = dataclasses.replace(conf.get_config(), capture_request=False, profile_enabled=False)
+
+    hello = _hello(tmp_path, config)
 
     assert "capabilities" not in hello
+    assert "console" not in hello

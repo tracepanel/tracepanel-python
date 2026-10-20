@@ -9,7 +9,7 @@ from jsonschema import Draft202012Validator
 from tests.agentstore import AGENT_SCHEMAS, AgentStore
 from tracepanel.core import conf
 from tracepanel.core.model import Trace
-from tracepanel.storage import transport
+from tracepanel.storage import agent, transport
 
 # What an SDK sends the agent: the agent's schema/trace.schema.json.
 SCHEMA = AGENT_SCHEMAS / "trace.schema.json"
@@ -50,6 +50,15 @@ def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[AgentSto
     conf.reset()
     yield running
     running.stop()
+
+
+@pytest.fixture
+def app_console(store: AgentStore, monkeypatch: pytest.MonkeyPatch) -> AgentStore:
+    """The store's agent, and this app connected to it: what the app's console offers comes from its hello."""
+    if not store.offers_at_app_consoles():
+        pytest.skip("the released agent offers nothing an app answers at its console: a newer one does")
+    monkeypatch.setattr(transport, "_writer", agent.AgentWriter(store.config()))
+    return store
 
 
 @pytest.fixture
