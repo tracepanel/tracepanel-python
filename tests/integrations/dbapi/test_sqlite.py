@@ -1,6 +1,7 @@
 import asyncio
 import sqlite3
 from pathlib import Path
+from types import FrameType
 
 import pytest
 from dirty_equals import IsPartialDict, IsStr
@@ -47,10 +48,15 @@ def test_statements_are_recorded_once_each() -> None:
     )
 
 
+def outside_the_project(frame: FrameType) -> bool:
+    del frame
+    return False
+
+
 def test_a_query_no_project_code_made_names_the_library_code_that_did(monkeypatch: pytest.MonkeyPatch) -> None:
     connection = shop()
     # As in Django's admin: no frame of the project's own on the stack.
-    monkeypatch.setattr("tracepanel.core.frames._code_in_app", lambda frame: False)
+    monkeypatch.setattr("tracepanel.core.frames._code_in_app", outside_the_project)
 
     def work() -> None:
         connection.execute("SELECT name FROM author").fetchall()
