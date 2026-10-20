@@ -180,6 +180,10 @@ jobs:
       mongodb:
         image: mongo:8.0
         ports: ["27017:27017"]
+        env:
+          # MongoDB 8's TCMalloc refuses to start on Linux 6.19 and newer, which the runners have (SERVER-121912):
+          # this lets it start; harmless on older kernels.
+          GLIBC_TUNABLES: glibc.pthread.rseq=1
         options: >-
           --health-cmd "mongosh --quiet --eval 'db.runCommand({ping: 1}).ok'" --health-interval 5s --health-timeout 5s
           --health-retries 20
