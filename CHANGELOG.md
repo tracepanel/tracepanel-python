@@ -13,6 +13,13 @@
 
 ### Added
 
+- Celery tasks in flight reach the console before they end: the integration
+  sends small task events to the agent (enqueued with the trace that sent
+  it, started, retried with the error, finished), and every worker process
+  a heartbeat with the tasks it runs. The Tasks page lists the tasks queued,
+  running and waiting to be retried, and the workers. The hello says
+  `live_tasks`. Eager tasks send none, and `capture_task_args` and
+  `ignore_tasks` apply to the events too.
 - Falcon's ASGI app (`falcon.asgi.App`) is traced as its WSGI app is:
   `tracepanel run uvicorn app:app`, or `tracepanel.falcon.install(app)` in
   code. A request is named after its route's URI template, its responder

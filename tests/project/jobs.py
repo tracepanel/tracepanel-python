@@ -1,5 +1,6 @@
 """A Celery app for the tests: an in-memory broker, so a real worker can run in a thread."""
 
+import threading
 from typing import TYPE_CHECKING
 
 from celery import Celery
@@ -34,3 +35,12 @@ def flaky(self: "Task[[], str]") -> str:
     if self.request.retries == 0:
         raise self.retry(exc=ConnectionError("CRM down"), countdown=0)
     return f"ok after {self.request.retries} retry"
+
+
+# Holds `waits` running until a test lets it go: the console lists it as running meanwhile.
+release = threading.Event()
+
+
+@app.task
+def waits() -> bool:
+    return release.wait(10)

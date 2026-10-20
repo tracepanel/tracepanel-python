@@ -9,7 +9,7 @@ The wire: a hello line, `{"protocol": 1, "max_traces": 2000, "thresholds": {...}
 [...], "console": [...]}` (what the app offers the console: the one place it says so; the agent alone answers the
 console's `api/capabilities` from it), answered
 by `{"ok": true}` (or a refusal with its reason); then frames, a 4-byte big-endian length and a JSON array of
-`Trace.to_dict()`.
+`Trace.to_dict()`, or an object of task events, `{"tasks": [...]}` (an agent from before ignores it).
 """
 
 import json
@@ -29,7 +29,7 @@ from tracepanel._agent import AGENT, find_agent_bin
 from tracepanel._compat import override
 from tracepanel.core import conf
 from tracepanel.core.model import Trace
-from tracepanel.storage.transport import BatchWriter
+from tracepanel.storage.transport import BatchWriter, Event
 
 PROTOCOL = 1
 ADDR_FILE = "agent.addr"
@@ -192,9 +192,22 @@ def offer(name: str, check: Callable[[], bool]) -> None:
     CONSOLE[name] = check
 
 
+# What the integrations send the agent beyond traces (`live_tasks`: Celery's task events), as they say on install.
+SENDS: set[str] = set()
+
+
+def sends(name: str) -> None:
+    """Say in the hello that this app sends `name` (`live_tasks`)."""
+    SENDS.add(name)
+
+
 def capabilities(config: conf.Config) -> list[str]:
-    """What this app's traces hold beyond the usual: a profile when one is asked for, the request's details."""
-    return [name for name, on in (("profile", config.profile_enabled), ("request", config.capture_request)) if on]
+    """What this app's traces hold beyond the usual, and what it sends besides them.
+
+    A profile when one is asked for, the request's details; task events (`live_tasks`).
+    """
+    own = [name for name, on in (("profile", config.profile_enabled), ("request", config.capture_request)) if on]
+    return own + sorted(SENDS)
 
 
 def console_offers() -> list[str]:
@@ -329,23 +342,35 @@ class AgentWriter(BatchWriter):
         with self._lock:
             self._send(batch)
 
+    @override
+    def write_events(self, events: list[Event]) -> None:
+        # Not counted with the traces, sent or dropped: without an agent there is nothing to show them anyway.
+        with self._lock:
+            self._frame({"tasks": events})
+
     def _send(self, batch: list[Trace]) -> None:
-        self._connect()
-        if self._sock is not None:
-            data = json.dumps([trace.to_dict() for trace in batch], separators=(",", ":")).encode()
-            try:
-                self._sock.sendall(struct.pack(">I", len(data)) + data)
-            except OSError:
-                # The agent went away: this batch is lost; the next ones go to it once it is back.
-                self._sock.close()
-                self._sock = None
-                self._retry_at = time.monotonic() + RETRY_S
-            else:
-                self.sent += len(batch)
-                self._warned = False
-                return
+        if self._frame([trace.to_dict() for trace in batch]):
+            self.sent += len(batch)
+            self._warned = False
+            return
         self.dropped += len(batch)
         # "off" is the user's choice: nothing to say about it.
         if not self._warned and self.config.agent != "off":
             self._warned = True
             sys.stderr.write(f"tracepanel ▸ {unavailable(self.config)}\n")
+
+    def _frame(self, payload: object) -> bool:
+        """One frame to the agent; whether it went."""
+        self._connect()
+        if self._sock is None:
+            return False
+        data = json.dumps(payload, separators=(",", ":")).encode()
+        try:
+            self._sock.sendall(struct.pack(">I", len(data)) + data)
+        except OSError:
+            # The agent went away: this frame is lost; the next ones go to it once it is back.
+            self._sock.close()
+            self._sock = None
+            self._retry_at = time.monotonic() + RETRY_S
+            return False
+        return True
