@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- What the app offers the console is said once, in the hello to the agent:
+  its service, what its traces hold (`profile`, `request`) and what its
+  console answers (`explain`, Django's `users`). The console's
+  `api/capabilities` comes from the agent, which offers EXPLAIN and switching
+  users only through the app's console. The app's console no longer answers it
+  itself, and connects to the agent first, so the agent has heard the hello.
+
 ### Added
 
 - Flask, FastAPI and Starlette record the session and the signed-in user,
