@@ -304,7 +304,7 @@ async def busy(request: Request) -> JSONResponse:
     return JSONResponse({"done": True})
 
 
-def test_the_panels_cookie_profiles_one_request_and_is_deleted(
+def test_the_panels_cookie_profiles_each_request_while_it_is_set(
     traces: list[Trace], restore: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("TRACEPANEL_PROFILE_INTERVAL_MS", "1")
@@ -318,7 +318,7 @@ def test_the_panels_cookie_profiles_one_request_and_is_deleted(
 
     assert profiled.profile is not None
     assert profiled.profile["samples"] == IsInt(gt=0)
-    assert profiled_response.headers["set-cookie"] == "tracepanel_profile=; Max-Age=0; Path=/"
+    assert "set-cookie" not in profiled_response.headers
 
     assert unprofiled.profile is None
     assert "set-cookie" not in plain.headers

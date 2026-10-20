@@ -15,8 +15,8 @@
   `api/capabilities` says whether it is on.
 - A request's profile: where its time went in code, sampled while it runs,
   for the console's flame graph. A request asks for it with an
-  `X-Tracepanel-Profile: 1` header or the panel's one-shot
-  `tracepanel_profile=1` cookie, which its response deletes.
+  `X-Tracepanel-Profile: 1` header, or the panel's
+  `tracepanel_profile=1` cookie, set while its Profile toggle is on.
   `profile = true` profiles every trace, `profile_enabled = false` none, and
   `profile_interval_ms` sets how often it samples. The console's
   capabilities say whether profiling is on.

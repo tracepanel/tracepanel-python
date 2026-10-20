@@ -248,7 +248,7 @@ def spin(seconds: float) -> None:
         pass
 
 
-def test_the_panels_cookie_profiles_one_request_and_is_deleted(
+def test_the_panels_cookie_profiles_each_request_while_it_is_set(
     traces: list[Trace], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("TRACEPANEL_PROFILE_INTERVAL_MS", "1")
@@ -262,7 +262,7 @@ def test_the_panels_cookie_profiles_one_request_and_is_deleted(
 
     assert profiled.profile is not None
     assert profiled.profile["samples"] == IsInt(gt=0)
-    assert headers["Set-Cookie"] == "tracepanel_profile=; Max-Age=0; Path=/"
+    assert "Set-Cookie" not in headers
 
     assert unprofiled.profile is None
     assert "Set-Cookie" not in plain

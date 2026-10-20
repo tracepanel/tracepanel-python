@@ -19,8 +19,6 @@ from tracepanel.core.frames import is_in_app, library_path, relative
 
 HEADER = "x-tracepanel-profile"
 COOKIE = "tracepanel_profile"
-# The Set-Cookie that ends the panel's one-shot cookie: the request it was sent with is the one profiled.
-EXPIRE = f"{COOKIE}=; Max-Age=0; Path=/"
 # How deep a stack is walked: a recursion beyond it is cut, outermost frames kept.
 MAX_DEPTH = 128
 # Distinct stacks one trace keeps; the rest are counted as one "(other)" frame, so a profile stays small.
@@ -169,7 +167,7 @@ def requested(header: str | None, cookies: str | None) -> bool:
 
 
 def by_cookie(cookies: str | None) -> bool:
-    """Whether the request carries the panel's one-shot cookie: the response then deletes it (EXPIRE)."""
+    """Whether the request carries the panel's cookie: it profiles every request while the panel's toggle is on."""
     if not cookies or COOKIE not in cookies:
         return False
     try:

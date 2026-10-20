@@ -98,9 +98,6 @@ def finish(trace: Trace, request: HttpRequest, response: HttpResponseBase) -> No
         trace.attrs.update(details.response_headers(response.items()))
         trace.attrs.update(_read_body(request))
         trace.attrs.update(_session(request))
-    if profile.by_cookie(request.headers.get("cookie")):
-        # The panel's cookie asks for one request: this one.
-        response.delete_cookie(profile.COOKIE, path="/")
     body = response.content if isinstance(response, HttpResponse) else None
     trace.attrs.update(htmx.response_attrs(trace.attrs, response.status_code, response.headers, body))
     if not trace.attrs.get("user.logged_out"):

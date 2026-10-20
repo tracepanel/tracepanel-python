@@ -107,7 +107,6 @@ class TracepanelMiddleware:
         }
         reader = _capture(environ, headers, attrs) if config.capture_request else None
         asked = profile.requested(headers.get(profile.HEADER), headers.get("cookie"))
-        expire = profile.by_cookie(headers.get("cookie"))
         with start_trace("http", f"{method} {path}", attrs, profile=asked) as trace:
             try:
                 result = self.app(environ, response.start_response)
@@ -129,9 +128,6 @@ class TracepanelMiddleware:
                 complete(trace)
                 raise
             _answered(trace, response, body, reader, str(environ.get("CONTENT_TYPE", "")))
-            if expire:
-                # The panel's cookie asks for one request: this one.
-                response.headers.append(("Set-Cookie", profile.EXPIRE))
             if body is not None:
                 body = _decorate(environ, response, trace, config, body)
                 _close(result)

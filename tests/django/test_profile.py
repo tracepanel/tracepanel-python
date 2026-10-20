@@ -38,20 +38,20 @@ def test_a_request_asking_by_header_is_profiled(
     assert "Set-Cookie" not in response.headers
 
 
-def test_the_panels_cookie_profiles_one_request_and_is_deleted(client: Client, traces: list[Trace]) -> None:
+def test_the_panels_cookie_profiles_each_request_while_it_is_set(client: Client, traces: list[Trace]) -> None:
     client.cookies["tracepanel_profile"] = "1"
 
     response = client.get("/busy/")
-    again = client.get("/busy/")
-    first, second = traces
+    client.get("/busy/")
+    del client.cookies["tracepanel_profile"]
+    client.get("/busy/")
+    first, second, after = traces
 
     assert "spin" in in_app(first)
-    assert response.cookies["tracepanel_profile"].value == ""
-    assert response.cookies["tracepanel_profile"]["max-age"] == 0
-    assert response.cookies["tracepanel_profile"]["path"] == "/"
+    assert "spin" in in_app(second)
+    assert "tracepanel_profile" not in response.cookies
 
-    assert second.profile is None
-    assert "tracepanel_profile" not in again.cookies
+    assert after.profile is None
 
 
 def test_a_request_is_not_profiled_unless_asked(client: Client, traces: list[Trace]) -> None:
