@@ -63,7 +63,7 @@ class _Response:
 
 
 def _answered(
-    trace: Trace, response: _Response, body: bytes | None, reader: "_BodyReader | None", content_type: str
+    trace: Trace, response: _Response, body: bytes | None, reader: "_BodyReader | _NoBody | None", content_type: str
 ) -> None:
     """Record how the app answered: its status, htmx's headers, what the request carried; mark the trace."""
     trace.attrs["http.status_code"] = response.code
