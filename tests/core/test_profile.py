@@ -1,11 +1,13 @@
 import sys
 import threading
+from pathlib import Path
 from types import FrameType
 
+import django
 import pytest
 from dirty_equals import IsInt
 
-from tracepanel.core import conf, profile
+from tracepanel.core import conf, frames, profile
 from tracepanel.core.context import start_trace
 from tracepanel.core.profile import MAX_STACKS, OTHER, Recording
 
@@ -126,3 +128,9 @@ def in_app(document: dict[str, object]) -> set[str]:
     frames = document["frames"]
     assert isinstance(frames, list)
     return {str(frame["function"]) for frame in frames if isinstance(frame, dict) and frame["in_app"]}
+
+
+def test_a_library_frame_is_named_by_its_package_path() -> None:
+    handlers = str(Path(django.__file__).parent / "core" / "handlers" / "base.py")
+
+    assert frames.library_path(handlers) == "django/core/handlers/base.py"

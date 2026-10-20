@@ -69,6 +69,16 @@ def _relative(filename: str, root: str) -> str:
     return filename if rel.startswith("..") else rel
 
 
+@functools.lru_cache(maxsize=4096)
+def library_path(filename: str) -> str:
+    """A library's or Python's file as its package names it (django/core/handlers/base.py), not its install path."""
+    for root in sorted(_LIBRARY_PATHS, key=len, reverse=True):
+        if filename.startswith(root + os.sep):
+            return filename[len(root) + 1 :]
+    marker = f"{os.sep}site-packages{os.sep}"
+    return filename.split(marker, 1)[1] if marker in filename else filename
+
+
 # Where project code awaited sync_to_async(): the async ORM runs queries in a thread whose stack has no project
 # frames, so the place is taken before the hop (see tracepanel.aio) and travels with the context.
 awaited_from: ContextVar[str | None] = ContextVar("tracepanel_awaited_from", default=None)

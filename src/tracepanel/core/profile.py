@@ -15,7 +15,7 @@ from http.cookies import CookieError, SimpleCookie
 from types import CodeType, FrameType
 
 from tracepanel.core import conf
-from tracepanel.core.frames import is_in_app, relative
+from tracepanel.core.frames import is_in_app, library_path, relative
 
 HEADER = "x-tracepanel-profile"
 COOKIE = "tracepanel_profile"
@@ -157,7 +157,7 @@ def _frame(key: Key) -> dict[str, object]:
     return {
         "function": code.co_qualname,
         "module": module,
-        "file": relative(code.co_filename) if in_app else code.co_filename,
+        "file": relative(code.co_filename) if in_app else library_path(code.co_filename),
         "line": code.co_firstlineno,
         "in_app": in_app,
     }
