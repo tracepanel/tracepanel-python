@@ -1,11 +1,11 @@
 import pytest
 from asgiref.sync import async_to_sync, iscoroutinefunction
-from dirty_equals import IsInt, IsPartialDict, IsStr
+from dirty_equals import IsInstance, IsInt, IsPartialDict, IsStr
 from django.contrib.auth.models import User
 from django.http import HttpRequest, HttpResponse
 from django.test import AsyncClient
 
-from tests.agentstore import AgentStore, issues
+from tests.agentstore import AgentStore, issues, newer
 from tracepanel.core.model import Trace
 from tracepanel.django.middleware import TracepanelMiddleware
 
@@ -84,8 +84,15 @@ def test_console_api_under_asgi(traces: list[Trace], store: AgentStore) -> None:
     async_to_sync(AsyncClient().get)("/")
     response = async_to_sync(AsyncClient().get)("/__tracepanel__/api/counts")
 
+    answer = response.json()
+
     assert response.status_code == 200
-    assert response.json() == {"issues": IsInt, "errors": IsInt, "sections": IsPartialDict(http=IsInt)}
+    # Whether an app says it sends task events (an agent after 0.3.7 tells): the answer's shape is what counts here.
+    assert answer == newer(
+        {"issues": IsInt, "errors": IsInt, "sections": IsPartialDict(http=IsInt)},
+        answer,
+        {"live_tasks": IsInstance(bool)},
+    )
     assert [trace.name for trace in traces] == ["GET /"]
     assert traces[0].id == IsStr
 

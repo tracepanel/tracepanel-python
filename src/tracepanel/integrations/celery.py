@@ -14,9 +14,7 @@ publishing (with the enqueuing trace and span), `started` in `task_prerun`, `ret
 process was killed leaves the console's Live list. Eager tasks send none: they run inside their caller.
 """
 
-import os
 import threading
-import time
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -25,7 +23,7 @@ from tracepanel.core.context import adopt, current_span, current_trace, now_us, 
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
-from tracepanel.integrations._tasks import TaskRun, event_repr, task_event, task_repr, trigger
+from tracepanel.integrations._tasks import Heartbeat, TaskRun, event_repr, task_event, task_repr, trigger
 from tracepanel.storage import agent
 from tracepanel.storage.transport import complete, get_writer, role
 
@@ -43,12 +41,6 @@ _runs: dict[str, TaskRun] = {}
 _published: dict[str, tuple[int, str, int]] = {}
 _lock = threading.Lock()
 _beat = False
-# How often a worker process says it is alive, with the tasks it runs (the agent drops a running task after 2 minutes
-# without news of it).
-HEARTBEAT_S = 30.0
-# The process whose heartbeat thread runs, and the worker it speaks for: a forked pool process starts its own.
-_heart_pid = 0
-_hostname = ""
 
 
 def _header(request: object, name: str) -> object:
@@ -177,28 +169,18 @@ def _enqueued(  # noqa: PLR0913 (what the event tells)
 # ---------- the worker side ----------
 
 
-def _heartbeat() -> None:
-    """Every HEARTBEAT_S, the worker alive and the tasks this process runs."""
-    while True:
-        time.sleep(HEARTBEAT_S)
-        with _lock:
-            ids = [task_id for task_id, run in _runs.items() if not run.trace.attrs.get("task.eager")]
-        task_event("heartbeat", SYSTEM, "", worker=_hostname or None, ids=ids)
+def _running() -> list[str]:
+    """The tasks this process runs now, eager ones left out (they are their caller's)."""
+    with _lock:
+        return [task_id for task_id, run in _runs.items() if not run.trace.attrs.get("task.eager")]
 
 
-def _beating(hostname: str) -> None:
-    """The heartbeat thread of this process, started once (again in a forked pool process)."""
-    global _heart_pid, _hostname  # noqa: PLW0603 (per-process state)
-    _hostname = hostname or _hostname
-    if _heart_pid == os.getpid():
-        return
-    _heart_pid = os.getpid()
-    threading.Thread(target=_heartbeat, name="tracepanel-heartbeat", daemon=True).start()
+_heart = Heartbeat(SYSTEM, _running)
 
 
 def _started(task_id: str, task: "Task[Any, Any]", attrs: Attrs, kwargs: Mapping[str, object]) -> None:
     hostname = str(attrs.get("task.worker") or "")
-    _beating(hostname)
+    _heart.start(hostname)
     capture = conf.get_config().capture_task_args
     task_event(
         "started",
@@ -330,8 +312,8 @@ def on_beat_init(**kwargs: object) -> None:
 def on_worker_ready(sender: object = None, **kwargs: object) -> None:
     """The worker says it is there before it runs anything: the console lists it among the workers."""
     del kwargs
-    hostname = str(getattr(sender, "hostname", "") or "")
-    task_event("heartbeat", SYSTEM, "", worker=hostname or None, ids=[])
+    _heart.worker = str(getattr(sender, "hostname", "") or "") or _heart.worker
+    _heart.beat()
 
 
 def on_worker_shutdown(**kwargs: object) -> None:

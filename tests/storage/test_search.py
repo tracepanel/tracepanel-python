@@ -343,6 +343,8 @@ def test_counts(client: Client, recorded: AgentStore) -> None:
     }
     answer = recorded.counts()
     counts["sections"] = newer(counts["sections"], answer["sections"], {"mails": 0})
+    # The app says in its hello that it sends task events: the console shows Tasks before any is stored.
+    counts = newer(counts, answer, {"live_tasks": True})
 
     assert answer == counts
     assert client.get("/__tracepanel__/api/counts").json() == counts
@@ -472,11 +474,14 @@ def test_one_app_of_several(client: Client, two_apps: AgentStore) -> None:
 
     answer = two_apps.counts()
     every["sections"] = newer(every["sections"], answer["sections"], {"mails": 0})
+    every = newer(every, answer, {"live_tasks": True})
     assert answer == every
     shop = two_apps.get("counts", service="shop")
     assert shop == {
         "issues": 0,
         "errors": 0,
+        # No app of its own is connected to say it sends task events.
+        **newer({}, shop, {"live_tasks": False}),
         # The shop app uses no cache.
         "sections": newer(
             {

@@ -2,15 +2,22 @@ import pytest
 
 pytest.importorskip("django_tasks_db")
 
-from dirty_equals import IsInt, IsPartialDict, IsStr
+from typing import Any
+
+from dirty_equals import IsInstance, IsInt, IsPartialDict, IsPositiveInt, IsStr
 from django.contrib.auth.models import User
 from django.core.management import call_command
 from django.test import Client
 from jsonschema import Draft202012Validator
+from pytest_django.fixtures import Settings
 
 from tests.agentstore import AgentStore
+from tests.project import django_jobs
+from tests.tasklive import Recorder, live, live_when, named, without_heartbeats
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Link, Span, Trace
+from tracepanel.storage import agent, transport
+from tracepanel.storage.transport import set_writer
 
 
 def by_kind(traces: list[Trace], kind: str) -> list[Trace]:
@@ -116,3 +123,147 @@ def test_store_links_runs_to_enqueues_in_any_order(store: AgentStore, run_first:
     assert store.related(run.id)["enqueued_by"] == IsPartialDict(id=request.id)
     assert [item["id"] for item in store.related(request.id)["enqueued"]] == [run.id]
     assert store.related(request.id)["via"] == {run.id: request.spans[1].id}
+
+
+@pytest.fixture
+def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
+    recorded = Recorder()
+    monkeypatch.setattr(transport, "_writer", recorded)
+    return recorded
+
+
+def work(worker: str = "worker-1") -> None:
+    call_command(
+        "db_worker",
+        "--backend",
+        "database",
+        "--batch",
+        "--no-reload",
+        "--no-startup-delay",
+        "--worker-id",
+        worker,
+        verbosity=0,
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_queued_task_tells_the_agent_each_step(client: Client, recorder: Recorder, users: list[User]) -> None:
+    client.get("/django-tasks/queued/")
+    work()
+    (request,) = by_kind(recorder.traces, "http")
+    (enqueue,) = [span for span in request.spans if span.kind == "task.enqueue"]
+    task_id = enqueue.attrs["task.id"]
+
+    assert without_heartbeats(recorder.events) == [
+        {
+            "event": "enqueued",
+            "system": "django",
+            "id": task_id,
+            "time": IsPositiveInt,
+            "name": "tests.project.django_jobs.queued_count",
+            "queue": "default",
+            "retries": 0,
+            "args": "('queued',)",
+            "kwargs": "{}",
+            "trace_id": request.id,
+            "span_id": enqueue.id,
+        },
+        {
+            "event": "started",
+            "system": "django",
+            "id": task_id,
+            "time": IsPositiveInt,
+            "name": "tests.project.django_jobs.queued_count",
+            "queue": "default",
+            "worker": "worker-1",
+            "retries": 0,
+            "args": "('queued',)",
+            "kwargs": "{}",
+        },
+        {
+            "event": "finished",
+            "system": "django",
+            "id": task_id,
+            "time": IsPositiveInt,
+            "worker": "worker-1",
+            "state": "SUCCESS",
+        },
+    ]
+
+
+@pytest.mark.django_db
+def test_immediate_and_ignored_tasks_send_no_events(client: Client, recorder: Recorder, settings: Settings) -> None:
+    # The ImmediateBackend runs them inside enqueue(): they are never in flight.
+    client.get("/django-tasks/inline/")
+    client.get("/django-tasks/broken/")
+    settings.TRACEPANEL = {"ignore_tasks": ["tests.project.django_jobs.queued_count"]}
+    django_jobs.queued_count.enqueue("ignored")
+
+    assert recorder.events == []
+
+
+@pytest.mark.django_db
+def test_arguments_are_left_out_of_the_events_too(recorder: Recorder, settings: Settings) -> None:
+    settings.TRACEPANEL = {"capture_task_args": False}
+
+    django_jobs.queued_count.enqueue("secret")
+    (event,) = recorder.events
+
+    assert {"args", "kwargs"} & event.keys() == set()
+
+
+def test_django_tasks_say_in_the_hello_that_they_send_task_events() -> None:
+    assert "live_tasks" in agent.SENDS
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_agent_lists_a_task_queued_then_running_until_it_ends(store: AgentStore) -> None:
+    live(store)
+    writer = store.writer()
+    set_writer(writer)
+    seen: list[dict[str, Any]] = []
+    django_jobs.during[:] = [
+        lambda: seen.append(live_when(store, lambda answer: answer["tasks"][0]["state"] == "running"))
+    ]
+    try:
+        result = django_jobs.watched.enqueue()
+        queued = live_when(store, lambda answer: bool(answer["tasks"]))
+
+        assert queued == {
+            "now": IsPositiveInt,
+            "tasks": [IsPartialDict(id=str(result.id))],
+            "workers": IsInstance(list),
+        }
+        assert queued["tasks"][0] == {
+            "id": str(result.id),
+            "system": "django",
+            "name": "tests.project.django_jobs.watched",
+            "service": IsStr,
+            "state": "queued",
+            "queue": "default",
+            "worker": None,
+            "enqueued_at": IsPositiveInt,
+            "started_at": None,
+            "retries": 0,
+            "args": "()",
+            "kwargs": "{}",
+            "error": None,
+            "enqueued_by": None,
+        }
+
+        work("worker-live")
+        (running,) = seen
+
+        assert running["tasks"] == [
+            IsPartialDict(id=str(result.id), state="running", worker="worker-live", started_at=IsInt)
+        ]
+        assert named(running, "worker-live") == [
+            {"name": "worker-live", "system": "django", "service": IsStr, "last_seen": IsPositiveInt, "in_flight": 1}
+        ]
+
+        done = live_when(store, lambda answer: not answer["tasks"])
+
+        assert named(done, "worker-live") == [IsPartialDict(name="worker-live", in_flight=0)]
+    finally:
+        django_jobs.during.clear()
+        set_writer(None)

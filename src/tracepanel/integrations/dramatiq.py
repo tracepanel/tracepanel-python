@@ -7,8 +7,18 @@ the task's trace and issues are found like for requests. Middleware runs its `af
 first means tracepanel sees the outcome last, once Retries has decided between `retry` and `failure`.
 
 Arguments and results are kept for local debugging only (masked like locals) and never leave the machine.
+
+A message's trace reaches the agent when it is processed. Until then task events say where it is: `enqueued` after a
+send (with the enqueuing trace and span), `started` before it is processed, `finished` after (or skipped). When
+Retries puts the message back, tracepanel sees the send in the thread still processing it and says `retried` (with the
+error) right then, before another thread can start the next attempt. A delayed message moved to its queue when due is
+not sent again. Each worker process says it is there when it boots and sends a `heartbeat` with the messages it
+processes, so a message whose process was killed leaves the console's Live list.
 """
 
+import os
+import socket
+import sys
 import threading
 from contextvars import ContextVar
 from typing import Any
@@ -19,7 +29,8 @@ from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
 from tracepanel.core.patching import patch, patched
-from tracepanel.integrations._tasks import TaskRun, task_repr, trigger
+from tracepanel.integrations._tasks import Heartbeat, TaskRun, event_repr, task_event, task_repr, trigger
+from tracepanel.storage import agent
 from tracepanel.storage.transport import complete, get_writer
 
 SYSTEM = "dramatiq"
@@ -27,6 +38,8 @@ SYSTEM = "dramatiq"
 PARENT = "tracepanel_parent"
 PUBLISHED = "tracepanel_published"
 TRIGGER = "tracepanel_trigger"
+# Set on a message's first send: a send of a message that has it is Retries' requeue or a delayed message moved on.
+SENT = "tracepanel_sent"
 # The run open in this worker thread: before_process_message and after_process_message come from the same thread.
 # Not keyed by message id: a retry keeps the id, and Retries requeues it (in its own after_ hook, before tracepanel's)
 # soon enough for another thread to start the next attempt while this one is still being closed.
@@ -34,6 +47,31 @@ _run: ContextVar[TaskRun | None] = ContextVar("tracepanel_dramatiq_run", default
 # Message id -> (when the send started, the id the enqueue span will get, the trace's span count then).
 _sending: dict[str, tuple[int, str, int]] = {}
 _lock = threading.Lock()
+# Whether the send in progress in this thread is the message's first: before_enqueue tells after_enqueue.
+_first_send: ContextVar[bool] = ContextVar("tracepanel_dramatiq_first_send", default=True)
+# The messages this process processes now, for its heartbeat; one that was retried leaves at once.
+_processing: set[str] = set()
+
+
+def _processing_ids() -> list[str]:
+    with _lock:
+        return sorted(_processing)
+
+
+_heart = Heartbeat(SYSTEM, _processing_ids)
+
+
+def _queue(message: Any) -> str:  # noqa: ANN401 (dramatiq.Message)
+    """The queue a message waits in, not its delay queue (`default.DQ`)."""
+    from dramatiq.common import q_name  # noqa: PLC0415 (optional dependency)
+
+    return q_name(message.queue_name)
+
+
+def _arguments(message: Any) -> dict[str, object]:  # noqa: ANN401 (dramatiq.Message)
+    if not conf.get_config().capture_task_args:
+        return {}
+    return {"args": event_repr("args", tuple(message.args)), "kwargs": event_repr("kwargs", dict(message.kwargs))}
 
 
 def _actor_path(broker: Any, actor_name: str) -> str:  # noqa: ANN401 (dramatiq.Broker)
@@ -63,6 +101,8 @@ class TracepanelHooks:
 
     def before_enqueue(self, broker: Any, message: Any, delay: int) -> None:  # noqa: ANN401, ARG002
         options = message.options
+        _first_send.set(SENT not in options)
+        options[SENT] = True
         options[PUBLISHED] = now_us()
         options[TRIGGER] = trigger(current_trace())
         trace = current_trace()
@@ -76,6 +116,7 @@ class TracepanelHooks:
     def after_enqueue(self, broker: Any, message: Any, delay: int) -> None:  # noqa: ANN401
         with _lock:
             sending = _sending.pop(message.message_id, None)
+        self._sent(broker, message, sending)
         if sending is None or current_trace() is None:
             return
         start, span_id, mark = sending
@@ -100,7 +141,46 @@ class TracepanelHooks:
             span_id=span_id,
         )
 
+    def _sent(self, broker: Any, message: Any, sending: tuple[int, str, int] | None) -> None:  # noqa: ANN401
+        """The task events of a send: `enqueued` the first time, `enqueued` and `retried` for Retries' requeue."""
+        name = _actor_path(broker, message.actor_name)
+        run = _run.get()
+        retry = run is not None and run.trace.attrs.get("task.id") == message.message_id
+        if not (_first_send.get() or retry) or conf.matches(name, conf.get_config().ignore_tasks):
+            return
+        trace = current_trace()
+        parent = {"trace_id": trace.id, "span_id": sending[1]} if sending is not None and trace is not None else {}
+        retries = int(message.options.get("retries") or 0)
+        task_event(
+            "enqueued",
+            SYSTEM,
+            message.message_id,
+            name=name,
+            queue=_queue(message),
+            retries=retries,
+            **_arguments(message),
+            **parent,
+        )
+        if retry:
+            with _lock:
+                _processing.discard(message.message_id)
+            # Retries puts it back from its after_process_message, inside the worker's except block.
+            error = sys.exc_info()[1]
+            task_event(
+                "retried",
+                SYSTEM,
+                message.message_id,
+                worker=_heart.worker or None,
+                retries=retries,
+                error=event_repr("reason", error) if error is not None else None,
+            )
+
     # ---------- the worker side ----------
+
+    def after_worker_boot(self, broker: Any, worker: Any) -> None:  # noqa: ANN401, ARG002
+        """The worker process is there before it processes anything: the console lists it among the workers."""
+        _heart.start(f"dramatiq@{socket.gethostname()}:{os.getpid()}")
+        _heart.beat()
 
     def before_process_message(self, broker: Any, message: Any) -> None:  # noqa: ANN401
         name = _actor_path(broker, message.actor_name)
@@ -131,6 +211,23 @@ class TracepanelHooks:
             parent_trace, parent_span = parent.split(":", 1)
             trace.links.append(Link(kind="enqueued_by", trace_id=parent_trace, span_id=parent_span))
         _run.set(TaskRun(context=context, trace=trace))
+        self._started(message, name, attrs)
+
+    def _started(self, message: Any, name: str, attrs: Attrs) -> None:  # noqa: ANN401
+        # A worker that didn't boot here (one in a test) still beats.
+        _heart.start(_heart.worker or f"dramatiq@{socket.gethostname()}:{os.getpid()}")
+        with _lock:
+            _processing.add(message.message_id)
+        task_event(
+            "started",
+            SYSTEM,
+            message.message_id,
+            name=name,
+            queue=_queue(message),
+            worker=_heart.worker,
+            retries=attrs["task.retries"],
+            **_arguments(message),
+        )
 
     def after_process_message(
         self,
@@ -159,6 +256,7 @@ class TracepanelHooks:
             trace.status = "error" if failed else "ok"
         run.context.__exit__(None, None, None)
         complete(trace)
+        _finished(message, str(trace.attrs["task.state"]))
 
     def after_skip_message(self, broker: Any, message: Any) -> None:  # noqa: ANN401, ARG002
         run = _run.get()
@@ -168,10 +266,20 @@ class TracepanelHooks:
         run.trace.attrs["task.state"] = "SKIPPED"
         run.context.__exit__(None, None, None)
         complete(run.trace)
+        _finished(message, "SKIPPED")
 
     def before_worker_shutdown(self, broker: Any, worker: Any) -> None:  # noqa: ANN401, ARG002
         """Write what is queued before the worker goes away."""
         get_writer().flush()
+
+
+def _finished(message: Any, state: str) -> None:  # noqa: ANN401
+    """`finished`, unless the message was retried (it waits for its next attempt: Retries said so already)."""
+    with _lock:
+        processing = message.message_id in _processing
+        _processing.discard(message.message_id)
+    if processing:
+        task_event("finished", SYSTEM, message.message_id, worker=_heart.worker or None, state=state)
 
 
 def _add(broker: Any) -> None:  # noqa: ANN401
@@ -205,5 +313,7 @@ def install() -> None:
     patch(broker_class, "__init__", init)
     if dramatiq.broker.global_broker is not None:
         _add(dramatiq.broker.global_broker)
+    # Its task events: the console's Live list of tasks.
+    agent.sends("live_tasks")
     # Records of task code, through the registry: off with logging_enabled.
     registry.get("logging").install()

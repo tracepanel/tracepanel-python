@@ -1,5 +1,7 @@
 """Django Tasks for the tests: the same functions on the immediate and the database backend."""
 
+from collections.abc import Callable
+
 from django.contrib.auth.models import User
 
 try:
@@ -22,3 +24,13 @@ def broken() -> None:
 @task(backend="database")
 def queued_count(label: str) -> str:
     return f"{label}: {User.objects.count()}"
+
+
+# What a test runs while the worker runs `watched`: it looks at the console meanwhile.
+during: list[Callable[[], None]] = []
+
+
+@task(backend="database")
+def watched() -> None:
+    for look in during:
+        look()

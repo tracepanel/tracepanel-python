@@ -7,9 +7,17 @@ as a trace that links back to it. The default worker forks a horse per job and e
 writes each job's trace before the horse goes away.
 
 Arguments and results are kept for local debugging only (masked like locals) and never leave the machine.
+
+A job's trace reaches the agent when it ends. Until then task events say where it is: `enqueued` from `enqueue_job`
+(with the enqueuing trace and span), `started` as `perform` begins, then `retried` (with the error) when RQ will run it
+again, or `finished`. A worker says it is there when it registers (`register_birth`), and every process that runs jobs
+(the worker, each work horse) sends a `heartbeat` with them, so a job whose horse was killed leaves the console's
+Live list. A queue with `is_async=False` sends none: its jobs run inside the caller.
 """
 
 import functools
+import threading
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,7 +27,8 @@ from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
 from tracepanel.core.patching import patch, patched
-from tracepanel.integrations._tasks import task_repr, trigger
+from tracepanel.integrations._tasks import Heartbeat, event_repr, task_event, task_repr, trigger
+from tracepanel.storage import agent
 from tracepanel.storage.transport import complete, get_writer, role
 
 SYSTEM = "rq"
@@ -27,6 +36,19 @@ SYSTEM = "rq"
 PARENT = "tracepanel_parent"
 TRIGGER = "tracepanel_trigger"
 MAX_RETRIES = "tracepanel_max_retries"
+# The jobs this process performs now, for its heartbeat.
+_running: set[str] = set()
+_lock = threading.Lock()
+
+
+def _running_ids() -> list[str]:
+    with _lock:
+        return sorted(_running)
+
+
+_heart = Heartbeat(SYSTEM, _running_ids)
+# True while a queue with is_async=False runs a job inside enqueue_job: that run is the caller's, never in flight.
+_inline: ContextVar[bool] = ContextVar("tracepanel_rq_inline", default=False)
 
 
 def _broker(connection: Any) -> Attrs:  # noqa: ANN401 (redis.Redis)
@@ -47,7 +69,13 @@ def _enqueue(original: Any) -> Any:  # noqa: ANN401
             job.meta[MAX_RETRIES] = job.retries_left
         if trace is not None:
             job.meta[PARENT] = f"{trace.id}:{span_id}"
-        result = original(self, job, *args, **kwargs)
+        inline = _inline.set(not getattr(self, "_is_async", True))
+        try:
+            result = original(self, job, *args, **kwargs)
+        finally:
+            _inline.reset(inline)
+        if getattr(self, "_is_async", True):
+            _enqueued(self.name, job, (trace.id, span_id) if trace is not None else None)
         if trace is not None:
             # RQ's Redis commands go under the enqueue span.
             adopt(span_id, mark)
@@ -70,6 +98,58 @@ def _enqueue(original: Any) -> Any:  # noqa: ANN401
         return result
 
     return enqueue_job
+
+
+def _enqueued(queue: str, job: Any, parent: tuple[str, str] | None) -> None:  # noqa: ANN401 (rq.job.Job)
+    """The job waits in its queue: not one that waits for another job first (deferred), or one ignored."""
+    config = conf.get_config()
+    status = job.get_status(refresh=False)
+    if str(getattr(status, "value", status)) == "deferred" or conf.matches(str(job.func_name), config.ignore_tasks):
+        return
+    capture = config.capture_task_args
+    task_event(
+        "enqueued",
+        SYSTEM,
+        job.id,
+        name=str(job.func_name),
+        queue=queue,
+        retries=_attempt(job),
+        args=event_repr("args", tuple(job.args or ())) if capture else None,
+        kwargs=event_repr("kwargs", dict(job.kwargs or {})) if capture else None,
+        trace_id=parent[0] if parent else None,
+        span_id=parent[1] if parent else None,
+    )
+
+
+def _started(job: Any) -> None:  # noqa: ANN401 (rq.job.Job)
+    worker = job.worker_name or None
+    _heart.start(worker or "")
+    with _lock:
+        _running.add(job.id)
+    capture = conf.get_config().capture_task_args
+    task_event(
+        "started",
+        SYSTEM,
+        job.id,
+        name=str(job.func_name),
+        queue=job.origin or None,
+        worker=worker,
+        retries=_attempt(job),
+        args=event_repr("args", tuple(job.args or ())) if capture else None,
+        kwargs=event_repr("kwargs", dict(job.kwargs or {})) if capture else None,
+    )
+
+
+def _ended(job: Any, state: str, failure: Exception | None) -> None:  # noqa: ANN401 (rq.job.Job)
+    """`retried` when RQ runs the job again (its next attempt's count), else `finished`."""
+    with _lock:
+        _running.discard(job.id)
+    worker = job.worker_name or None
+    if state == "RETRY":
+        error = event_repr("reason", failure) if failure is not None else None
+        task_event("retried", SYSTEM, job.id, worker=worker, retries=_attempt(job) + 1, error=error)
+    else:
+        task_event("finished", SYSTEM, job.id, worker=worker, state=state)
 
 
 def _attempt(job: Any) -> int:  # noqa: ANN401 (rq.job.Job)
@@ -121,6 +201,9 @@ def _perform(original: Any) -> Any:  # noqa: ANN401
         eager = current_trace() is not None
         attrs = _run_attrs(self, eager=eager, started=now_us())
         link = _link(self)
+        in_flight = not (eager or _inline.get())
+        if in_flight:
+            _started(self)
         failure: Exception | None = None
         result: Any = None
         with start_trace("task", str(self.func_name), attrs, root_kind="task.run") as trace:
@@ -132,11 +215,10 @@ def _perform(original: Any) -> Any:  # noqa: ANN401
                 failure = exc
                 _failed(trace, self, exc)
             else:
-                # A job may also ask for another run by returning rq.Retry.
-                trace.attrs["task.state"] = "RETRY" if type(result).__name__ == "Retry" else "SUCCESS"
-                if conf.get_config().capture_task_args:
-                    trace.attrs["task.result"] = task_repr("result", result)
+                _succeeded(trace, result)
         complete(trace)
+        if in_flight:
+            _ended(self, str(trace.attrs.get("task.state")), failure)
         if not eager:
             # The work horse ends with os._exit(): nothing at exit runs, so write the trace now.
             get_writer().flush()
@@ -145,6 +227,13 @@ def _perform(original: Any) -> Any:  # noqa: ANN401
         return result
 
     return perform
+
+
+def _succeeded(trace: Any, result: object) -> None:  # noqa: ANN401
+    # A job may also ask for another run by returning rq.Retry.
+    trace.attrs["task.state"] = "RETRY" if type(result).__name__ == "Retry" else "SUCCESS"
+    if conf.get_config().capture_task_args:
+        trace.attrs["task.result"] = task_repr("result", result)
 
 
 def _failed(trace: Any, job: Any, exc: Exception) -> None:  # noqa: ANN401
@@ -157,16 +246,32 @@ def _failed(trace: Any, job: Any, exc: Exception) -> None:  # noqa: ANN401
     trace.status = "ok" if retried else "error"
 
 
+def _birth(original: Any) -> Any:  # noqa: ANN401
+    @functools.wraps(original)
+    def register_birth(self: Any) -> Any:  # noqa: ANN401 (rq.worker.BaseWorker)
+        result = original(self)
+        # The worker is there before it runs anything: the console lists it among the workers.
+        _heart.start(str(self.name))
+        _heart.beat()
+        return result
+
+    return register_birth
+
+
 def install() -> None:
-    """Wrap RQ's enqueue and perform; a no-op without RQ."""
+    """Wrap RQ's enqueue, perform and a worker's start; a no-op without RQ."""
     try:
         from rq.job import Job  # noqa: PLC0415 (optional dependency)
         from rq.queue import Queue  # noqa: PLC0415
+        from rq.worker import BaseWorker  # noqa: PLC0415
     except ImportError:
         return
     if patched(Queue, "enqueue_job"):
         return
     patch(Queue, "enqueue_job", _enqueue(Queue.enqueue_job))
     patch(Job, "perform", _perform(Job.perform))
+    patch(BaseWorker, "register_birth", _birth(BaseWorker.register_birth))
+    # Its task events: the console's Live list of tasks.
+    agent.sends("live_tasks")
     # Records of task code, through the registry: off with logging_enabled.
     registry.get("logging").install()
