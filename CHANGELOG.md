@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- A page's navigation answered with a redirect (a form's POST, then 302) is
+  named in a short-lived `tracepanel_redirect` cookie, so the panel on the page
+  it leads to lists it first.
+- A request records what it carried, as django-debug-toolbar's Request and
+  Headers panels show it: its headers and the response's, its query, its
+  cookies, the body as far as the app read it (a form's files by name and
+  size), and the session the view used. Values under a secret's name
+  (`password`, `token`, `sessionid`, `Authorization`, `Set-Cookie`…) are
+  masked, and none of it leaves the machine. Tracepanel never reads a body
+  the app didn't. `capture_request = false` (or
+  `TRACEPANEL_CAPTURE_REQUEST=0`) turns it off. The console's
+  `api/capabilities` says whether it is on.
+- A request's profile: where its time went in code, sampled while it runs,
+  for the console's flame graph. A request asks for it with an
+  `X-Tracepanel-Profile: 1` header, or the panel's
+  `tracepanel_profile=1` cookie, set while its Profile toggle is on.
+  `profile = true` profiles every trace, `profile_enabled = false` none, and
+  `profile_interval_ms` sets how often it samples. The console's
+  capabilities say whether profiling is on.
+
 ## 0.3.4 (2026-10-19)
 
 ### Fixed

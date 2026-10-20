@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 
 from django.contrib.auth import logout
 from django.contrib.auth.models import Group, Permission, User
@@ -120,6 +121,20 @@ def create_group(request: HttpRequest) -> JsonResponse:
 
 def home(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"page": "home"})
+
+
+def echo_json(request: HttpRequest) -> JsonResponse:
+    return JsonResponse({"read": len(request.body)})
+
+
+def upload(request: HttpRequest) -> JsonResponse:
+    return JsonResponse({"fields": len(request.POST), "files": len(request.FILES)})
+
+
+def remember(request: HttpRequest) -> JsonResponse:
+    request.session["cart"] = [1, 2]
+    request.session["oauth_token"] = "t-123"
+    return JsonResponse({"saved": True})
 
 
 def enqueue(request: HttpRequest) -> JsonResponse:
@@ -265,3 +280,18 @@ def htmx_row(request: HttpRequest) -> HttpResponse:
 def htmx_login_needed(request: HttpRequest) -> HttpResponseRedirect:
     # What login_required does: htmx follows it and swaps the login page in.
     return redirect("/html-page/")
+
+
+def spin(seconds: float) -> int:
+    """Busy in project code for a while: what a profile shows."""
+    end = time.perf_counter() + seconds
+    turns = 0
+    while time.perf_counter() < end:
+        turns += 1
+    return turns
+
+
+def busy(request: HttpRequest) -> HttpResponse:
+    del request
+    spin(0.15)
+    return HttpResponse("done")

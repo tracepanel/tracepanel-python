@@ -6,7 +6,7 @@ from dirty_equals import IsPartialDict, IsStr
 flask = pytest.importorskip("flask")
 flask_sqlalchemy = pytest.importorskip("flask_sqlalchemy")
 
-from flask import Flask, render_template_string  # noqa: E402 (optional test group)
+from flask import Flask, render_template_string, request  # noqa: E402 (optional test group)
 from flask.testing import FlaskClient  # noqa: E402
 from flask_sqlalchemy import SQLAlchemy  # noqa: E402
 from sqlalchemy import ForeignKey, select  # noqa: E402
@@ -63,6 +63,10 @@ def make_app() -> Flask:
     def boom() -> str:
         message = "nope"
         raise ValueError(message)
+
+    @app.post("/signup")
+    def signup() -> dict[str, object]:
+        return {"fields": len(request.form)}
 
     @app.get("/page")
     def page() -> str:
@@ -228,3 +232,16 @@ def test_one_trace_when_mounted_in_another_wsgi_app(app: Flask, traces: list[Tra
 
     assert (response.status_code, trace.name) == (200, "GET /players/<int:team_id>")
     assert [span.kind for span in trace.spans if span.kind == "view"] == ["view"]
+
+
+def test_a_form_the_view_read_is_recorded_masked(client: FlaskClient, traces: list[Trace]) -> None:
+    client.post(
+        "/signup?next=/home", data={"email": "ann@example.com", "password": "p"}, headers={"X-Request-Id": "r-1"}
+    )
+
+    (trace,) = traces
+    assert (
+        trace.attrs["http.request.header.x_request_id"],
+        trace.attrs["url.query"],
+        trace.attrs["http.request.body"],
+    ) == ("r-1", "next=/home", "email=ann@example.com&password=********")

@@ -5,8 +5,9 @@ A process only serializes its traces and sends them in batches. Without an agent
 couldn't start) traces aren't kept: the terminal says why once, and the process looks for one again a few seconds
 later.
 
-The wire: a hello line, `{"protocol": 1, "max_traces": 2000, "thresholds": {...}}`, answered by `{"ok": true}` (or a
-refusal with its reason); then frames, a 4-byte big-endian length and a JSON array of `Trace.to_dict()`.
+The wire: a hello line, `{"protocol": 1, "max_traces": 2000, "thresholds": {...}, "capabilities": [...]}`, answered
+by `{"ok": true}` (or a refusal with its reason); then frames, a 4-byte big-endian length and a JSON array of
+`Trace.to_dict()`.
 """
 
 import json
@@ -177,8 +178,15 @@ def answers(addr: str | None) -> bool:
     return True
 
 
-def connect(addr: str, max_traces: int, thresholds: dict[str, int] | None = None) -> socket.socket | None:
-    """A connection the agent accepted, or None."""
+def capabilities(config: conf.Config) -> list[str]:
+    """Tell the console what this app's traces hold beyond the usual: the request's details, when they are kept."""
+    return ["request"] if config.capture_request else []
+
+
+def connect(
+    addr: str, max_traces: int, thresholds: dict[str, int] | None = None, can: list[str] | None = None
+) -> socket.socket | None:
+    """A connection the agent accepted, or None; `can` lists what the app does for the console."""
     sock = _open(addr)
     if sock is None:
         return None
@@ -188,6 +196,7 @@ def connect(addr: str, max_traces: int, thresholds: dict[str, int] | None = None
             "protocol": PROTOCOL,
             "max_traces": max_traces,
             **({"thresholds": thresholds} if thresholds else {}),
+            **({"capabilities": can} if can else {}),
         }
         sock.sendall(json.dumps(hello).encode() + b"\n")
         answer = json.loads(sock.makefile("rb").readline() or b"{}")
@@ -252,11 +261,12 @@ class AgentWriter(BatchWriter):
                 "slow_http_ms": self.config.slow_http_ms,
                 "long_transaction_ms": self.config.long_transaction_ms,
             }
-            self._sock = connect(addr, self.config.max_traces, thresholds) if addr else None
+            can = capabilities(self.config)
+            self._sock = connect(addr, self.config.max_traces, thresholds, can) if addr else None
             if self._sock is None and ensure_started(self.config):
                 # No agent yet: one was started (once per process; a second one per store exits by itself).
                 addr = address(self.config)
-                self._sock = connect(addr, self.config.max_traces, thresholds) if addr else None
+                self._sock = connect(addr, self.config.max_traces, thresholds, can) if addr else None
             if self._sock is None:
                 self._retry_at = time.monotonic() + RETRY_S
         if self._sock is not None:

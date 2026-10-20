@@ -124,6 +124,8 @@ class Trace:
     errors: list[Error] = field(default_factory=list)
     links: list[Link] = field(default_factory=list)
     issues: list[Issue] = field(default_factory=list)
+    # Where its time went in code, when it was profiled (core.profile builds it, ready for JSON).
+    profile: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         """The trace as JSON-ready dicts, without copying values (it is serialized right away, never mutated)."""
@@ -141,6 +143,7 @@ class Trace:
             "errors": _plain(self.errors),
             "links": _plain(self.links),
             "issues": _plain(self.issues),
+            **({"profile": self.profile} if self.profile is not None else {}),
         }
 
 

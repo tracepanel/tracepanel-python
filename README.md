@@ -95,6 +95,20 @@ ignore_paths = ["/health*", "/static/*"]
 
 `tracepanel config` prints each setting, its value and where it comes from.
 
+## Profile a request
+
+A profile shows where a request's time went in code, as a flame graph in the
+console. The SDK samples the request's stack every `profile_interval_ms`
+(5 by default) while it runs. It profiles a request that sends an
+`X-Tracepanel-Profile: 1` header, and every request that carries the
+`tracepanel_profile=1` cookie, which the panel's Profile toggle sets while it
+is on. `profile = true` profiles every trace, tasks included, and
+`profile_enabled = false` turns profiling off.
+
+Code that keeps the CPU busy holds Python's GIL, so the sampler runs less
+often than the interval asks. An event loop running several requests at once
+gives no samples for that time: a stack can't be told apart by request.
+
 ## Trace your own code
 
 To add your own steps to a request or a task, or to trace a script or a

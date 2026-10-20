@@ -4,13 +4,16 @@ The agent under test is the one uv built from ../tracepanel (or $TRACEPANEL_AGEN
 """
 
 import dataclasses
+import json
 import signal
+import socket
 import subprocess
+import threading
 import time
 from pathlib import Path
 
 import pytest
-from dirty_equals import IsStr
+from dirty_equals import IsPartialDict, IsStr
 from django.contrib.auth.models import User
 from django.test import Client
 
@@ -158,3 +161,39 @@ def test_an_agent_that_died_is_started_again(
         for process in started:
             process.terminate()
             process.wait(timeout=10)
+
+
+def _hello(tmp_path: Path, config: conf.Config) -> dict[str, object]:
+    """The hello an app's writer sends, as an agent listening at a socket of the test's reads it."""
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    heard: list[bytes] = []
+
+    def answer() -> None:
+        connection, _ = listener.accept()
+        with connection:
+            heard.append(connection.makefile("rb").readline())
+            connection.sendall(b'{"ok": true}\n')
+
+    thread = threading.Thread(target=answer)
+    thread.start()
+    host, port = listener.getsockname()
+    writer = agent.AgentWriter(dataclasses.replace(config, agent=f"tcp:{host}:{port}", dir=str(tmp_path)))
+    writer.submit(requests(1)[0])
+    writer.flush()
+    thread.join(5)
+    listener.close()
+    return json.loads(heard[0])
+
+
+def test_the_hello_says_the_app_records_request_details(tmp_path: Path) -> None:
+    hello = _hello(tmp_path, dataclasses.replace(conf.get_config(), capture_request=True))
+
+    assert hello == IsPartialDict({"protocol": agent.PROTOCOL, "capabilities": ["request"]})
+
+
+def test_the_hello_says_nothing_of_request_details_when_they_are_not_kept(tmp_path: Path) -> None:
+    hello = _hello(tmp_path, dataclasses.replace(conf.get_config(), capture_request=False))
+
+    assert "capabilities" not in hello

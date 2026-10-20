@@ -9,9 +9,11 @@ from typing import TYPE_CHECKING
 from asgiref.sync import iscoroutinefunction, markcoroutinefunction, sync_to_async
 from django.http import HttpRequest, HttpResponse
 from django.http.response import HttpResponseBase
+from django.utils.datastructures import MultiValueDict
 from django.utils.functional import SimpleLazyObject, empty
 
-from tracepanel.core import conf, errors, w3c
+from tracepanel.core import conf, errors, profile, w3c
+from tracepanel.core import request as details
 from tracepanel.django import console, widget
 from tracepanel.integrations import htmx
 
@@ -92,6 +94,10 @@ def finish(trace: Trace, request: HttpRequest, response: HttpResponseBase) -> No
         # One URL serves every GraphQL operation: the operation names the request.
         trace.name = f"GraphQL {operation}"
     trace.attrs["http.status_code"] = response.status_code
+    if conf.get_config().capture_request:
+        trace.attrs.update(details.response_headers(response.items()))
+        trace.attrs.update(_read_body(request))
+        trace.attrs.update(_session(request))
     body = response.content if isinstance(response, HttpResponse) else None
     trace.attrs.update(htmx.response_attrs(trace.attrs, response.status_code, response.headers, body))
     if not trace.attrs.get("user.logged_out"):
@@ -105,13 +111,52 @@ def finish(trace: Trace, request: HttpRequest, response: HttpResponseBase) -> No
 
 
 def _attrs(request: HttpRequest) -> Attrs:
-    return {
+    attrs: Attrs = {
         "http.method": request.method,
         "http.path": request.path,
         **htmx.request_attrs(request.headers),
         # Called by another app: the W3C trace its request carried.
         **w3c.incoming(request.headers.get(w3c.HEADER)),
     }
+    if conf.get_config().capture_request:
+        attrs.update(details.request_headers(request.headers.items()))
+        attrs.update(details.query(str(request.META.get("QUERY_STRING", ""))))
+        attrs.update(details.cookie_values(request.COOKIES))
+    return attrs
+
+
+def _read_body(request: HttpRequest) -> Attrs:
+    """The body as far as the view read it: Django keeps what it parsed or read, and Tracepanel reads nothing more.
+
+    Private attributes, because request.POST and request.body would read the stream when the view didn't.
+    """
+    if hasattr(request, "_post"):
+        files = getattr(request, "_files", None)
+        fields = [(key, value) for key in request._post for value in request._post.getlist(key)]  # noqa: SLF001
+        uploads = (
+            [(key, upload.name or "", upload.size or 0) for key in files for upload in files.getlist(key)]
+            if isinstance(files, MultiValueDict)
+            else []
+        )
+        parsed = details.form(fields, uploads)
+        if parsed:
+            return parsed
+    data = getattr(request, "_body", None)
+    if isinstance(data, bytes):
+        return details.body(request.content_type or "", data)
+    return {}
+
+
+def _session(request: HttpRequest) -> Attrs:
+    """The session as the view left it, if it loaded one: reading it here would load it, and mark it accessed."""
+    session = getattr(request, "session", None)
+    loaded = getattr(session, "_session_cache", None)
+    return details.session(loaded.items()) if isinstance(loaded, dict) else {}
+
+
+def _profiled(request: HttpRequest) -> bool:
+    """Whether the request asks to be profiled, by header or by the cookie a browser sends."""
+    return profile.requested(request.headers.get(profile.HEADER), request.headers.get("cookie"))
 
 
 class TracepanelMiddleware:
@@ -137,7 +182,9 @@ class TracepanelMiddleware:
         if conf.matches(request.path_info, config.ignore_paths) or current_trace() is not None:
             return get_response(request)
 
-        with start_trace("http", f"{request.method} {request.path}", _attrs(request)) as trace:
+        with start_trace(
+            "http", f"{request.method} {request.path}", _attrs(request), profile=_profiled(request)
+        ) as trace:
             response = get_response(request)
             finish(trace, request, response)
         complete(trace)
@@ -155,7 +202,9 @@ class TracepanelMiddleware:
         if conf.matches(request.path_info, config.ignore_paths) or current_trace() is not None:
             return await get_response(request)
 
-        with start_trace("http", f"{request.method} {request.path}", _attrs(request)) as trace:
+        with start_trace(
+            "http", f"{request.method} {request.path}", _attrs(request), profile=_profiled(request)
+        ) as trace:
             response = await get_response(request)
             finish(trace, request, response)
         # Analysis is in-memory and the writer only enqueues: cheap enough for the event loop.

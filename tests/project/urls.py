@@ -32,6 +32,7 @@ except ImportError:  # the drf test group is optional
 
 urlpatterns = [
     path("n-plus-one/", views.n_plus_one),
+    path("busy/", views.busy),
     path("fixed/", views.fixed),
     path("duplicates/", views.duplicates),
     path("cache/", views.cached),
@@ -60,6 +61,9 @@ urlpatterns = [
     path("django-tasks/<str:kind>/", views.django_task),
     path("caught-and-logged/", views.caught_and_logged),
     path("sign-out/", views.sign_out),
+    path("echo-json/", views.echo_json),
+    path("upload/", views.upload),
+    path("remember/", views.remember),
     path("", views.home),
     *graphql,
     *ninja,

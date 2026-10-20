@@ -11,14 +11,16 @@ Django's TRACEPANEL dict); TRACEPANEL_* variables override them.
 
 import http
 from collections.abc import Callable, Iterable, Iterator
-from typing import Any, Unpack
+from io import BytesIO
+from typing import IO, Any, Unpack
 from urllib.parse import parse_qsl
 
 from tracepanel import _setup
 from tracepanel.console import app as console
 from tracepanel.console import widget
 from tracepanel.console.messages import MAX_BODY, is_local
-from tracepanel.core import conf, errors, w3c
+from tracepanel.core import conf, errors, profile, w3c
+from tracepanel.core import request as details
 from tracepanel.core.conf import Settings
 from tracepanel.core.context import current_trace, start_trace
 from tracepanel.core.model import Trace
@@ -60,6 +62,20 @@ class _Response:
         return int(str(self.status).split(" ", 1)[0])
 
 
+def _answered(
+    trace: Trace, response: _Response, body: bytes | None, reader: "_BodyReader | _NoBody | None", content_type: str
+) -> None:
+    """Record how the app answered: its status, htmx's headers, what the request carried; mark the trace."""
+    trace.attrs["http.status_code"] = response.code
+    if response.code >= 500:  # noqa: PLR2004
+        trace.status = "error"
+    headers = {name.lower(): value for name, value in response.headers}
+    trace.attrs.update(htmx.response_attrs(trace.attrs, response.code, headers, body))
+    if reader is not None:
+        trace.attrs.update(reader.attrs(content_type, response.headers))
+    widget.set_header(response.headers, "Tracepanel-Id", trace.id)
+
+
 class TracepanelMiddleware:
     """Traces the wrapped app's requests and serves the console under the prefix."""
 
@@ -89,7 +105,9 @@ class TracepanelMiddleware:
             # Called by another app: the W3C trace its request carried.
             **w3c.incoming(headers.get(w3c.HEADER)),
         }
-        with start_trace("http", f"{method} {path}", attrs) as trace:
+        reader = _capture(environ, headers, attrs) if config.capture_request else None
+        asked = profile.requested(headers.get(profile.HEADER), headers.get("cookie"))
+        with start_trace("http", f"{method} {path}", attrs, profile=asked) as trace:
             try:
                 result = self.app(environ, response.start_response)
                 chunks = iter(result)
@@ -109,12 +127,7 @@ class TracepanelMiddleware:
                 environ[URL_KEY] = f"{host(environ)}{_api(environ, config)}"
                 complete(trace)
                 raise
-            trace.attrs["http.status_code"] = response.code
-            if response.code >= 500:  # noqa: PLR2004
-                trace.status = "error"
-            headers = {name.lower(): value for name, value in response.headers}
-            trace.attrs.update(htmx.response_attrs(trace.attrs, response.code, headers, body))
-            widget.set_header(response.headers, "Tracepanel-Id", trace.id)
+            _answered(trace, response, body, reader, str(environ.get("CONTENT_TYPE", "")))
             if body is not None:
                 body = _decorate(environ, response, trace, config, body)
                 _close(result)
@@ -129,6 +142,69 @@ class TracepanelMiddleware:
 def _request_headers(environ: dict[str, Any]) -> dict[str, str]:
     """HTTP_HX_REQUEST -> hx-request: the request's headers by lower-case name."""
     return {key[5:].lower().replace("_", "-"): str(value) for key, value in environ.items() if key.startswith("HTTP_")}
+
+
+def _capture(environ: dict[str, Any], headers: dict[str, str], attrs: dict[str, Any]) -> "_BodyReader | _NoBody":
+    """The request's headers, query and cookies into its attributes, and a reader keeping what the app reads."""
+    # CONTENT_TYPE and CONTENT_LENGTH are the two headers WSGI doesn't prefix with HTTP_.
+    unprefixed = [(name, str(environ[key])) for key, name in _UNPREFIXED if environ.get(key)]
+    attrs.update(details.request_headers([*unprefixed, *headers.items()]))
+    attrs.update(details.query(str(environ.get("QUERY_STRING", ""))))
+    attrs.update(details.cookies(headers.get("cookie", "")))
+    # A request without a body (most GETs) keeps wsgi.input as it is: nothing to read, nothing to wrap.
+    length = str(environ.get("CONTENT_LENGTH") or "")
+    chunked = "chunked" in headers.get("transfer-encoding", "").lower()
+    return _BodyReader(environ) if chunked or (length.isdigit() and int(length) > 0) else _NO_BODY
+
+
+class _NoBody:
+    """What a request without a body records at its end: the response's headers."""
+
+    def attrs(self, content_type: str, response_headers: Headers) -> dict[str, Any]:
+        del content_type
+        return details.response_headers(response_headers)
+
+
+_NO_BODY = _NoBody()
+
+
+_UNPREFIXED = (("CONTENT_TYPE", "content-type"), ("CONTENT_LENGTH", "content-length"))
+
+
+class _BodyReader:
+    """Stands in for wsgi.input, keeping the start of what the app reads: never more, never the rest of an upload."""
+
+    def __init__(self, environ: dict[str, Any]) -> None:
+        self.stream: IO[bytes] = environ.get("wsgi.input") or BytesIO()
+        self.chunks: list[bytes] = []
+        self.size = 0
+        length = str(environ.get("CONTENT_LENGTH") or "")
+        self.length = int(length) if length.isdigit() else 0
+        environ["wsgi.input"] = self
+
+    def _kept(self, data: bytes) -> bytes:
+        if self.size <= details.MAX_BODY:
+            self.chunks.append(data[: details.MAX_BODY + 1 - self.size])
+        self.size += len(data)
+        return data
+
+    def read(self, size: int = -1) -> bytes:
+        return self._kept(self.stream.read(size) if size is not None and size >= 0 else self.stream.read())
+
+    def readline(self, size: int = -1) -> bytes:
+        return self._kept(self.stream.readline(size))
+
+    def readlines(self, hint: int = -1) -> list[bytes]:
+        return [self._kept(line) for line in self.stream.readlines(hint)]
+
+    def __iter__(self) -> Iterator[bytes]:
+        return (self._kept(line) for line in self.stream)
+
+    def attrs(self, content_type: str, response_headers: Headers) -> dict[str, Any]:
+        """The response's headers, and the body as far as the app read it."""
+        data = b"".join(self.chunks)
+        whole = self.size <= details.MAX_BODY and (self.length == 0 or self.size >= self.length)
+        return {**details.response_headers(response_headers), **details.body(content_type, data, complete=whole)}
 
 
 def _first(chunks: Iterator[bytes]) -> Iterator[bytes]:
@@ -163,7 +239,9 @@ def _decorate(environ: dict[str, Any], response: _Response, trace: Trace, config
     method = str(environ.get("REQUEST_METHOD", "GET"))
     # The trace ends after the response is made: its time so far, its issues now.
     timing = widget.Timing.live(trace)
-    page = widget.Page(method, response.code, host(environ), _api(environ, config), timing)
+    page = widget.Page(
+        method, response.code, host(environ), _api(environ, config), timing, requested=_request_headers(environ)
+    )
     decorated = widget.decorate(trace, page, response.headers, body, config)
     return body if decorated is None else decorated
 
