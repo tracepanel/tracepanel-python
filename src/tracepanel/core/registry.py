@@ -84,6 +84,7 @@ INTEGRATIONS: tuple[Integration, ...] = (
             "asyncpg",
             "pymysql",
             "aiomysql",
+            "asyncmy",
             "MySQLdb",
             "mysql.connector",
             "oracledb",
@@ -102,6 +103,7 @@ INTEGRATIONS: tuple[Integration, ...] = (
     Integration("dramatiq", "Dramatiq", ("dramatiq",), "tracepanel.integrations.dramatiq"),
     Integration("rq", "RQ", ("rq",), "tracepanel.integrations.rq"),
     Integration("strawberry", "Strawberry", ("strawberry",), "tracepanel.integrations.strawberry"),
+    Integration("jinja", "Jinja", ("jinja2",), "tracepanel.integrations.jinja"),
     Integration("otel", "OpenTelemetry", ("opentelemetry.sdk",), "tracepanel.integrations.otel"),
     Integration(
         "django_tasks", "Django Tasks", ("django.tasks", "django_tasks"), "tracepanel.django.tasks", django_only=True

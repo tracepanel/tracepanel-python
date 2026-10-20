@@ -1,11 +1,13 @@
-"""MySQL and MariaDB: PyMySQL, mysqlclient (MySQLdb), MySQL Connector/Python (sync and asyncio) and aiomysql.
+"""MySQL and MariaDB: PyMySQL, mysqlclient, MySQL Connector/Python (sync and asyncio), aiomysql and asyncmy.
 
-Their cursors are Python classes: execute() and executemany() are wrapped where each is defined. EXPLAIN opens a new
-connection with the same driver (aiomysql's through PyMySQL, which it is built on).
+Their cursors are Python classes: execute() and executemany() are wrapped where each is defined. asyncmy's cursors are
+Cython types: a connection's cursors are made of a traced subclass of the class asked for. EXPLAIN opens a new
+connection with the same driver (aiomysql's and asyncmy's through PyMySQL, the protocol they share).
 """
 
 import importlib
 from collections.abc import Callable
+from contextvars import ContextVar
 from types import ModuleType
 from typing import Any
 
@@ -135,10 +137,71 @@ def _connector(names: tuple[str, ...], *, asynchronous: bool = False) -> Callabl
     return wrap
 
 
+# ---------- asyncmy ----------
+
+
+def _asyncmy_attrs(cursor: Any) -> Attrs:  # noqa: ANN401
+    connection = cursor.connection
+    pymysql = _optional("pymysql")
+    params = {
+        "host": connection._host,  # noqa: SLF001 (asyncmy keeps them private, with no property)
+        "port": connection._port,  # noqa: SLF001
+        "user": _text(connection._user),  # noqa: SLF001
+        "password": connection._password,  # noqa: SLF001
+        "database": _text(connection._db) or None,  # noqa: SLF001
+    }
+    explain = _explainer(pymysql.connect, params) if pymysql else None
+    return _where("asyncmy", params["host"], params["port"], params["database"], explain)
+
+
+# Set while asyncmy's executemany runs: it calls execute once per row, which is that one statement, not more.
+_many: ContextVar[bool] = ContextVar("tracepanel_asyncmy_many", default=False)
+
+
+class _AsyncmyCursor:
+    """Mixed into an asyncmy cursor class: its statements are recorded."""
+
+    async def execute(self, query: object, args: object = None) -> Any:  # noqa: ANN401 (the rows it affected)
+        if _many.get():
+            return await super().execute(query, args)  # type: ignore[misc]
+        return await _core.run_async(
+            lambda: super(_AsyncmyCursor, self).execute(query, args),  # type: ignore[misc]
+            query,
+            _core.params_of(args),
+            many=False,
+            db=lambda: _asyncmy_attrs(self),
+        )
+
+    async def executemany(self, query: object, args: object) -> Any:  # noqa: ANN401
+        token = _many.set(True)
+        try:
+            return await _core.run_async(
+                lambda: super(_AsyncmyCursor, self).executemany(query, args),  # type: ignore[misc]
+                query,
+                None,
+                many=True,
+                db=lambda: _asyncmy_attrs(self),
+            )
+        finally:
+            _many.reset(token)
+
+
+def _asyncmy(connection_module: ModuleType) -> None:
+    connection = connection_module.Connection
+    cursor = vars(connection)["cursor"]
+
+    def traced(self: Any, cursor_cls: type | None = None) -> Any:  # noqa: ANN401 (an asyncmy cursor)
+        # The class asked for, else the connection's own (connect's cursor_cls), with the recording in front of it.
+        return cursor(self, _core.subclass(cursor_cls or self._cursor_cls, _AsyncmyCursor))
+
+    patch(connection, "cursor", traced)
+
+
 def install() -> None:
     """Wrap each driver once the app imports it."""
     when_imported("pymysql", _pymysql)
     when_imported("aiomysql", _aiomysql)
+    when_imported("asyncmy.connection", _asyncmy)
     when_imported("MySQLdb.connections", _mysqlclient)
     when_imported("mysql.connector.cursor", _connector(("MySQLCursor", "MySQLCursorPrepared")))
     when_imported("mysql.connector.cursor_cext", _connector(("CMySQLCursor", "CMySQLCursorPrepared")))

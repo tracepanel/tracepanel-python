@@ -121,6 +121,7 @@ drivers = [
     "oracledb>=26.0.1",
     "sqlalchemy[asyncio]>=2.1.4",
     "pymongo>=4.18.3",
+    "asyncmy>=0.2.16",
 ]
 strawberry = [
     "strawberry-graphql>=0.332.0",

@@ -276,7 +276,10 @@ def install(app: WSGIApp, **settings: Unpack[Settings]) -> WSGIApp:
 
 
 def _console(environ: dict[str, Any], path: str, start_response: StartResponse) -> Iterable[bytes]:
-    """The console under the prefix (the agent's, forwarded; EXPLAIN needs a framework, so not here)."""
+    """The console under the prefix: the agent's, forwarded, but for EXPLAIN, which the app answers itself.
+
+    EXPLAIN is registered when the app is set up (_setup.started), for any framework.
+    """
     method = str(environ.get("REQUEST_METHOD", "GET"))
     length = int(environ.get("CONTENT_LENGTH") or 0) if method == "POST" else 0
     too_large = length > MAX_BODY

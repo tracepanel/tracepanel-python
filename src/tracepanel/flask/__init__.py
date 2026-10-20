@@ -5,9 +5,9 @@
 with TRACEPANEL_ENABLED=1.
 
 tracepanel.wsgi makes requests traces (status, the widget's headers and script, the console under `/__tracepanel__/`);
-this module names them after the URL rule, runs the view in a `view` span and each Jinja render in a `template` span,
-records errors Flask turns into a 500, and puts the trace's headers on Werkzeug's debugger page. The framework-free
-integrations turn on too: SQLAlchemy (Flask-SQLAlchemy too), Celery, logging.
+this module names them after the URL rule, runs the view in a `view` span, records errors Flask turns into a 500,
+and puts the trace's headers on Werkzeug's debugger page. The framework-free integrations turn on too: Jinja (each
+render a `template` span), SQLAlchemy (Flask-SQLAlchemy too), Celery, logging.
 Settings come from `app.config["TRACEPANEL"]` (the same names as Django's TRACEPANEL dict) and install()'s keyword
 arguments; TRACEPANEL_* variables override them. The session is recorded as the view left it, and Flask-Login's user
 when it loaded one; there is no user switching: Flask has no user model of its own.
@@ -32,25 +32,6 @@ if TYPE_CHECKING:
 
 MARKER = "_tracepanel"
 StartResponse = Callable[..., Any]
-
-
-def _templates() -> None:
-    """Every Jinja render (render_template, render_template_string) as a `template` span, as Django's templates.
-
-    Streamed templates (stream_template) render while the response goes out, after the view: not spans.
-    """
-    from flask import templating  # noqa: PLC0415
-
-    if patched(templating, "_render"):
-        return
-    original = templating._render  # noqa: SLF001 (the one function both render functions call)
-
-    def render(app: "Flask", template: Any, context: dict[str, Any]) -> str:  # noqa: ANN401 (a Jinja Template)
-        name = str(template.name) if template.name else "<string template>"
-        with start_span("template", name, {"template.name": name}):
-            return original(app, template, context)
-
-    patch(templating, "_render", render)
 
 
 def _debugger() -> None:
@@ -161,6 +142,5 @@ def install(app: "Flask", **settings: Unpack[Settings]) -> None:
     app.wsgi_app = TracepanelMiddleware(app.wsgi_app)  # type: ignore[method-assign]
     app.dispatch_request = _dispatch(app)  # type: ignore[method-assign]
     got_request_exception.connect(_on_exception, app, weak=False)
-    _templates()
     _debugger()
     _setup.started("Flask")
