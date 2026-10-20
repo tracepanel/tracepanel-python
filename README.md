@@ -99,7 +99,8 @@ ignore_paths = ["/health*", "/static/*"]
 
 A profile shows where a request's time went in code, as a flame graph in the
 console. The SDK samples the request's stack every `profile_interval_ms`
-(5 by default) while it runs. It profiles a request that sends an
+(1 by default, so a short request still has a
+profile to read) while it runs. It profiles a request that sends an
 `X-Tracepanel-Profile: 1` header, and every request that carries the
 `tracepanel_profile=1` cookie, which the panel's Profile toggle sets while it
 is on. `profile = true` profiles every trace, tasks included, and

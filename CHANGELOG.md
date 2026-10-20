@@ -25,7 +25,8 @@
   `X-Tracepanel-Profile: 1` header, or the panel's
   `tracepanel_profile=1` cookie, set while its Profile toggle is on.
   `profile = true` profiles every trace, `profile_enabled = false` none, and
-  `profile_interval_ms` sets how often it samples. The console's
+  `profile_interval_ms` sets how often it samples (every millisecond by
+  default). The console's
   capabilities say whether profiling is on.
 
 ## 0.3.4 (2026-10-19)
