@@ -19,7 +19,7 @@ from tracepanel import _setup
 from tracepanel.console import app as console
 from tracepanel.console import widget
 from tracepanel.console.messages import MAX_BODY, is_local
-from tracepanel.core import conf, errors, w3c
+from tracepanel.core import conf, errors, profile, w3c
 from tracepanel.core import request as details
 from tracepanel.core.conf import Settings
 from tracepanel.core.context import current_trace, start_trace
@@ -62,6 +62,20 @@ class _Response:
         return int(str(self.status).split(" ", 1)[0])
 
 
+def _answered(
+    trace: Trace, response: _Response, body: bytes | None, reader: "_BodyReader | None", content_type: str
+) -> None:
+    """Record how the app answered: its status, htmx's headers, what the request carried; mark the trace."""
+    trace.attrs["http.status_code"] = response.code
+    if response.code >= 500:  # noqa: PLR2004
+        trace.status = "error"
+    headers = {name.lower(): value for name, value in response.headers}
+    trace.attrs.update(htmx.response_attrs(trace.attrs, response.code, headers, body))
+    if reader is not None:
+        trace.attrs.update(reader.attrs(content_type, response.headers))
+    widget.set_header(response.headers, "Tracepanel-Id", trace.id)
+
+
 class TracepanelMiddleware:
     """Traces the wrapped app's requests and serves the console under the prefix."""
 
@@ -92,7 +106,9 @@ class TracepanelMiddleware:
             **w3c.incoming(headers.get(w3c.HEADER)),
         }
         reader = _capture(environ, headers, attrs) if config.capture_request else None
-        with start_trace("http", f"{method} {path}", attrs) as trace:
+        asked = profile.requested(headers.get(profile.HEADER), headers.get("cookie"))
+        expire = profile.by_cookie(headers.get("cookie"))
+        with start_trace("http", f"{method} {path}", attrs, profile=asked) as trace:
             try:
                 result = self.app(environ, response.start_response)
                 chunks = iter(result)
@@ -112,14 +128,10 @@ class TracepanelMiddleware:
                 environ[URL_KEY] = f"{host(environ)}{_api(environ, config)}"
                 complete(trace)
                 raise
-            trace.attrs["http.status_code"] = response.code
-            if response.code >= 500:  # noqa: PLR2004
-                trace.status = "error"
-            headers = {name.lower(): value for name, value in response.headers}
-            trace.attrs.update(htmx.response_attrs(trace.attrs, response.code, headers, body))
-            if reader is not None:
-                trace.attrs.update(reader.attrs(str(environ.get("CONTENT_TYPE", "")), response.headers))
-            widget.set_header(response.headers, "Tracepanel-Id", trace.id)
+            _answered(trace, response, body, reader, str(environ.get("CONTENT_TYPE", "")))
+            if expire:
+                # The panel's cookie asks for one request: this one.
+                response.headers.append(("Set-Cookie", profile.EXPIRE))
             if body is not None:
                 body = _decorate(environ, response, trace, config, body)
                 _close(result)

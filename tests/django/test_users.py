@@ -94,8 +94,8 @@ def test_the_console_offers_switching_only_where_it_works(client: Client, settin
     settings.TRACEPANEL = {"user_switch": False}
     turned_off = client.get("/__tracepanel__/api/capabilities").json()
 
-    assert offered == {"explain": True, "users": True, "profile": False, "request": True}
-    assert turned_off == {"explain": True, "users": False, "profile": False, "request": True}
+    assert offered == {"explain": True, "users": True, "profile": True, "request": True}
+    assert turned_off == {"explain": True, "users": False, "profile": True, "request": True}
 
 
 def test_the_console_says_whether_requests_are_recorded_in_detail(client: Client, settings: Settings) -> None:

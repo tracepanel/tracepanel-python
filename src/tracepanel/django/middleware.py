@@ -12,7 +12,7 @@ from django.http.response import HttpResponseBase
 from django.utils.datastructures import MultiValueDict
 from django.utils.functional import SimpleLazyObject, empty
 
-from tracepanel.core import conf, errors, w3c
+from tracepanel.core import conf, errors, profile, w3c
 from tracepanel.core import request as details
 from tracepanel.django import console, widget
 from tracepanel.integrations import htmx
@@ -98,6 +98,9 @@ def finish(trace: Trace, request: HttpRequest, response: HttpResponseBase) -> No
         trace.attrs.update(details.response_headers(response.items()))
         trace.attrs.update(_read_body(request))
         trace.attrs.update(_session(request))
+    if profile.by_cookie(request.headers.get("cookie")):
+        # The panel's cookie asks for one request: this one.
+        response.delete_cookie(profile.COOKIE, path="/")
     body = response.content if isinstance(response, HttpResponse) else None
     trace.attrs.update(htmx.response_attrs(trace.attrs, response.status_code, response.headers, body))
     if not trace.attrs.get("user.logged_out"):
@@ -154,6 +157,11 @@ def _session(request: HttpRequest) -> Attrs:
     return details.session(loaded.items()) if isinstance(loaded, dict) else {}
 
 
+def _profiled(request: HttpRequest) -> bool:
+    """Whether the request asks to be profiled, by header or by the cookie a browser sends."""
+    return profile.requested(request.headers.get(profile.HEADER), request.headers.get("cookie"))
+
+
 class TracepanelMiddleware:
     sync_capable = True
     async_capable = True
@@ -177,7 +185,9 @@ class TracepanelMiddleware:
         if conf.matches(request.path_info, config.ignore_paths) or current_trace() is not None:
             return get_response(request)
 
-        with start_trace("http", f"{request.method} {request.path}", _attrs(request)) as trace:
+        with start_trace(
+            "http", f"{request.method} {request.path}", _attrs(request), profile=_profiled(request)
+        ) as trace:
             response = get_response(request)
             finish(trace, request, response)
         complete(trace)
@@ -195,7 +205,9 @@ class TracepanelMiddleware:
         if conf.matches(request.path_info, config.ignore_paths) or current_trace() is not None:
             return await get_response(request)
 
-        with start_trace("http", f"{request.method} {request.path}", _attrs(request)) as trace:
+        with start_trace(
+            "http", f"{request.method} {request.path}", _attrs(request), profile=_profiled(request)
+        ) as trace:
             response = await get_response(request)
             finish(trace, request, response)
         # Analysis is in-memory and the writer only enqueues: cheap enough for the event loop.

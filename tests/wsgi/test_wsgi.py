@@ -1,10 +1,11 @@
+import time
 from collections.abc import Callable, Generator, Iterable, Iterator
 from io import BytesIO
 from typing import Any
 from wsgiref.util import setup_testing_defaults
 
 import pytest
-from dirty_equals import IsStr
+from dirty_equals import IsInt, IsStr
 
 import tracepanel.wsgi
 from tests.agentstore import AgentStore, issues
@@ -232,3 +233,36 @@ def test_a_body_the_app_never_read_is_not_read_for_it(reading: tracepanel.wsgi.W
     (trace,) = traces
     assert "http.request.body" not in trace.attrs
     assert trace.attrs["http.response.header.x_read"] == "0"
+
+
+def busy(environ: dict[str, Any], start_response: StartResponse) -> Iterable[bytes]:
+    del environ
+    spin(0.15)
+    start_response("200 OK", [("Content-Type", "text/plain"), ("Content-Length", "4")])
+    return [b"done"]
+
+
+def spin(seconds: float) -> None:
+    end = time.perf_counter() + seconds
+    while time.perf_counter() < end:
+        pass
+
+
+def test_the_panels_cookie_profiles_one_request_and_is_deleted(
+    traces: list[Trace], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRACEPANEL_PROFILE_INTERVAL_MS", "1")
+    previous = conf._framework  # noqa: SLF001
+    wrapped = tracepanel.wsgi.install(busy, enabled=True)
+
+    _, headers, _ = call(wrapped, "/busy", {"HTTP_COOKIE": "tracepanel_profile=1"})
+    _, plain, _ = call(wrapped, "/busy")
+    conf.use_source(previous)
+    profiled, unprofiled = traces
+
+    assert profiled.profile is not None
+    assert profiled.profile["samples"] == IsInt(gt=0)
+    assert headers["Set-Cookie"] == "tracepanel_profile=; Max-Age=0; Path=/"
+
+    assert unprofiled.profile is None
+    assert "Set-Cookie" not in plain

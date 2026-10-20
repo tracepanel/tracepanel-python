@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
+from tracepanel.core import profile as profiling
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Span, Trace
 
@@ -49,15 +50,19 @@ def current_span() -> Span | None:
 
 @contextmanager
 def start_trace(
-    kind: str, name: str, attrs: Attrs | None = None, *, root_kind: str | None = None
+    kind: str, name: str, attrs: Attrs | None = None, *, root_kind: str | None = None, profile: bool = False
 ) -> Generator[Trace, None, None]:
-    """Run the block as a new trace whose root span has the same name (and kind, unless `root_kind` says)."""
+    """Run the block as a new trace whose root span has the same name (and kind, unless `root_kind` says).
+
+    `profile`: the request asked to be profiled (the setting profiles every trace anyway).
+    """
     start = now_us()
     started = time.perf_counter_ns()
     trace = Trace(id=new_id(), kind=kind, name=name, start=start, attrs=dict(attrs or {}))
     root = Span(id=new_id(), parent_id=None, kind=root_kind or kind, name=name, start=start)
     trace.spans.append(root)
     trace_token, span_token = _trace.set(trace), _span.set(root)
+    recording = profiling.SAMPLER.start() if profiling.wanted(asked=profile) else None
     try:
         yield trace
     except BaseException:
@@ -65,6 +70,8 @@ def start_trace(
         raise
     finally:
         trace.duration = root.duration = (time.perf_counter_ns() - started) // 1000
+        if recording is not None:
+            trace.profile = profiling.SAMPLER.stop(recording)
         root.name = trace.name
         _span.reset(span_token)
         _trace.reset(trace_token)

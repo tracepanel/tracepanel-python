@@ -17,7 +17,7 @@ from urllib.parse import parse_qsl
 from tracepanel.console import app as console
 from tracepanel.console import terminal, widget
 from tracepanel.console.messages import MAX_BODY, is_local
-from tracepanel.core import conf, errors, w3c
+from tracepanel.core import conf, errors, profile, w3c
 from tracepanel.core import request as details
 from tracepanel.core.context import current_trace, start_span, start_trace
 from tracepanel.core.model import Trace
@@ -160,8 +160,9 @@ class TracepanelMiddleware:
         reader = _BodyReader(receive) if config.capture_request else None
         if reader is not None:
             attrs.update(_request_details(scope))
-        with start_trace("http", f"{method} {path}", attrs) as trace:
-            responder = _Responder(scope, send, trace, config)
+        asked = profile.requested(headers.get(profile.HEADER), headers.get("cookie"))
+        with start_trace("http", f"{method} {path}", attrs, profile=asked) as trace:
+            responder = _Responder(scope, send, trace, config, expire=profile.by_cookie(headers.get("cookie")))
             try:
                 await self.app(scope, receive if reader is None else reader.receive, responder.send)
             except Exception as exc:  # noqa: BLE001 (recorded, then raised again for the server to log)
@@ -262,8 +263,10 @@ async def _read_body(receive: Receive) -> tuple[bytes, bool]:
 class _Responder:
     """Holds the response's start until the body is complete, then adds tracepanel's headers (and the widget)."""
 
-    def __init__(self, scope: Scope, send: Send, trace: Trace, config: conf.Config) -> None:
+    def __init__(self, scope: Scope, send: Send, trace: Trace, config: conf.Config, *, expire: bool = False) -> None:
         self.scope = scope
+        # The panel's one-shot profiling cookie came with the request: the response deletes it.
+        self.expire = expire
         self.downstream = send
         self.trace = trace
         self.config = config
@@ -279,6 +282,8 @@ class _Responder:
         kind = message["type"]
         if kind == "http.response.start":
             self.start = dict(message)
+            if self.expire:
+                self.start["headers"] = [*self.start.get("headers", []), (b"set-cookie", profile.EXPIRE.encode())]
             self.trace.attrs["http.status_code"] = int(message["status"])
             if self.config.capture_request:
                 pairs = [(key.decode("latin-1"), value.decode("latin-1")) for key, value in message.get("headers", [])]
