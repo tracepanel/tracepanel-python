@@ -24,6 +24,15 @@ def tracer() -> Generator[otel_trace.Tracer, None, None]:
     otel_trace.set_tracer_provider(provider)
     yield otel_trace.get_tracer("tests.otel")
     provider.shutdown()
+    # The global provider stays for the rest of the process, and libraries keep its tracers (FastAPI's dependencies
+    # span themselves): without tracepanel's processor, their spans stay out of the other tests' traces. OTel has no
+    # API to remove a processor.
+    processors = provider._active_span_processor  # noqa: SLF001
+    processors._span_processors = tuple(  # noqa: SLF001
+        each
+        for each in processors._span_processors  # noqa: SLF001
+        if each is not otel.PROCESSOR
+    )
 
 
 def added(trace: Trace) -> list[Span]:
