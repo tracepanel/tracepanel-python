@@ -22,8 +22,11 @@ MAX_BODY = 16_384
 _READABLE = "*<>,. /:@"
 # A response's cookies are a session's keys, whatever their name.
 _ALWAYS_MASKED = frozenset({"set-cookie"})
-# Django's own session keys: the user's id and backend say who is signed in; the hash proves it, so it is a secret.
-_SESSION_PLAIN = frozenset({"_auth_user_id", "_auth_user_backend"})
+# Session keys that say who is signed in, kept as they are; the hash that proves it stays masked, as a secret.
+# Django's user id and backend; Flask-Login's user id and whether the login is fresh.
+_SESSION_PLAIN = frozenset({"_auth_user_id", "_auth_user_backend", "_user_id", "_fresh"})
+# Flask-Login's session identifier: a hash of the browser's address and agent that guards the session.
+_SESSION_MASKED = frozenset({"_id"})
 
 
 _UNKEYED = re.compile(r"[^a-z0-9_]")
@@ -98,10 +101,23 @@ def cookie_values(values: Mapping[str, str]) -> Attrs:
 
 def session(items: Iterable[tuple[str, object]]) -> Attrs:
     """session.<key>: each value's short repr, a sensitive one masked."""
-    return {
-        f"session.{key(name)}": safe_repr("", value) if name in _SESSION_PLAIN else safe_repr(name, value)
-        for name, value in items
-    }
+    return {f"session.{key(name)}": _session_value(name, value) for name, value in items}
+
+
+def user(user_id: object, username: object = None, *, authenticated: bool = True) -> Attrs:
+    """user.* of a signed-in user (its id, and its name when the framework has one); an anonymous one has no id.
+
+    The username is local context, as locals are: the agent drops it before anything leaves the machine.
+    """
+    if not authenticated:
+        return {"user.id": None}
+    return {"user.id": str(user_id), "user.username": None if username is None else str(username)}
+
+
+def _session_value(name: str, value: object) -> str:
+    if name in _SESSION_MASKED:
+        return MASK
+    return safe_repr("", value) if name in _SESSION_PLAIN else safe_repr(name, value)
 
 
 def body(content_type: str, data: bytes, *, complete: bool = True) -> Attrs:
