@@ -36,7 +36,21 @@ IGNORED = (
     "gunicorn.access",
     "hypercorn.access",
 )
-LEVELS = {"WARN": "warning", "FATAL": "critical"}
+# The levels every SDK speaks (the trace schema's), lowest first, each from the logging number it starts at. A
+# library's own level (loguru's TRACE and SUCCESS, a custom NOTICE) falls in by its number, never by its name.
+LEVELS = (
+    (logging.CRITICAL, "critical"),
+    (logging.ERROR, "error"),
+    (logging.WARNING, "warning"),
+    (logging.INFO, "info"),
+)
+
+
+def level(number: int) -> str:
+    """The schema's level for a logging level number: the highest one it reaches, debug below info."""
+    return next((name for floor, name in LEVELS if number >= floor), "debug")
+
+
 # Attributes every LogRecord has; anything else came from `extra=`.
 STANDARD = frozenset(vars(logging.makeLogRecord({}))) | {"message", "asctime"}
 _KEY = re.compile(r"[^a-z0-9_]+")
@@ -89,7 +103,7 @@ class TracepanelHandler(logging.Handler):
                 Log(
                     span_id=span.id if span else None,
                     time=int(record.created * 1_000_000),
-                    level=LEVELS.get(record.levelname, record.levelname.lower()),
+                    level=level(record.levelno),
                     logger=record.name,
                     message=record.getMessage(),
                     exception=exception,

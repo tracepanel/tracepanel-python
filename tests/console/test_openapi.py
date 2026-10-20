@@ -130,6 +130,12 @@ CASES: list[tuple[str, int, Callable[[Data], str]]] = [
     ("/users/me", 200, lambda _: "users/me"),
     ("/users/me", 403, lambda _: "users/me?remote=1"),
 ]
+# Newer than the agent CI runs (the released one): checked where the agent next to this checkout documents them.
+NEWER: list[tuple[str, int, Callable[[Data], str]]] = [
+    ("/logs/series", 200, lambda _: "logs/series"),
+    ("/logs/series", 400, lambda _: "logs/series?q=level:loud"),
+]
+CASES += [case for case in NEWER if case[0] in OPENAPI["paths"]]
 
 
 @pytest.mark.django_db
