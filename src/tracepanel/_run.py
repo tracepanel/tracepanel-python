@@ -60,11 +60,14 @@ def _starlette(module: ModuleType) -> None:
 
 
 def _falcon(module: ModuleType) -> None:
-    """Install tracepanel on every Falcon WSGI app as it is created (in place: the app stays the object to serve)."""
+    """Install tracepanel on every Falcon app (WSGI or ASGI) as it is created, in place: the app stays the one served.
+
+    falcon.asgi.App's own __init__ calls this one first: install() sees an ASGI app all the same.
+    """
     app_class = module.App
     original = app_class.__init__
 
-    def init(self: Any, *args: object, **kwargs: object) -> None:  # noqa: ANN401 (falcon.App)
+    def init(self: Any, *args: object, **kwargs: object) -> None:  # noqa: ANN401 (falcon.App, falcon.asgi.App)
         original(self, *args, **kwargs)
         from tracepanel import falcon  # noqa: PLC0415 (only once a Falcon app exists)
 

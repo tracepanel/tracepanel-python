@@ -1,4 +1,4 @@
-"""ASGI apps: Starlette and FastAPI in full, any other ASGI framework at the request level.
+"""ASGI apps: Starlette and FastAPI in full (Falcon's through tracepanel.falcon), any other at the request level.
 
 `tracepanel run uvicorn app:app` needs no code for Starlette and FastAPI: the app is set up as it is created. In code,
 `app = tracepanel.asgi.install(app)` does the same; it is on only for an app in debug mode (`Starlette(debug=True)`) or

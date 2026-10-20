@@ -13,6 +13,13 @@
 
 ### Added
 
+- Falcon's ASGI app (`falcon.asgi.App`) is traced as its WSGI app is:
+  `tracepanel run uvicorn app:app`, or `tracepanel.falcon.install(app)` in
+  code. A request is named after its route's URI template, its responder
+  runs in a `view` span, and an error Falcon turns into a 500 is recorded.
+  Pages get the panel, and the console is served under `/__tracepanel__/`.
+- Falcon: a request whose responder runs a Strawberry operation is named
+  after it (`GraphQL query PostList`), as in Django, Flask and FastAPI.
 - A streamed HTML page gets the panel too: Django's `StreamingHttpResponse`
   (sync or async), Starlette's and FastAPI's `StreamingResponse`, a
   generator in Flask or any WSGI app. The script goes in right after the
@@ -53,6 +60,10 @@
 
 ### Fixed
 
+- An ASGI server may pass the request's headers, client and server as any
+  iterable, not only lists. Tracepanel read them more than once, so the
+  second read found nothing. It now reads them once. The headers it adds to
+  a response have lowercase names, as the ASGI spec asks.
 - The first trace after the agent restarted was lost (the panel said
   "Trace not found"): the old connection still took the write on this side.
   Before each batch, the writer checks whether the agent closed the

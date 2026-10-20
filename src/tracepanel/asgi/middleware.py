@@ -47,6 +47,23 @@ def _set_header(message: Message, name: str, value: str) -> None:
     message["headers"] = [*headers, (name.encode("latin-1"), value.encode("latin-1"))]
 
 
+def _encode(headers: list[tuple[str, str]]) -> list[tuple[bytes, bytes]]:
+    """The response's headers as ASGI wants them: names lowercased (Falcon's test client insists)."""
+    return [(key.lower().encode("latin-1"), value.encode("latin-1")) for key, value in headers]
+
+
+def _reusable(scope: Scope) -> None:
+    """The scope's headers, client and server as lists and tuples, read more than once.
+
+    The ASGI spec allows any iterable: Falcon's test client sends iterators, which a first read would use up.
+    """
+    if "headers" in scope:
+        scope["headers"] = [tuple(pair) for pair in scope["headers"]]
+    for key in ("client", "server"):
+        if scope.get(key) is not None:
+            scope[key] = tuple(scope[key])
+
+
 def _api(scope: Scope, prefix: str) -> str:
     return str(scope.get("root_path", "")).rstrip("/") + prefix
 
@@ -158,6 +175,7 @@ class TracepanelMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        _reusable(scope)
         config = conf.get_config()
         path = str(scope.get("path", ""))
         if path.startswith(config.prefix):
@@ -339,7 +357,7 @@ class _Responder:
         self._htmx(None)
         headers = [(key.decode("latin-1"), value.decode("latin-1")) for key, value in start.get("headers", [])]
         self.script = widget.stream(self.trace, self._page(start), headers, self.config)
-        start["headers"] = [(key.encode("latin-1"), value.encode("latin-1")) for key, value in headers]
+        start["headers"] = _encode(headers)
         self.sent, self.streaming, self.start = True, True, None
         self.body = []
         await self.downstream(start)
@@ -403,7 +421,7 @@ class _Responder:
         headers = [(key.decode("latin-1"), value.decode("latin-1")) for key, value in start.get("headers", [])]
         decorated = widget.decorate(trace, page, headers, body, config)
         body = body if decorated is None else decorated
-        start["headers"] = [(key.encode("latin-1"), value.encode("latin-1")) for key, value in headers]
+        start["headers"] = _encode(headers)
         self.sent = True
         await self.downstream(start)
         await self.downstream({"type": "http.response.body", "body": body})

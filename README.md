@@ -72,7 +72,8 @@ is:
 tracepanel run python manage.py runserver   # Django
 tracepanel run uvicorn app.main:app         # FastAPI, Starlette
 tracepanel run flask --app app run          # Flask
-tracepanel run gunicorn app:app             # Falcon
+tracepanel run gunicorn app:app             # Falcon (WSGI)
+tracepanel run uvicorn app:app              # Falcon (ASGI)
 tracepanel run celery -A app worker         # a worker
 ```
 

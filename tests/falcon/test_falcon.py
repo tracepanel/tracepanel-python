@@ -4,14 +4,15 @@ import pytest
 from dirty_equals import IsPartialDict
 
 pytest.importorskip("falcon")
+strawberry = pytest.importorskip("strawberry")
 
-import falcon
-import falcon.testing
+import falcon  # noqa: E402
+import falcon.testing  # noqa: E402
 
-import tracepanel.falcon
-from tests.agentstore import AgentStore
-from tracepanel.core import conf
-from tracepanel.core.model import Trace
+import tracepanel.falcon  # noqa: E402
+from tests.agentstore import AgentStore  # noqa: E402
+from tracepanel.core import conf  # noqa: E402
+from tracepanel.core.model import Trace  # noqa: E402
 
 App = falcon.App[falcon.Request, falcon.Response]
 
@@ -38,6 +39,24 @@ class PageResource:
         resp.text = "<html><head><title>t</title></head><body>hi</body></html>"
 
 
+@strawberry.type
+class Query:
+    @strawberry.field
+    def hello(self) -> str:
+        return "world"
+
+
+class GraphQLResource:
+    """Strawberry has no Falcon integration: the responder executes the schema itself."""
+
+    schema = strawberry.Schema(query=Query)
+
+    def on_post(self, req: falcon.Request, resp: falcon.Response) -> None:
+        body = req.get_media()
+        result = self.schema.execute_sync(body["query"], operation_name=body.get("operationName"))
+        resp.media = {"data": result.data}
+
+
 @pytest.fixture
 def app(traces: list[Trace]) -> Generator[App, None, None]:
     previous = conf._framework  # noqa: SLF001
@@ -45,6 +64,7 @@ def app(traces: list[Trace]) -> Generator[App, None, None]:
     application.add_route("/posts/{post_id:int}", PostResource())
     application.add_route("/page", PageResource())
     application.add_route("/posts/{post_id:int}/raw", PostResource(), suffix="raw")
+    application.add_route("/graphql", GraphQLResource())
     tracepanel.falcon.install(application, enabled=True)
     yield application
     # The Django tests go on with their own settings.
@@ -106,6 +126,23 @@ def test_errors_the_app_handles_are_not_errors(app: App, traces: list[Trace]) ->
 
     # The app's own handler answered: Falcon's default one (the 500) didn't run.
     assert (result.status_code, trace.status, trace.errors) == (422, "ok", [])
+
+
+def test_strawberry_names_the_request(client: falcon.testing.TestClient, traces: list[Trace]) -> None:
+    result = client.simulate_post("/graphql", json={"query": "query Greeting { hello }"})
+    (trace,) = traces
+
+    assert result.json == {"data": {"hello": "world"}}
+
+    assert (trace.name, result.headers["Tracepanel-Name"]) == ("GraphQL query Greeting", "GraphQL query Greeting")
+
+    assert trace.attrs == IsPartialDict(
+        {
+            "http.route": "/graphql",
+            "code.view": "tests.falcon.test_falcon.GraphQLResource.on_post",
+            "graphql.operation": "query Greeting",
+        }
+    )
 
 
 def test_widget_in_html_pages(client: falcon.testing.TestClient, traces: list[Trace], store: AgentStore) -> None:
