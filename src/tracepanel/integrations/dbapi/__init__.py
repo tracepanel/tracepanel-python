@@ -6,7 +6,7 @@ database through the driver (FastAPI or Flask with raw SQL, Peewee, a script) ge
 
 - SQLite: sqlite3, aiosqlite.
 - PostgreSQL: psycopg (3), psycopg2, asyncpg.
-- MySQL and MariaDB: PyMySQL, mysqlclient, MySQL Connector/Python, aiomysql.
+- MySQL and MariaDB: PyMySQL, mysqlclient, MySQL Connector/Python, aiomysql, asyncmy.
 - Oracle: python-oracledb.
 
 An ORM runs its statements through the same drivers, and records them itself. What decides is who called the driver
@@ -14,7 +14,7 @@ An ORM runs its statements through the same drivers, and records them itself. Wh
 When that is Django's database layer, SQLAlchemy or tracepanel itself (EXPLAIN), the statement is theirs and the
 driver's wrapper leaves it alone; the app, or a library on top of the driver, gets it recorded here.
 
-Not covered: drivers whose cursors are C types with no factory to subclass (pyodbc, pymssql, asyncmy).
+Not covered: drivers whose cursors are C types with no factory to subclass (pyodbc, pymssql).
 """
 
 from collections.abc import Callable

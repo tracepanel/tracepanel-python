@@ -87,6 +87,7 @@ class Config:
     drf_enabled: bool = True
     # Outgoing HTTP calls: urllib3 (requests, boto3), httpx, aiohttp.
     http_clients_enabled: bool = True
+    jinja_enabled: bool = True
     logging_enabled: bool = True
     mongodb_enabled: bool = True
     ninja_enabled: bool = True
@@ -154,6 +155,7 @@ class Settings(TypedDict, total=False):
     dramatiq_enabled: bool
     drf_enabled: bool
     http_clients_enabled: bool
+    jinja_enabled: bool
     logging_enabled: bool
     mongodb_enabled: bool
     ninja_enabled: bool

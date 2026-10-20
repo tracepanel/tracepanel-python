@@ -32,6 +32,7 @@ CALLERS = Callers(
         "MySQLdb",
         "mysql.connector",
         "aiomysql",
+        "asyncmy",
         "oracledb",
     ),
     layers=("django.db.", "sqlalchemy.", "tracepanel.", "aiosqlite.", "psycopg_pool."),

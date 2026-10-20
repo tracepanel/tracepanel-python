@@ -119,6 +119,32 @@ def test_aiomysql_statements_are_recorded_once_each() -> None:
     assert statements(trace)[0].attrs == IsPartialDict({"db.params": [1], "code.origin": ORIGIN})
 
 
+def test_asyncmy_statements_are_recorded_once_each_whatever_cursor_class() -> None:
+    asyncmy = pytest.importorskip("asyncmy")
+    from asyncmy.cursors import DictCursor  # noqa: PLC0415
+
+    m = my()
+
+    async def work() -> None:
+        connection = await asyncmy.connect(
+            host=m["host"], port=m["port"], user=m["user"], password=m["password"], database=m["database"]
+        )
+        try:
+            async with connection.cursor() as cursor:
+                await cursor.execute("SELECT %s", (1,))
+                await cursor.executemany("SELECT %s", [(1,), (2,)])
+            async with connection.cursor(DictCursor) as cursor:
+                await cursor.execute("SELECT %s AS one", (1,))
+                assert await cursor.fetchone() == {"one": 1}
+        finally:
+            connection.close()
+
+    trace = traced(lambda: asyncio.run(work()))
+
+    assert sql_spans(trace) == [("asyncmy", "SELECT")] * 3
+    assert statements(trace)[0].attrs == IsPartialDict({"db.params": [1], "code.origin": ORIGIN})
+
+
 def test_mysql_connector_asyncio_statements_are_recorded() -> None:
     pytest.importorskip("mysql.connector")
     from mysql.connector.aio import connect  # noqa: PLC0415
