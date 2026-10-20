@@ -69,6 +69,13 @@ class Config:
     # Keep a request's headers, query, body (what the app read), cookies and session (development only, masked; they
     # never leave this machine).
     capture_request: bool = True
+    # Sample where each trace's time goes in code (a flame graph in the console): every trace when on; one request
+    # with an X-Tracepanel-Profile: 1 header or a tracepanel_profile=1 cookie either way.
+    profile: bool = False
+    # Whether profiling is possible at all: off, neither the setting nor a request's header or cookie profiles.
+    profile_enabled: bool = True
+    # How often the profiler samples a profiled trace's stack.
+    profile_interval_ms: int = 5
     # Integrations, each on when its library is installed; `false` leaves the library unpatched. Read at startup.
     celery_enabled: bool = True
     channels_enabled: bool = True
@@ -136,6 +143,9 @@ class Settings(TypedDict, total=False):
     user_switch: bool
     capture_task_args: bool
     capture_request: bool
+    profile: bool
+    profile_enabled: bool
+    profile_interval_ms: int
     celery_enabled: bool
     channels_enabled: bool
     dbapi_enabled: bool

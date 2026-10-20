@@ -1,8 +1,9 @@
+import time
 from collections.abc import AsyncIterator, Generator
 from typing import Any
 
 import pytest
-from dirty_equals import IsPartialDict
+from dirty_equals import IsInt, IsPartialDict
 
 starlette = pytest.importorskip("starlette")
 
@@ -292,3 +293,32 @@ def test_nothing_is_recorded_with_capture_request_off(
     (trace,) = traces
     assert carried(trace) == {}
     assert not [key for key in trace.attrs if key.startswith("http.response.header.")]
+
+
+async def busy(request: Request) -> JSONResponse:
+    del request
+    # Blocking the loop on purpose: CPU time in the request's own code is what a profile shows.
+    end = time.perf_counter() + 0.15
+    while time.perf_counter() < end:
+        pass
+    return JSONResponse({"done": True})
+
+
+def test_the_panels_cookie_profiles_each_request_while_it_is_set(
+    traces: list[Trace], restore: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRACEPANEL_PROFILE_INTERVAL_MS", "1")
+    app = Starlette(debug=True, routes=[Route("/busy", busy)])
+    tracepanel.asgi.install(app)
+    client = TestClient(app)
+
+    profiled_response = client.get("/busy", headers={"Cookie": "tracepanel_profile=1"})
+    plain = client.get("/busy")
+    profiled, unprofiled = traces
+
+    assert profiled.profile is not None
+    assert profiled.profile["samples"] == IsInt(gt=0)
+    assert "set-cookie" not in profiled_response.headers
+
+    assert unprofiled.profile is None
+    assert "set-cookie" not in plain.headers

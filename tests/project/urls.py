@@ -32,6 +32,7 @@ except ImportError:  # the drf test group is optional
 
 urlpatterns = [
     path("n-plus-one/", views.n_plus_one),
+    path("busy/", views.busy),
     path("fixed/", views.fixed),
     path("duplicates/", views.duplicates),
     path("cache/", views.cached),

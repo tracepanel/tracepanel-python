@@ -17,7 +17,7 @@ from urllib.parse import parse_qsl
 from tracepanel.console import app as console
 from tracepanel.console import terminal, widget
 from tracepanel.console.messages import MAX_BODY, is_local
-from tracepanel.core import conf, errors, w3c
+from tracepanel.core import conf, errors, profile, w3c
 from tracepanel.core import request as details
 from tracepanel.core.context import current_trace, start_span, start_trace
 from tracepanel.core.model import Trace
@@ -160,7 +160,8 @@ class TracepanelMiddleware:
         reader = _BodyReader(receive) if config.capture_request else None
         if reader is not None:
             attrs.update(_request_details(scope))
-        with start_trace("http", f"{method} {path}", attrs) as trace:
+        asked = profile.requested(headers.get(profile.HEADER), headers.get("cookie"))
+        with start_trace("http", f"{method} {path}", attrs, profile=asked) as trace:
             responder = _Responder(scope, send, trace, config)
             try:
                 await self.app(scope, receive if reader is None else reader.receive, responder.send)
