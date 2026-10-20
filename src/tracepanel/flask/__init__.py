@@ -9,16 +9,19 @@ this module names them after the URL rule, runs the view in a `view` span and ea
 records errors Flask turns into a 500, and puts the trace's headers on Werkzeug's debugger page. The framework-free
 integrations turn on too: SQLAlchemy (Flask-SQLAlchemy too), Celery, logging.
 Settings come from `app.config["TRACEPANEL"]` (the same names as Django's TRACEPANEL dict) and install()'s keyword
-arguments; TRACEPANEL_* variables override them. There is no user switching: Flask has no user model of its own.
+arguments; TRACEPANEL_* variables override them. The session is recorded as the view left it, and Flask-Login's user
+when it loaded one; there is no user switching: Flask has no user model of its own.
 """
 
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, Unpack, cast
 
 from tracepanel import _setup
-from tracepanel.core import errors
+from tracepanel.core import conf, errors
+from tracepanel.core import request as details
 from tracepanel.core.conf import Settings
 from tracepanel.core.context import current_trace, start_span
+from tracepanel.core.model import Attrs, Trace
 from tracepanel.core.patching import patch, patched
 from tracepanel.wsgi import TRACE_KEY, URL_KEY, TracepanelMiddleware
 
@@ -102,12 +105,33 @@ def _dispatch(app: "Flask") -> Callable[[], Any]:
         trace.attrs["code.view"] = name
         with start_span("view", name, {"code.function": name}):
             result = original()
+        trace.attrs.update(_who(trace))
         operation = trace.attrs.get("graphql.operation")
         if isinstance(operation, str):
             trace.name = f"GraphQL {operation}"
         return result
 
     return dispatch_request
+
+
+def _who(trace: Trace) -> Attrs:
+    """The session as the view left it, and the user Flask-Login loaded for it, if it did."""
+    from flask import g, session  # noqa: PLC0415
+
+    attrs: Attrs = {}
+    if conf.get_config().capture_request:
+        # Already decoded from its cookie: reading it costs nothing, and items() doesn't mark it accessed.
+        attrs.update(details.session(session.items()))
+    # Flask-Login keeps the user it loaded on g; reading current_user here would load one the view never asked for.
+    loaded = g.get("_login_user")
+    if loaded is not None and "user.id" not in trace.attrs:
+        attrs.update(details.user(loaded.get_id(), _username(loaded), authenticated=bool(loaded.is_authenticated)))
+    return attrs
+
+
+def _username(user: object) -> object:
+    """What a Flask-Login user is called: its username, else its email; Flask-Login asks for neither."""
+    return getattr(user, "username", None) or getattr(user, "email", None)
 
 
 def _on_exception(sender: object, exception: BaseException, **extra: object) -> None:

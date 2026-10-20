@@ -4,6 +4,11 @@
 
 ### Added
 
+- Flask, FastAPI and Starlette record the session and the signed-in user,
+  as Django does. Flask's session is recorded as the view left it, and so is
+  the user Flask-Login loaded. Starlette's are the ones its
+  `SessionMiddleware` and `AuthenticationMiddleware` put on the request.
+  Secrets in the session stay masked, Flask-Login's session hash among them.
 - A query no project code made (Django's admin, a paginator, a template tag)
   records the library code that asked for it as `code.caller`: the first
   frame past the ORM and the driver. The panel shows it where it showed

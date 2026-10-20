@@ -20,7 +20,7 @@ from tracepanel.console.messages import MAX_BODY, is_local
 from tracepanel.core import conf, errors, profile, w3c
 from tracepanel.core import request as details
 from tracepanel.core.context import current_trace, start_span, start_trace
-from tracepanel.core.model import Trace
+from tracepanel.core.model import Attrs, Trace
 from tracepanel.integrations import htmx
 from tracepanel.storage.transport import complete
 
@@ -124,6 +124,28 @@ def wrap_routes(routes: list[Any]) -> None:
         route.app = _view(route_app, _endpoint_name(endpoint))
 
 
+def _session(scope: Scope) -> Attrs:
+    """The session Starlette's SessionMiddleware put on the scope, as the app left it; none without that middleware."""
+    session = scope.get("session")
+    return details.session(session.items()) if isinstance(session, dict) else {}
+
+
+def _user(scope: Scope) -> Attrs:
+    """The user Starlette's AuthenticationMiddleware put on the scope (its BaseUser); none without that middleware."""
+    found = scope.get("user")
+    if found is None or not hasattr(found, "is_authenticated"):
+        return {}
+    if not found.is_authenticated:
+        return details.user(None, authenticated=False)
+    name = getattr(found, "display_name", None)
+    try:
+        identity = found.identity
+    except NotImplementedError:
+        # SimpleUser has no identity: its name is all it has.
+        identity = name
+    return details.user(identity, name)
+
+
 class TracepanelMiddleware:
     """`routes` returns the app's routes (Starlette's router), so endpoints can be wrapped as view spans."""
 
@@ -174,8 +196,10 @@ class TracepanelMiddleware:
                 # plain response with them, so the widget (and a fetch() caller) can open the failed request.
                 await responder.error()
             _name(trace, scope, method)
+            trace.attrs.update(_user(scope))
             if reader is not None:
                 trace.attrs.update(reader.attrs(headers.get("content-type", "")))
+                trace.attrs.update(_session(scope))
         complete(trace)
         if failure is not None:
             raise failure
