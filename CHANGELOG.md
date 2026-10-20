@@ -60,6 +60,10 @@
 
 ### Fixed
 
+- A log record's level is always one of the five every SDK shares (debug,
+  info, warning, error, critical), taken from its logging number. A library's
+  own level (loguru's TRACE or SUCCESS, a custom NOTICE) went out under its
+  own name, which the schema and the console's level filter don't know.
 - An ASGI server may pass the request's headers, client and server as any
   iterable, not only lists. Tracepanel read them more than once, so the
   second read found nothing. It now reads them once. The headers it adds to
