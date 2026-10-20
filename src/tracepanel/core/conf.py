@@ -74,8 +74,9 @@ class Config:
     profile: bool = False
     # Whether profiling is possible at all: off, neither the setting nor a request's header or cookie profiles.
     profile_enabled: bool = True
-    # How often the profiler samples a profiled trace's stack.
-    profile_interval_ms: int = 5
+    # How often the profiler samples a profiled trace's stack: each millisecond, so a request of a few milliseconds
+    # still has a profile to read. Only a profiled trace pays for it.
+    profile_interval_ms: int = 1
     # Integrations, each on when its library is installed; `false` leaves the library unpatched. Read at startup.
     celery_enabled: bool = True
     channels_enabled: bool = True
