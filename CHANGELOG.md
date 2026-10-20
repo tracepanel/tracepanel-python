@@ -43,6 +43,17 @@
   default). The console's
   capabilities say whether profiling is on.
 
+### Fixed
+
+- A profiled request could come back with no profile. The sampler thread,
+  idle long enough to leave, left as a new trace started, and nothing
+  sampled it. The decision to leave is now taken under the lock that
+  starting a trace takes.
+- While traces are profiled, the GIL changes hands as often as the sampler
+  wakes (every millisecond). Before, a request busy in Python code let the
+  sampler run only every 5 to 30 ms. The interpreter's own interval comes
+  back after the last profiled trace.
+
 ## 0.3.4 (2026-10-19)
 
 ### Fixed

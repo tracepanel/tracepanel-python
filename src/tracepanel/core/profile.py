@@ -50,12 +50,16 @@ class Sampler:
         self._lock = threading.Lock()
         self._threads: dict[int, list[Recording]] = {}
         self._thread: threading.Thread | None = None
+        # The interpreter's GIL switch interval before the first profiled trace, put back after the last one.
+        self._switch: float | None = None
 
     def start(self) -> Recording:
         """Begin recording the calling thread's stacks for a trace it starts."""
         interval_ms = max(conf.get_config().profile_interval_ms, 1)
         recording = Recording(thread_id=threading.get_ident(), interval_us=interval_ms * 1000)
         with self._lock:
+            if not self._threads:
+                self._quicken(interval_ms / 1000)
             self._threads.setdefault(recording.thread_id, []).append(recording)
             if self._thread is None or not self._thread.is_alive():
                 self._thread = threading.Thread(
@@ -72,23 +76,45 @@ class Sampler:
                 running.remove(recording)
             if not running:
                 self._threads.pop(recording.thread_id, None)
+            if not self._threads:
+                self._slow_down()
         return document(recording)
+
+    def _quicken(self, interval_s: float) -> None:
+        """Hand the GIL over as often as the sampler wakes, while traces are profiled.
+
+        A sleeping thread gets the GIL back only when the running one gives it up: every switch interval (5 ms), and
+        in practice 7 to 30 ms while it runs Python code. The sampler would see a busy request a few times, and a
+        short one not at all. Only profiled traces pay for the faster switching.
+        """
+        current = sys.getswitchinterval()
+        if current > interval_s:
+            self._switch = current
+            sys.setswitchinterval(interval_s)
+
+    def _slow_down(self) -> None:
+        if self._switch is not None:
+            sys.setswitchinterval(self._switch)
+            self._switch = None
 
     def _run(self, interval_s: float) -> None:
         idle = 0
-        while idle < IDLE_TICKS:
+        while True:
             time.sleep(interval_s)
             with self._lock:
-                # One profiled trace on a thread: its stack is that trace's.
-                alone = [running[0] for running in self._threads.values() if len(running) == 1]
                 if not self._threads:
                     idle += 1
+                    if idle >= IDLE_TICKS:
+                        # Decided under the lock that start() takes: a trace starting now finds no thread and starts
+                        # one, rather than counting on this one, which is leaving.
+                        self._thread = None
+                        return
                     continue
+                # One profiled trace on a thread: its stack is that trace's.
+                alone = [running[0] for running in self._threads.values() if len(running) == 1]
             idle = 0
             if alone:
                 self._sample(alone)
-        with self._lock:
-            self._thread = None
 
     @staticmethod
     def _sample(recordings: list[Recording]) -> None:
