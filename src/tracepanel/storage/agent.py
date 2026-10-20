@@ -15,6 +15,7 @@ by `{"ok": true}` (or a refusal with its reason); then frames, a 4-byte big-endi
 import json
 import os
 import platform
+import select
 import socket
 import struct
 import subprocess
@@ -258,6 +259,16 @@ def _open(addr: str) -> socket.socket | None:
     return None
 
 
+def _closed(sock: socket.socket) -> bool:
+    """Whether the agent closed this connection: it sends nothing unasked, so anything to read is its end."""
+    try:
+        nothing: list[socket.socket] = []
+        readable, _, _ = select.select([sock], nothing, nothing, 0)
+        return bool(readable) and sock.recv(1, socket.MSG_PEEK) == b""
+    except (OSError, ValueError):
+        return True
+
+
 class AgentWriter(BatchWriter):
     """Batches to the agent while it answers; without one, the batches are dropped (and counted)."""
 
@@ -285,6 +296,11 @@ class AgentWriter(BatchWriter):
             return self._sock is not None
 
     def _connect(self) -> None:
+        if self._sock is not None and _closed(self._sock):
+            # The agent went (a restart, a rebuild): a write would still go into this socket and be lost, unseen.
+            self._sock.close()
+            self._sock = None
+            self._retry_at = 0.0
         if self._sock is not None or time.monotonic() < self._retry_at:
             return
         thresholds = {

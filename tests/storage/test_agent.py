@@ -163,6 +163,27 @@ def test_an_agent_that_died_is_started_again(
             process.wait(timeout=10)
 
 
+def test_the_first_trace_after_the_agent_restarted_reaches_the_new_one(tmp_path: Path) -> None:
+    directory = tmp_path / ".tracepanel"
+    first = AgentStore.start(directory)
+    config = dataclasses.replace(conf.get_config(), agent="auto", dir=str(directory))
+    writer = agent.AgentWriter(config)
+    before, after = requests(2)
+    writer.submit(before)
+    writer.flush()
+    first.wait_for(before.id)
+    # The agent goes (a rebuild, a restart): the writer's connection to it is still open on this side.
+    first.stop()
+    second = AgentStore.start(directory)
+    try:
+        writer.submit(after)
+        writer.flush()
+
+        second.wait_for(after.id)
+    finally:
+        second.stop()
+
+
 def _hello(tmp_path: Path, config: conf.Config) -> dict[str, object]:
     """The hello an app's writer sends, as an agent listening at a socket of the test's reads it."""
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

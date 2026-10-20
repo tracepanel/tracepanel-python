@@ -53,6 +53,10 @@
 
 ### Fixed
 
+- The first trace after the agent restarted was lost (the panel said
+  "Trace not found"): the old connection still took the write on this side.
+  Before each batch, the writer checks whether the agent closed the
+  connection, and connects again at once if it did.
 - A profiled request could come back with no profile. The sampler thread,
   idle long enough to leave, left as a new trace started, and nothing
   sampled it. The decision to leave is now taken under the lock that
