@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from collections.abc import AsyncIterator
 
 from django.contrib.auth import logout
 from django.contrib.auth.models import Group, Permission, User
@@ -10,7 +11,7 @@ from django.core.mail import send_mail
 from django.db import IntegrityError, transaction
 from django.db.models.signals import post_save
 from django.dispatch import Signal, receiver
-from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse
+from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.shortcuts import redirect, render
 
 logger = logging.getLogger(__name__)
@@ -261,6 +262,21 @@ def django_task(request: HttpRequest, kind: str) -> JsonResponse:
     else:
         result = django_jobs.queued_count.enqueue("queued")
     return JsonResponse({"id": str(result.id), "status": str(result.status)})
+
+
+def streamed_page(request: HttpRequest) -> StreamingHttpResponse:
+    del request
+    return StreamingHttpResponse(iter([b"<html><he", b"ad><title>t</title></head>", b"<body>streamed</body></html>"]))
+
+
+def async_streamed_page(request: HttpRequest) -> StreamingHttpResponse:
+    del request
+
+    async def pieces() -> AsyncIterator[bytes]:
+        yield b"<html><head><title>t</title></head>"
+        yield b"<body>streamed</body></html>"
+
+    return StreamingHttpResponse(pieces())
 
 
 def html_page(request: HttpRequest) -> HttpResponse:

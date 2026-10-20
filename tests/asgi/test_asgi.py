@@ -1,3 +1,4 @@
+import re
 import time
 from collections.abc import AsyncIterator, Generator
 from typing import Any
@@ -115,8 +116,10 @@ def test_widget_through_a_base_http_middleware(traces: list[Trace], restore: Non
 
 
 async def chunks() -> AsyncIterator[str]:
-    yield "<html><head></head><body>"
-    yield "streamed</body></html>"
+    # The <head> tag split between two pieces: the script goes in after it, all the same.
+    yield "<html><he"
+    yield 'ad lang="en"><title>t</title>'
+    yield "</head><body>streamed</body></html>"
 
 
 async def streamed(request: Request) -> StreamingResponse:
@@ -124,22 +127,21 @@ async def streamed(request: Request) -> StreamingResponse:
     return StreamingResponse(chunks(), media_type="text/html")
 
 
-def test_a_streamed_page_goes_out_as_it_is_made(
-    traces: list[Trace], restore: None, store: AgentStore, capsys: pytest.CaptureFixture[str]
+def test_a_streamed_page_gets_the_widget_as_its_head_passes(
+    traces: list[Trace], restore: None, store: AgentStore
 ) -> None:
     app = Starlette(debug=True, routes=[Route("/streamed", streamed)])
     tracepanel.asgi.install(app)
 
     response = TestClient(app).get("/streamed")
     (trace,) = traces
+    before, script, after = re.split(r"(<script [^>]*></script>)", response.text)
 
-    assert response.text == "<html><head></head><body>streamed</body></html>"
-    assert (response.headers["Tracepanel-Id"], "Tracepanel-Url" in response.headers) == (trace.id, False)
-
-    # Said in the terminal: a page without the widget looks like tracepanel being off.
-    assert capsys.readouterr().err == (
-        "tracepanel ▸ GET /streamed: an HTML page streamed (it has no Content-Length), so without the widget\n"
-    )
+    assert before == '<html><head lang="en">'
+    assert f'data-tracepanel-id="{trace.id}"' in script
+    assert after == "<title>t</title></head><body>streamed</body></html>"
+    assert response.headers["Tracepanel-Url"] == f"http://testserver/__tracepanel__/#/t/{trace.id}"
+    assert "Content-Length" not in response.headers
 
 
 def test_off_outside_debug_mode(traces: list[Trace], restore: None) -> None:

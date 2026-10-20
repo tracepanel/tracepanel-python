@@ -123,9 +123,8 @@ def decorate(trace: Trace, page: Page, headers: Headers, body: bytes | None, con
         set_header(headers, "Access-Control-Expose-Headers", expose)
     if body is None:
         return None
-    html_page = "text/html" in (header(headers, "Content-Type") or "") and header(headers, "Content-Encoding") is None
     # The panel is the agent's: without one there is nothing to open.
-    if config.widget and html_page and agent.ensure_started(config):
+    if config.widget and _html(headers) and agent.ensure_started(config):
         tag = script_tag(page.api, trace, page.method, page.status, page.timing)
         injected = inject(body.decode(page.charset, errors="replace"), tag)
         if injected is not None:
@@ -133,6 +132,69 @@ def decorate(trace: Trace, page: Page, headers: Headers, body: bytes | None, con
     if header(headers, "Content-Length") is not None:
         set_header(headers, "Content-Length", str(len(body)))
     return body
+
+
+def _html(headers: Headers) -> bool:
+    """An HTML page the script can go into as it is: not compressed."""
+    return "text/html" in (header(headers, "Content-Type") or "") and header(headers, "Content-Encoding") is None
+
+
+def stream(trace: Trace, page: Page, headers: Headers, config: Config) -> "Stream | None":
+    """For a body that goes out in pieces: the badge's headers (in place), and what puts the script into it.
+
+    None for anything but an HTML page, or for a page whose size was declared: the script would change it.
+    """
+    decorate(trace, page, headers, None, config)
+    if not (config.widget and _html(headers) and header(headers, "Content-Length") is None):
+        return None
+    if not agent.ensure_started(config):
+        return None
+    return Stream(script_tag(page.api, trace, page.method, page.status, page.timing).encode(page.charset))
+
+
+# Where a streamed page gets the script: right after its <head> opens, or its <body> without one.
+_OPENING = re.compile(rb"<(?:head|body)(?:\s[^>]*)?>", re.IGNORECASE)
+# A page streamed this far without either is not one the script goes into: the rest passes as it comes.
+STREAM_LOOKAHEAD = 65_536
+
+
+class Stream:
+    """The script put into an HTML page that goes out in pieces, as they pass.
+
+    Nothing is held but the end of a piece from its last `<` (a tag that may go on in the next one), until the script
+    is in.
+    """
+
+    def __init__(self, tag: bytes) -> None:
+        self.tag = tag
+        self.held = b""
+        self.seen = 0
+        self.done = False
+
+    def feed(self, piece: bytes) -> bytes:
+        """What goes out now, of the piece and what was held."""
+        if self.done:
+            return piece
+        data = self.held + piece
+        self.held = b""
+        found = _OPENING.search(data)
+        if found is not None:
+            self.done = True
+            return data[: found.end()] + self.tag + data[found.end() :]
+        self.seen += len(piece)
+        if self.seen > STREAM_LOOKAHEAD:
+            self.done = True
+            return data
+        cut = data.rfind(b"<")
+        if cut == -1 or b">" in data[cut:]:
+            return data
+        self.held = data[cut:]
+        return data[:cut]
+
+    def end(self) -> bytes:
+        """What was held, once the body ends."""
+        rest, self.held, self.done = self.held, b"", True
+        return rest
 
 
 def server_timing(timing: Timing) -> str:

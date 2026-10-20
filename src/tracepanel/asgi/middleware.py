@@ -6,7 +6,8 @@ and the endpoint runs inside a `view` span. Other frameworks' requests are named
 The response's start is held until its body is complete (a normal response): its headers then carry the trace's
 timing for the widget, and an HTML page gets widget.min.js. A body in several messages is still a normal response when
 its Content-Length is declared (Starlette's BaseHTTPMiddleware sends every response so); without one it is a stream,
-and goes out at once, with Tracepanel-Id only.
+and goes out at once, with the widget's headers (the timing so far); an HTML page streamed gets widget.min.js as its
+<head> passes.
 """
 
 import asyncio
@@ -15,7 +16,7 @@ from typing import Any
 from urllib.parse import parse_qsl
 
 from tracepanel.console import app as console
-from tracepanel.console import terminal, widget
+from tracepanel.console import widget
 from tracepanel.console.messages import MAX_BODY, is_local
 from tracepanel.core import conf, errors, profile, w3c
 from tracepanel.core import request as details
@@ -299,6 +300,9 @@ class _Responder:
         self.body: list[bytes] = []
         # Something already went to the client: an error can no longer get a response of its own.
         self.sent = False
+        # A streamed body goes out as it comes, through the widget's script when it is an HTML page.
+        self.streaming = False
+        self.script: widget.Stream | None = None
 
     async def send(self, message: Message) -> None:
         kind = message["type"]
@@ -311,7 +315,13 @@ class _Responder:
             if int(message["status"]) >= 500:  # noqa: PLR2004
                 self.trace.status = "error"
             return
-        if kind != "http.response.body" or self.start is None:
+        if kind != "http.response.body":
+            await self.downstream(message)
+            return
+        if self.streaming:
+            await self.downstream(self._through(message))
+            return
+        if self.start is None:
             await self.downstream(message)
             return
         self.body.append(message.get("body", b""))
@@ -319,29 +329,51 @@ class _Responder:
             await self._flush()
             return
         if len(self.body) == 1 and not self._held():
-            self._htmx(None)
-            # Streaming: send what there is, with the id only (the timing isn't known yet).
-            _set_header(self.start, "Tracepanel-Id", self.trace.id)
-            self.sent = True
-            await self.downstream(self.start)
-            self.start = None
-            await self.downstream(message)
+            await self._stream(message)
+
+    async def _stream(self, message: Message) -> None:
+        """A streamed response: its start now, with the widget's headers (the timing so far), its body as it comes."""
+        start = self.start
+        if start is None:
+            return
+        self._htmx(None)
+        headers = [(key.decode("latin-1"), value.decode("latin-1")) for key, value in start.get("headers", [])]
+        self.script = widget.stream(self.trace, self._page(start), headers, self.config)
+        start["headers"] = [(key.encode("latin-1"), value.encode("latin-1")) for key, value in headers]
+        self.sent, self.streaming, self.start = True, True, None
+        self.body = []
+        await self.downstream(start)
+        await self.downstream(self._through(message))
+
+    def _through(self, message: Message) -> Message:
+        """A piece of a streamed body, with the widget's script once its <head> has passed."""
+        script = self.script
+        if script is None:
+            return message
+        body = script.feed(message.get("body", b""))
+        if not message.get("more_body"):
+            body += script.end()
+        return {**message, "body": body}
+
+    def _page(self, start: Message) -> widget.Page:
+        """The response as the widget needs it; names the trace after its route first."""
+        method = str(self.scope.get("method", "GET"))
+        _name(self.trace, self.scope, method)
+        # complete() analyses the trace once it ends; the badge needs the issue count now.
+        timing = widget.Timing.live(self.trace)
+        requested = _headers({"headers": self.scope.get("headers", [])})
+        return widget.Page(method, int(start["status"]), self.origin, self.api, timing, requested=requested)
 
     def _held(self) -> bool:
         """Whether a body in several messages is held until its end: its size is declared, and small enough.
 
-        Otherwise it is a stream; an HTML page streamed so goes without the widget, and the terminal says why once.
+        Otherwise it is a stream: it goes out as it comes, an HTML page with the widget's script put in as it passes.
         """
         if self.start is None:
             return False
         headers = _headers(self.start)
         length = headers.get("content-length", "")
-        if length.isdigit() and int(length) <= MAX_HELD:
-            return True
-        if self.config.widget and "text/html" in headers.get("content-type", ""):
-            reason = "has no Content-Length" if not length.isdigit() else f"is over {MAX_HELD >> 20} MB"
-            terminal.notice(f"{self.trace.name}: an HTML page streamed (it {reason}), so without the widget")
-        return False
+        return length.isdigit() and int(length) <= MAX_HELD
 
     def _htmx(self, body: bytes | None) -> None:
         if self.start is not None:
@@ -367,12 +399,7 @@ class _Responder:
         body = b"".join(self.body)
         self._htmx(body)
         trace, config = self.trace, self.config
-        _name(trace, self.scope, str(self.scope.get("method", "GET")))
-        method = str(self.scope.get("method", "GET"))
-        # complete() analyses the trace once it ends; the badge needs the issue count now.
-        timing = widget.Timing.live(trace)
-        requested = _headers({"headers": self.scope.get("headers", [])})
-        page = widget.Page(method, int(start["status"]), self.origin, self.api, timing, requested=requested)
+        page = self._page(start)
         headers = [(key.decode("latin-1"), value.decode("latin-1")) for key, value in start.get("headers", [])]
         decorated = widget.decorate(trace, page, headers, body, config)
         body = body if decorated is None else decorated

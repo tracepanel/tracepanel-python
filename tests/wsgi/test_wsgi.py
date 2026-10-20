@@ -1,3 +1,4 @@
+import re
 import time
 from collections.abc import Callable, Generator, Iterable, Iterator
 from io import BytesIO
@@ -26,8 +27,19 @@ def app(environ: dict[str, Any], start_response: StartResponse) -> Iterable[byte
         return [PAGE]
     if path == "/stream":
         return stream(start_response)
+    if path == "/stream-page":
+        return stream_page(start_response)
     start_response("201 Created", [("Content-Type", "text/plain"), ("Content-Length", "2")])
     return [b"ok"]
+
+
+def stream_page(start_response: StartResponse) -> Iterator[bytes]:
+    start_response("200 OK", [("Content-Type", "text/html; charset=utf-8")])
+    # The <head> tag split between two pieces, and a flush (an empty piece) before it.
+    yield b"<html><he"
+    yield b""
+    yield b"ad><title>t</title></head>"
+    yield b"<body>streamed</body></html>"
 
 
 def stream(start_response: StartResponse) -> Iterator[bytes]:
@@ -94,7 +106,24 @@ def test_streamed_responses_go_out_as_made(wrapped: tracepanel.wsgi.WSGIApp, tra
     status, headers, body = call(wrapped, "/stream")
 
     assert (status, body) == ("200 OK", b"ab")
-    assert headers == {"Content-Type": "text/plain", "Tracepanel-Id": traces[0].id}
+    assert headers == {
+        "Content-Type": "text/plain",
+        "Tracepanel-Id": traces[0].id,
+        "Tracepanel-Url": f"http://127.0.0.1/__tracepanel__/#/t/{traces[0].id}",
+        "Server-Timing": IsStr(regex=r".*total;dur=[\d.]+.*"),
+    }
+
+
+def test_a_streamed_page_gets_the_widget_as_its_head_passes(
+    wrapped: tracepanel.wsgi.WSGIApp, traces: list[Trace], store: AgentStore
+) -> None:
+    _, headers, body = call(wrapped, "/stream-page")
+    (trace,) = traces
+    before, script, after = re.split(rb"(<script [^>]*></script>)", body)
+
+    assert (before, after) == (b"<html><head>", b"<title>t</title></head><body>streamed</body></html>")
+    assert f'data-tracepanel-id="{trace.id}"'.encode() in script
+    assert "Content-Length" not in headers
 
 
 def test_errors_through_to_the_server(wrapped: tracepanel.wsgi.WSGIApp, traces: list[Trace]) -> None:

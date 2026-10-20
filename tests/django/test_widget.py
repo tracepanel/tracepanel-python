@@ -1,6 +1,11 @@
+import asyncio
+import re
+from collections.abc import AsyncIterator
+
 import pytest
 from dirty_equals import IsStr
 from django.contrib.auth.models import User
+from django.http import StreamingHttpResponse
 from django.test import Client
 from pytest_django.fixtures import Settings
 
@@ -86,3 +91,24 @@ def test_a_redirect_fetch_follows_names_nothing(client: Client, traces: list[Tra
 
     assert response.status_code == 302
     assert "tracepanel_redirect" not in response.cookies
+
+
+@pytest.mark.parametrize("path", ["/streamed-page/", "/async-streamed-page/"])
+def test_a_streamed_page_gets_the_widget_as_its_head_passes(
+    client: Client, traces: list[Trace], db: None, store: AgentStore, path: str
+) -> None:
+    response = client.get(path)
+    assert isinstance(response, StreamingHttpResponse)
+    pieces = response.streaming_content
+    body = asyncio.run(_collect(pieces)) if response.is_async else b"".join(pieces)  # type: ignore[arg-type]
+    (trace,) = traces
+    before, script, after = re.split(rb"(<script [^>]*></script>)", body)
+
+    assert before == b"<html><head>"
+    assert f'data-tracepanel-id="{trace.id}"'.encode() in script
+    assert after == b"<title>t</title></head><body>streamed</body></html>"
+    assert response["Tracepanel-Url"].endswith(f"#/t/{trace.id}")
+
+
+async def _collect(pieces: AsyncIterator[bytes]) -> bytes:
+    return b"".join([piece async for piece in pieces])
