@@ -56,6 +56,8 @@ urlpatterns = [
     path("async/n-plus-one/", views.async_n_plus_one),
     path("place-order/", views.place_order),
     path("html-page/", views.html_page),
+    path("streamed-page/", views.streamed_page),
+    path("async-streamed-page/", views.async_streamed_page),
     path("htmx/row/", views.htmx_row),
     path("htmx/login-needed/", views.htmx_login_needed),
     path("django-tasks/<str:kind>/", views.django_task),

@@ -13,6 +13,14 @@
 
 ### Added
 
+- A streamed HTML page gets the panel too: Django's `StreamingHttpResponse`
+  (sync or async), Starlette's and FastAPI's `StreamingResponse`, a
+  generator in Flask or any WSGI app. The script goes in right after the
+  `<head>` (or `<body>`) opens, as the pieces pass, and nothing else is
+  held: only a tag cut between two pieces waits for its end. A streamed
+  response also gets the badge's headers, with the time so far. The panel
+  shows the full time once the trace is stored. A compressed page, or one
+  that declares its size, is left as it is.
 - Flask, FastAPI and Starlette record the session and the signed-in user,
   as Django does. Flask's session is recorded as the view left it, and so is
   the user Flask-Login loaded. Starlette's are the ones its
@@ -45,6 +53,10 @@
 
 ### Fixed
 
+- The first trace after the agent restarted was lost (the panel said
+  "Trace not found"): the old connection still took the write on this side.
+  Before each batch, the writer checks whether the agent closed the
+  connection, and connects again at once if it did.
 - A profiled request could come back with no profile. The sampler thread,
   idle long enough to leave, left as a new trace started, and nothing
   sampled it. The decision to leave is now taken under the lock that

@@ -4,9 +4,9 @@
 on only for an app in debug mode (an app with `debug = True`) or with TRACEPANEL_ENABLED=1.
 
 Requests become traces named after their path (a framework module names them after the route), with their status
-and errors; a complete response gets the widget's headers and, for an HTML page, its script; a streamed one gets
-Tracepanel-Id only. The console is served under `/__tracepanel__/`. Settings are keyword arguments (the same names as
-Django's TRACEPANEL dict); TRACEPANEL_* variables override them.
+and errors; a response gets the widget's headers and, for an HTML page, its script: a complete one at once, a
+streamed one as its pieces pass. The console is served under `/__tracepanel__/`. Settings are keyword arguments (the
+same names as Django's TRACEPANEL dict); TRACEPANEL_* variables override them.
 """
 
 import http
@@ -107,6 +107,7 @@ class TracepanelMiddleware:
         }
         reader = _capture(environ, headers, attrs) if config.capture_request else None
         asked = profile.requested(headers.get(profile.HEADER), headers.get("cookie"))
+        script: widget.Stream | None = None
         with start_trace("http", f"{method} {path}", attrs, profile=asked) as trace:
             try:
                 result = self.app(environ, response.start_response)
@@ -131,12 +132,14 @@ class TracepanelMiddleware:
             if body is not None:
                 body = _decorate(environ, response, trace, config, body)
                 _close(result)
+            else:
+                script = widget.stream(trace, _page(environ, response, trace, config), response.headers, config)
         complete(trace)
         start_response(response.status, response.headers, response.exc_info)
         if body is not None:
             return [body]
         # Streamed: the body goes out as the app makes it; the timing isn't known in advance.
-        return _Streamed([*response.written, *first], chunks, result)
+        return _Streamed([*response.written, *first], chunks, result, script)
 
 
 def _request_headers(environ: dict[str, Any]) -> dict[str, str]:
@@ -220,12 +223,26 @@ def _close(result: Iterable[bytes]) -> None:
 
 
 class _Streamed:
-    def __init__(self, head: list[bytes], chunks: Iterator[bytes], result: Iterable[bytes]) -> None:
-        self.head, self.chunks, self.result = head, chunks, result
+    """A streamed body as the app makes it, through the widget's script when it is an HTML page."""
+
+    def __init__(
+        self, head: list[bytes], chunks: Iterator[bytes], result: Iterable[bytes], script: widget.Stream | None
+    ) -> None:
+        self.head, self.chunks, self.result, self.script = head, chunks, result, script
 
     def __iter__(self) -> Iterator[bytes]:
-        yield from self.head
-        yield from self.chunks
+        script = self.script
+        if script is None:
+            yield from self.head
+            yield from self.chunks
+            return
+        for piece in (*self.head, *self.chunks):
+            passed = script.feed(piece)
+            # An empty piece is a flush the app asked for: it goes out too, after what can go with it.
+            if passed or not piece:
+                yield passed
+        if rest := script.end():
+            yield rest
 
     def close(self) -> None:
         _close(self.result)
@@ -235,14 +252,17 @@ def _api(environ: dict[str, Any], config: conf.Config) -> str:
     return str(environ.get("SCRIPT_NAME", "")).rstrip("/") + config.prefix
 
 
-def _decorate(environ: dict[str, Any], response: _Response, trace: Trace, config: conf.Config, body: bytes) -> bytes:
+def _page(environ: dict[str, Any], response: _Response, trace: Trace, config: conf.Config) -> widget.Page:
     method = str(environ.get("REQUEST_METHOD", "GET"))
     # The trace ends after the response is made: its time so far, its issues now.
     timing = widget.Timing.live(trace)
-    page = widget.Page(
+    return widget.Page(
         method, response.code, host(environ), _api(environ, config), timing, requested=_request_headers(environ)
     )
-    decorated = widget.decorate(trace, page, response.headers, body, config)
+
+
+def _decorate(environ: dict[str, Any], response: _Response, trace: Trace, config: conf.Config, body: bytes) -> bytes:
+    decorated = widget.decorate(trace, _page(environ, response, trace, config), response.headers, body, config)
     return body if decorated is None else decorated
 
 
