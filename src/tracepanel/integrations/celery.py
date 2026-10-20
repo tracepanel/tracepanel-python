@@ -7,9 +7,16 @@ run, SQL, cache, logs, mail and signals land in the task's trace and issues are 
 
 Eager tasks (`task_always_eager`, `.apply()`) run inside the caller: their trace links to the caller's span directly.
 Task arguments and results are kept for local debugging only (masked like locals) and never leave the machine.
+
+A task's trace reaches the agent when the task ends. Until then task events say where it is: `enqueued` after
+publishing (with the enqueuing trace and span), `started` in `task_prerun`, `retried` in `task_retry`, `finished` in
+`task_postrun`; each worker process sends a `heartbeat` with the tasks it runs every HEARTBEAT_S, so a task whose
+process was killed leaves the console's Live list. Eager tasks send none: they run inside their caller.
 """
 
+import os
 import threading
+import time
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -18,7 +25,8 @@ from tracepanel.core.context import adopt, current_span, current_trace, now_us, 
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
-from tracepanel.integrations._tasks import TaskRun, task_repr, trigger
+from tracepanel.integrations._tasks import TaskRun, event_repr, task_event, task_repr, trigger
+from tracepanel.storage import agent
 from tracepanel.storage.transport import complete, get_writer, role
 
 if TYPE_CHECKING:
@@ -35,6 +43,12 @@ _runs: dict[str, TaskRun] = {}
 _published: dict[str, tuple[int, str, int]] = {}
 _lock = threading.Lock()
 _beat = False
+# How often a worker process says it is alive, with the tasks it runs (the agent drops a running task after 2 minutes
+# without news of it).
+HEARTBEAT_S = 30.0
+# The process whose heartbeat thread runs, and the worker it speaks for: a forked pool process starts its own.
+_heart_pid = 0
+_hostname = ""
 
 
 def _header(request: object, name: str) -> object:
@@ -90,13 +104,16 @@ def after_publish(
     routing_key: str | None = None,
     **kwargs: object,
 ) -> None:
-    del kwargs
-    if headers is None or current_trace() is None:
+    if headers is None:
         return
     task_id = str(headers.get("id", ""))
     with _lock:
         published = _published.pop(task_id, None)
-    if published is None:
+    trace = current_trace()
+    # The enqueue span's trace and id, when it is sent inside a trace: the console links the queued task to it.
+    parent = (trace.id, published[1]) if published is not None and trace is not None else None
+    _enqueued(str(sender), task_id, headers=headers, queue=routing_key, body=kwargs.get("body"), parent=parent)
+    if published is None or trace is None:
         return
     start, span_id, mark = published
     # The broker's commands while publishing (Redis LPUSH…) go under the enqueue span.
@@ -121,7 +138,79 @@ def after_publish(
     )
 
 
+def _arguments(body: object) -> tuple[object, object]:
+    """The args and kwargs of a message's body: (args, kwargs, embed) in Celery's protocol 2, a dict in protocol 1."""
+    if isinstance(body, (tuple, list)) and len(body) >= 2:  # noqa: PLR2004 (args, kwargs)
+        return body[0], body[1]
+    if isinstance(body, Mapping):
+        return body.get("args"), body.get("kwargs")
+    return None, None
+
+
+def _enqueued(  # noqa: PLR0913 (what the event tells)
+    name: str,
+    task_id: str,
+    *,
+    headers: Mapping[str, Any],
+    queue: str | None,
+    body: object,
+    parent: tuple[str, str] | None,
+) -> None:
+    config = conf.get_config()
+    if not task_id or conf.matches(name, config.ignore_tasks):
+        return
+    args, kwargs = _arguments(body) if config.capture_task_args else (None, None)
+    task_event(
+        "enqueued",
+        SYSTEM,
+        task_id,
+        name=name,
+        queue=queue or None,
+        retries=int(headers.get("retries") or 0),
+        args=event_repr("args", args) if args is not None else None,
+        kwargs=event_repr("kwargs", kwargs) if kwargs is not None else None,
+        trace_id=parent[0] if parent else None,
+        span_id=parent[1] if parent else None,
+    )
+
+
 # ---------- the worker side ----------
+
+
+def _heartbeat() -> None:
+    """Every HEARTBEAT_S, the worker alive and the tasks this process runs."""
+    while True:
+        time.sleep(HEARTBEAT_S)
+        with _lock:
+            ids = [task_id for task_id, run in _runs.items() if not run.trace.attrs.get("task.eager")]
+        task_event("heartbeat", SYSTEM, "", worker=_hostname or None, ids=ids)
+
+
+def _beating(hostname: str) -> None:
+    """The heartbeat thread of this process, started once (again in a forked pool process)."""
+    global _heart_pid, _hostname  # noqa: PLW0603 (per-process state)
+    _hostname = hostname or _hostname
+    if _heart_pid == os.getpid():
+        return
+    _heart_pid = os.getpid()
+    threading.Thread(target=_heartbeat, name="tracepanel-heartbeat", daemon=True).start()
+
+
+def _started(task_id: str, task: "Task[Any, Any]", attrs: Attrs, kwargs: Mapping[str, object]) -> None:
+    hostname = str(attrs.get("task.worker") or "")
+    _beating(hostname)
+    capture = conf.get_config().capture_task_args
+    task_event(
+        "started",
+        SYSTEM,
+        task_id,
+        name=task.name,
+        queue=attrs.get("task.queue"),
+        worker=hostname or None,
+        retries=attrs.get("task.retries"),
+        args=event_repr("args", kwargs.get("args")) if capture else None,
+        kwargs=event_repr("kwargs", kwargs.get("kwargs")) if capture else None,
+    )
 
 
 def prerun(task_id: str | None = None, task: "Task[Any, Any] | None" = None, **kwargs: object) -> None:
@@ -141,6 +230,7 @@ def prerun(task_id: str | None = None, task: "Task[Any, Any] | None" = None, **k
     }
     if not eager:
         attrs.update(_broker(task.app))
+        _started(task_id, task, attrs, kwargs)
     published = _header(request, PUBLISHED)
     if isinstance(published, int):
         attrs["task.queue_wait"] = max(started - published, 0)
@@ -194,6 +284,16 @@ def retry(request: object = None, reason: object = None, **kwargs: object) -> No
     # Celery wraps the cause in Retry(exc=...): report the cause.
     cause = getattr(reason, "exc", None) or reason
     run.trace.attrs["task.retry_reason"] = task_repr("reason", cause)
+    if not run.trace.attrs.get("task.eager"):
+        task_event(
+            "retried",
+            SYSTEM,
+            str(getattr(request, "id", "")),
+            worker=run.trace.attrs.get("task.worker"),
+            # This retry counted: the next attempt's.
+            retries=int(getattr(request, "retries", 0) or 0) + 1,
+            error=event_repr("reason", cause),
+        )
     if isinstance(cause, BaseException):
         # Retried, so handled: the next attempt is its own trace.
         errors.capture(cause, handled=True)
@@ -215,6 +315,9 @@ def postrun(task_id: str | None = None, retval: object = None, state: str | None
     if state == "RETRY":
         trace.status = "ok"
     complete(trace)
+    # A retry waits for its next attempt: it is still in flight.
+    if state != "RETRY" and not trace.attrs.get("task.eager"):
+        task_event("finished", SYSTEM, task_id or "", worker=trace.attrs.get("task.worker"), state=state)
 
 
 def on_beat_init(**kwargs: object) -> None:
@@ -222,6 +325,13 @@ def on_beat_init(**kwargs: object) -> None:
     del kwargs
     global _beat  # noqa: PLW0603 (a per-process mode flag)
     _beat = True
+
+
+def on_worker_ready(sender: object = None, **kwargs: object) -> None:
+    """The worker says it is there before it runs anything: the console lists it among the workers."""
+    del kwargs
+    hostname = str(getattr(sender, "hostname", "") or "")
+    task_event("heartbeat", SYSTEM, "", worker=hostname or None, ids=[])
 
 
 def on_worker_shutdown(**kwargs: object) -> None:
@@ -243,6 +353,9 @@ def install() -> None:
     signals.task_retry.connect(retry, dispatch_uid="tracepanel.retry", weak=False)
     signals.task_postrun.connect(postrun, dispatch_uid="tracepanel.postrun", weak=False)
     signals.beat_init.connect(on_beat_init, dispatch_uid="tracepanel.beat_init", weak=False)
+    signals.worker_ready.connect(on_worker_ready, dispatch_uid="tracepanel.worker_ready", weak=False)
+    # Its task events: the console's Live list of tasks.
+    agent.sends("live_tasks")
     # Records of task code: tracepanel sees them however the worker sets up logging.
     # Records of task code, through the registry: off with logging_enabled.
     registry.get("logging").install()

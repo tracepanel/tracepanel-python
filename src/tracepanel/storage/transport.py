@@ -1,6 +1,7 @@
 """Bounded buffer and background batch writing.
 
 Traces go to the project's tracepanel-agent (see tracepanel.storage.agent), which keeps them and finds their issues.
+So do task events (send_event): a task's steps while it is in flight, before its trace exists.
 """
 
 import atexit
@@ -10,7 +11,7 @@ import queue
 import threading
 import time
 from collections.abc import Callable
-from typing import Protocol
+from typing import Any, Protocol
 
 from tracepanel.core import conf, errors, runtime
 from tracepanel.core.model import Trace
@@ -19,6 +20,10 @@ QUEUE_SIZE = 1000
 BATCH_SIZE = 50
 # After the first trace, how long the writer waits for more before writing: fewer commits under steady traffic.
 BATCH_WAIT_S = 0.05
+
+
+# A task event: a small JSON object (see tracepanel.integrations._tasks.task_event).
+Event = dict[str, Any]
 
 
 class Writer(Protocol):
@@ -39,15 +44,22 @@ class BatchWriter:
         os.register_at_fork(after_in_child=self._start)
 
     def _start(self) -> None:
-        self._queue: queue.Queue[Trace] = queue.Queue(QUEUE_SIZE)
+        self._queue: queue.Queue[Trace | Event] = queue.Queue(QUEUE_SIZE)
         self._thread: threading.Thread | None = None
 
     def submit(self, trace: Trace) -> None:
+        self._put(trace)
+
+    def submit_event(self, event: Event) -> None:
+        """A task event, sent in order with the traces: a task's trace goes before the event that it finished."""
+        self._put(event)
+
+    def _put(self, item: Trace | Event) -> None:
         if self._thread is None or not self._thread.is_alive():
             self._thread = threading.Thread(target=self._run, name="tracepanel-writer", daemon=True)
             self._thread.start()
         try:
-            self._queue.put_nowait(trace)
+            self._queue.put_nowait(item)
         except queue.Full:
             self.dropped += 1
 
@@ -60,8 +72,13 @@ class BatchWriter:
                     batch.append(self._queue.get(timeout=max(deadline - time.monotonic(), 0)))
                 except queue.Empty:
                     break
+            traces = [item for item in batch if isinstance(item, Trace)]
+            events = [item for item in batch if not isinstance(item, Trace)]
             try:
-                self.write(batch)
+                if traces:
+                    self.write(traces)
+                if events:
+                    self.write_events(events)
             except Exception:  # noqa: BLE001 (the writer thread must survive storage errors)
                 self.dropped += len(batch)
             finally:
@@ -70,6 +87,10 @@ class BatchWriter:
 
     def write(self, batch: list[Trace]) -> None:
         raise NotImplementedError
+
+    def write_events(self, events: list[Event]) -> None:
+        """Where task events go: nowhere, unless a subclass sends them."""
+        del events
 
     def flush(self, timeout: float = 5.0) -> None:
         """Wait until queued traces are written (used at exit and in tests)."""
@@ -98,6 +119,13 @@ def get_writer() -> Writer:
 def set_writer(writer: Writer | None) -> None:
     global _writer  # noqa: PLW0603
     _writer = writer
+
+
+def send_event(event: Event) -> None:
+    """A task event to the agent, if the writer sends them (a test's collector doesn't); never blocks."""
+    submit = getattr(get_writer(), "submit_event", None)
+    if submit is not None:
+        submit(event)
 
 
 def role(trace: Trace) -> str:

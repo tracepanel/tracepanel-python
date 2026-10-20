@@ -1,5 +1,9 @@
+import time
+from collections.abc import Callable, Generator
+from typing import Any
+
 import pytest
-from dirty_equals import IsInt, IsList, IsPartialDict, IsStr
+from dirty_equals import IsInt, IsList, IsPartialDict, IsPositiveInt, IsStr
 from django.contrib.auth.models import User
 from django.test import Client
 from jsonschema import Draft202012Validator
@@ -7,6 +11,7 @@ from pytest_django.fixtures import Settings
 
 from tests.agentstore import AgentStore, issues, newer
 from tracepanel.core.model import Link, Trace
+from tracepanel.storage import agent, transport
 from tracepanel.storage.transport import set_writer
 
 pytest.importorskip("celery")
@@ -204,3 +209,199 @@ def test_ignored_tasks(traces: list[Trace], settings: Settings) -> None:
     jobs.broken.apply()
 
     assert traces == []
+
+
+class Recorder:
+    """A writer that keeps the traces and the task events, in the order they were sent."""
+
+    def __init__(self) -> None:
+        self.traces: list[Trace] = []
+        self.events: list[dict[str, Any]] = []
+
+    def submit(self, trace: Trace) -> None:
+        self.traces.append(trace)
+
+    def submit_event(self, event: dict[str, Any]) -> None:
+        self.events.append(event)
+
+    def flush(self, timeout: float = 5.0) -> None:
+        pass
+
+
+@pytest.fixture
+def recorder(monkeypatch: pytest.MonkeyPatch) -> Generator[Recorder, None, None]:
+    recorded = Recorder()
+    monkeypatch.setattr(transport, "_writer", recorded)
+    yield recorded
+    # What a test enqueued and no worker ran would run in the next test's worker.
+    jobs.app.control.purge()
+
+
+def without_heartbeats(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # A worker says it is there when it starts (worker_ready), however the test starts it.
+    return [event for event in events if event["event"] != "heartbeat"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_queued_task_tells_the_agent_each_step(client: Client, recorder: Recorder, users: list[User]) -> None:
+    client.get("/enqueue/")
+    (request,) = by_kind(recorder.traces, "http")
+    (enqueue,) = [span for span in request.spans if span.kind == "task.enqueue"]
+    task_id = str(enqueue.attrs["task.id"])
+    with start_worker(jobs.app, pool="solo", perform_ping_check=False, shutdown_timeout=10):
+        jobs.app.AsyncResult(task_id).get(timeout=10)
+
+    assert without_heartbeats(recorder.events) == [
+        {
+            "event": "enqueued",
+            "system": "celery",
+            "id": task_id,
+            "time": IsPositiveInt,
+            "name": "tests.project.jobs.count_users",
+            "queue": "celery",
+            "retries": 0,
+            "args": "('queued',)",
+            "kwargs": "{}",
+            "trace_id": request.id,
+            "span_id": enqueue.id,
+        },
+        {
+            "event": "started",
+            "system": "celery",
+            "id": task_id,
+            "time": IsPositiveInt,
+            "name": "tests.project.jobs.count_users",
+            "queue": "celery",
+            "worker": IsStr,
+            "retries": 0,
+            "args": "['queued']",
+            "kwargs": "{}",
+        },
+        {
+            "event": "finished",
+            "system": "celery",
+            "id": task_id,
+            "time": IsPositiveInt,
+            "worker": IsStr,
+            "state": "SUCCESS",
+        },
+    ]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_retry_waits_with_its_error_and_runs_again(recorder: Recorder) -> None:
+    result = jobs.flaky.delay()
+    with start_worker(jobs.app, pool="solo", perform_ping_check=False, shutdown_timeout=10):
+        result.get(timeout=10)
+    steps = [
+        (event["event"], event.get("retries"), event.get("error"), event.get("state"))
+        for event in without_heartbeats(recorder.events)
+    ]
+
+    assert steps == [
+        ("enqueued", 0, None, None),
+        ("started", 0, None, None),
+        # Celery sends the task again, then tells of the retry.
+        ("enqueued", 1, None, None),
+        ("retried", 1, "ConnectionError('CRM down')", None),
+        ("started", 1, None, None),
+        ("finished", None, None, "SUCCESS"),
+    ]
+
+    assert {event["id"] for event in recorder.events if event["id"]} == {result.id}
+
+
+@pytest.mark.django_db
+def test_eager_and_ignored_tasks_send_no_events(recorder: Recorder, settings: Settings) -> None:
+    jobs.count_users.apply(("eager",))
+    settings.TRACEPANEL = {"ignore_tasks": ["tests.project.jobs.count_users"]}
+    jobs.count_users.delay("ignored")
+
+    assert recorder.events == []
+
+
+@pytest.mark.django_db
+def test_arguments_are_left_out_of_the_events_too(recorder: Recorder, settings: Settings) -> None:
+    settings.TRACEPANEL = {"capture_task_args": False}
+
+    jobs.count_users.delay("secret")
+    (event,) = recorder.events
+
+    assert {"args", "kwargs"} & event.keys() == set()
+
+
+def test_celery_says_in_the_hello_that_it_sends_task_events() -> None:
+    assert "live_tasks" in agent.SENDS
+
+
+def live(store: AgentStore) -> dict[str, Any]:
+    answer = store.call("tasks/live")
+    if answer is None:
+        pytest.skip("the released agent lists no tasks in flight: a newer one does")
+    return answer
+
+
+def live_when(store: AgentStore, ready: Callable[[dict[str, Any]], bool]) -> dict[str, Any]:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        answer = live(store)
+        if ready(answer):
+            return answer
+        time.sleep(0.02)
+    msg = f"api/tasks/live never got there: {live(store)}"
+    raise AssertionError(msg)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_agent_lists_a_task_queued_then_running_until_it_ends(client: Client, store: AgentStore) -> None:
+    live(store)
+    writer = store.writer()
+    set_writer(writer)
+    jobs.release.clear()
+    try:
+        result = jobs.waits.delay()
+        queued = live_when(store, lambda answer: bool(answer["tasks"]))
+
+        assert queued == {"now": IsPositiveInt, "tasks": [IsPartialDict(id=result.id)], "workers": []}
+        assert queued["tasks"][0] == {
+            "id": result.id,
+            "system": "celery",
+            "name": "tests.project.jobs.waits",
+            "service": IsStr,
+            "state": "queued",
+            "queue": "celery",
+            "worker": None,
+            "enqueued_at": IsPositiveInt,
+            "started_at": None,
+            "retries": 0,
+            "args": "()",
+            "kwargs": "{}",
+            "error": None,
+            "enqueued_by": None,
+        }
+
+        with start_worker(jobs.app, pool="solo", perform_ping_check=False, shutdown_timeout=10):
+            running = live_when(store, lambda answer: answer["tasks"][0]["state"] == "running")
+
+            assert running["tasks"] == [IsPartialDict(id=result.id, state="running", worker=IsStr, started_at=IsInt)]
+            assert running["workers"] == [
+                {
+                    "name": running["tasks"][0]["worker"],
+                    "system": "celery",
+                    "service": IsStr,
+                    "last_seen": IsPositiveInt,
+                    "in_flight": 1,
+                }
+            ]
+
+            jobs.release.set()
+            result.get(timeout=10)
+            writer.flush()
+            done = live_when(store, lambda answer: not answer["tasks"])
+
+        assert done["workers"] == [IsPartialDict(in_flight=0)]
+
+        assert store.list_tasks() == [IsPartialDict(task="tests.project.jobs.waits", runs=1)]
+    finally:
+        jobs.release.set()
+        set_writer(None)
