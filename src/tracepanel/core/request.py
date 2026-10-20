@@ -40,7 +40,11 @@ def sensitive(name: str) -> bool:
 
 def request_headers(headers: Iterable[tuple[str, str]]) -> Attrs:
     """http.request.header.<name>, the name as a key: several values joined; Cookie is read as cookies instead."""
-    return _headers("http.request.header.", (pair for pair in headers if pair[0].lower() != "cookie"))
+    sent = [(name, value) for name, value in headers if name.lower() != "cookie" and value]
+    # WSGI fills CONTENT_TYPE (text/plain) for a request with no body: no header the client sent.
+    if not any(name.lower() == "content-length" for name, _ in sent):
+        sent = [(name, value) for name, value in sent if name.lower() != "content-type"]
+    return _headers("http.request.header.", sent)
 
 
 def response_headers(headers: Iterable[tuple[str, str]]) -> Attrs:

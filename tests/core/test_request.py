@@ -23,6 +23,22 @@ def test_request_headers_are_keyed_joined_and_masked_and_cookies_left_out() -> N
     }
 
 
+def test_a_request_without_a_body_has_no_content_headers() -> None:
+    # As WSGI hands them over for a GET: CONTENT_TYPE filled in, CONTENT_LENGTH empty.
+    headers = [("Content-Length", ""), ("Content-Type", "text/plain"), ("Host", "localhost")]
+
+    assert request.request_headers(headers) == {"http.request.header.host": "localhost"}
+
+
+def test_a_request_with_a_body_keeps_its_content_type() -> None:
+    headers = [("Content-Length", "12"), ("Content-Type", "application/json")]
+
+    assert request.request_headers(headers) == {
+        "http.request.header.content_length": "12",
+        "http.request.header.content_type": "application/json",
+    }
+
+
 def test_response_headers_mask_their_cookies() -> None:
     headers = [("Content-Type", "text/html"), ("Set-Cookie", "sessionid=s"), ("Set-Cookie", "theme=dark")]
 
