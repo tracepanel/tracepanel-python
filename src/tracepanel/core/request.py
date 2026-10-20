@@ -5,6 +5,7 @@ are masked before they are recorded, as an error's local variables are. A body i
 up to MAX_BODY characters: tracepanel never reads a stream for the app, nor holds an upload.
 """
 
+import functools
 import json
 import re
 from collections.abc import Iterable, Mapping
@@ -52,14 +53,24 @@ def response_headers(headers: Iterable[tuple[str, str]]) -> Attrs:
     return _headers("http.response.header.", headers)
 
 
+@functools.lru_cache(maxsize=1024)
+def _named(prefix: str, name: str) -> tuple[str, bool]:
+    """A header's attribute key and whether its value is masked; cached: requests bring the same few names."""
+    lowered = name.lower()
+    return f"{prefix}{key(lowered)}", lowered in _ALWAYS_MASKED or sensitive(lowered)
+
+
 def _headers(prefix: str, headers: Iterable[tuple[str, str]]) -> Attrs:
-    values: dict[str, list[str]] = {}
+    found: Attrs = {}
     for name, value in headers:
-        values.setdefault(name.lower(), []).append(value)
-    return {
-        f"{prefix}{key(name)}": MASK if name in _ALWAYS_MASKED or sensitive(name) else ", ".join(found)
-        for name, found in values.items()
-    }
+        attr, masked = _named(prefix, name)
+        if masked:
+            found[attr] = MASK
+        elif attr in found:
+            found[attr] = f"{found[attr]}, {value}"
+        else:
+            found[attr] = value
+    return found
 
 
 def query(raw: str) -> Attrs:

@@ -144,14 +144,28 @@ def _request_headers(environ: dict[str, Any]) -> dict[str, str]:
     return {key[5:].lower().replace("_", "-"): str(value) for key, value in environ.items() if key.startswith("HTTP_")}
 
 
-def _capture(environ: dict[str, Any], headers: dict[str, str], attrs: dict[str, Any]) -> "_BodyReader":
+def _capture(environ: dict[str, Any], headers: dict[str, str], attrs: dict[str, Any]) -> "_BodyReader | _NoBody":
     """The request's headers, query and cookies into its attributes, and a reader keeping what the app reads."""
     # CONTENT_TYPE and CONTENT_LENGTH are the two headers WSGI doesn't prefix with HTTP_.
     unprefixed = [(name, str(environ[key])) for key, name in _UNPREFIXED if environ.get(key)]
     attrs.update(details.request_headers([*unprefixed, *headers.items()]))
     attrs.update(details.query(str(environ.get("QUERY_STRING", ""))))
     attrs.update(details.cookies(headers.get("cookie", "")))
-    return _BodyReader(environ)
+    # A request without a body (most GETs) keeps wsgi.input as it is: nothing to read, nothing to wrap.
+    length = str(environ.get("CONTENT_LENGTH") or "")
+    chunked = "chunked" in headers.get("transfer-encoding", "").lower()
+    return _BodyReader(environ) if chunked or (length.isdigit() and int(length) > 0) else _NO_BODY
+
+
+class _NoBody:
+    """What a request without a body records at its end: the response's headers."""
+
+    def attrs(self, content_type: str, response_headers: Headers) -> dict[str, Any]:
+        del content_type
+        return details.response_headers(response_headers)
+
+
+_NO_BODY = _NoBody()
 
 
 _UNPREFIXED = (("CONTENT_TYPE", "content-type"), ("CONTENT_LENGTH", "content-length"))
