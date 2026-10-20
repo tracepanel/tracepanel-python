@@ -60,3 +60,29 @@ def test_without_an_agent_no_script_and_the_console_says_why(client: Client, tra
 
     assert (console.status_code, "the agent is off" in console.content.decode()) == (503, True)
     assert (api.status_code, api.json()) == (503, {"error": IsStr(regex="No tracepanel agent: the agent is off.*")})
+
+
+def test_a_pages_redirect_is_named_for_the_page_it_leads_to(client: Client, traces: list[Trace]) -> None:
+    response = client.post("/htmx/login-needed/", headers={"Sec-Fetch-Mode": "navigate"})
+    (trace,) = traces
+
+    assert response.status_code == 302
+    assert response.cookies["tracepanel_redirect"].value == trace.id
+    assert response.cookies["tracepanel_redirect"]["max-age"] == 30
+    assert response.cookies["tracepanel_redirect"]["path"] == "/"
+
+
+def test_redirects_in_a_row_are_all_named(client: Client, traces: list[Trace]) -> None:
+    client.cookies["tracepanel_redirect"] = "01K7B2Y7Q8M3E5R9T1V4W6X8Z0"
+
+    response = client.post("/htmx/login-needed/", headers={"Sec-Fetch-Mode": "navigate"})
+    (trace,) = traces
+
+    assert response.cookies["tracepanel_redirect"].value == f"01K7B2Y7Q8M3E5R9T1V4W6X8Z0%2C{trace.id}"
+
+
+def test_a_redirect_fetch_follows_names_nothing(client: Client, traces: list[Trace]) -> None:
+    response = client.post("/htmx/login-needed/", headers={"Sec-Fetch-Mode": "cors"})
+
+    assert response.status_code == 302
+    assert "tracepanel_redirect" not in response.cookies

@@ -239,7 +239,9 @@ def _decorate(environ: dict[str, Any], response: _Response, trace: Trace, config
     method = str(environ.get("REQUEST_METHOD", "GET"))
     # The trace ends after the response is made: its time so far, its issues now.
     timing = widget.Timing.live(trace)
-    page = widget.Page(method, response.code, host(environ), _api(environ, config), timing)
+    page = widget.Page(
+        method, response.code, host(environ), _api(environ, config), timing, requested=_request_headers(environ)
+    )
     decorated = widget.decorate(trace, page, response.headers, body, config)
     return body if decorated is None else decorated
 

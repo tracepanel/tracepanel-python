@@ -7,7 +7,8 @@ response into those and back. The badge works from the headers even before the p
 import html
 import re
 import urllib.parse
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 from tracepanel.core import runtime
 from tracepanel.core.conf import Config
@@ -69,6 +70,38 @@ class Page:
     api: str
     timing: Timing
     charset: str = "utf-8"
+    # The request's headers, lower-cased: whether it was the browser going to a page, and what it carried.
+    requested: Mapping[str, str] = field(default_factory=dict)
+    # Whether a cookie goes out as a Set-Cookie header (ASGI, WSGI) or the framework's own way (Django's cookies).
+    cookies_in_headers: bool = True
+
+
+# The requests that answered a page's navigation with a redirect, by id, on the way to the page the widget will see:
+# its panel lists them before that page (a form's POST, then the page it redirected to).
+REDIRECTS = "tracepanel_redirect"
+# How many redirects in a row are kept: a loop of them doesn't grow the cookie without end.
+MAX_REDIRECTS = 5
+
+
+def navigated(requested: Mapping[str, str]) -> bool:
+    """Whether the browser asked for a page to show (a link, a form): not fetch() or an image."""
+    mode = requested.get("sec-fetch-mode")
+    return mode == "navigate" if mode is not None else "text/html" in requested.get("accept", "")
+
+
+def redirected(trace: Trace, page: Page) -> str | None:
+    """The redirect cookie's value naming this request too; None unless it answers a page's navigation with one."""
+    if not (300 <= page.status < 400 and navigated(page.requested)):  # noqa: PLR2004
+        return None
+    cookies = dict(part.strip().split("=", 1) for part in page.requested.get("cookie", "").split(";") if "=" in part)
+    before = [found for found in urllib.parse.unquote(cookies.get(REDIRECTS, "")).split(",") if found]
+    return urllib.parse.quote(",".join([*before, trace.id][-MAX_REDIRECTS:]))
+
+
+def redirect_cookie(trace: Trace, page: Page) -> str | None:
+    """The Set-Cookie for the redirect cookie, as a raw header; None when there is none to set."""
+    value = redirected(trace, page)
+    return None if value is None else f"{REDIRECTS}={value}; Max-Age=30; Path=/; SameSite=Lax"
 
 
 def decorate(trace: Trace, page: Page, headers: Headers, body: bytes | None, config: Config) -> bytes | None:
@@ -78,6 +111,8 @@ def decorate(trace: Trace, page: Page, headers: Headers, body: bytes | None, con
     """
     set_header(headers, "Tracepanel-Id", trace.id)
     set_header(headers, "Tracepanel-Url", f"{page.origin}{page.api}#/t/{trace.id}")
+    if (cookie := redirect_cookie(trace, page)) and page.cookies_in_headers:
+        headers.append(("Set-Cookie", cookie))
     if name := display_name(trace, page.method):
         set_header(headers, "Tracepanel-Name", header_value(name))
     existing = header(headers, "Server-Timing")

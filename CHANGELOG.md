@@ -4,6 +4,9 @@
 
 ### Added
 
+- A page's navigation answered with a redirect (a form's POST, then 302) is
+  named in a short-lived `tracepanel_redirect` cookie, so the panel on the page
+  it leads to lists it first.
 - A request records what it carried, as django-debug-toolbar's Request and
   Headers panels show it: its headers and the response's, its query, its
   cookies, the body as far as the app read it (a form's files by name and
