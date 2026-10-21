@@ -6,8 +6,10 @@ couldn't start) traces aren't kept: the terminal says why once, and the process 
 later.
 
 The wire: a hello line, `{"protocol": 1, "max_traces": 2000, "thresholds": {...}, "service": "shop", "capabilities":
-[...], "console": [...]}` (what the app offers the console: the one place it says so; the agent alone answers the
-console's `api/capabilities` from it), answered
+[...], "console": [...], "app": {...}}` (what the app offers the console: the one place it says so; the agent alone
+answers the console's `api/capabilities` from it; `app` carries the console's App tab: the app's settings,
+masked, and the versions it runs on, `{"settings": {"DEBUG": "True", ...}, "versions": [{"name": "Python", "version":
+"3.13.1", "kind": "runtime"}, ...]}`, see tracepanel.core.appinfo), answered
 by `{"ok": true}` (or a refusal with its reason); then frames, a 4-byte big-endian length and a JSON array of
 `Trace.to_dict()`, or an object of task events, `{"tasks": [...]}` (an agent from before ignores it).
 """
@@ -27,7 +29,7 @@ from pathlib import Path
 
 from tracepanel._agent import AGENT, find_agent_bin
 from tracepanel._compat import override
-from tracepanel.core import conf, forks
+from tracepanel.core import appinfo, conf, forks
 from tracepanel.core.model import Trace
 from tracepanel.storage.transport import BatchWriter, Event
 
@@ -223,6 +225,7 @@ def connect(  # noqa: PLR0913 (the hello's fields)
     *,
     console: list[str] | None = None,
     service: str = "",
+    app: dict[str, object] | None = None,
 ) -> socket.socket | None:
     """A connection the agent accepted, or None; `can` and `console` list what the app offers the console."""
     sock = _open(addr)
@@ -237,6 +240,7 @@ def connect(  # noqa: PLR0913 (the hello's fields)
             **({"service": service} if service else {}),
             **({"capabilities": can} if can else {}),
             **({"console": console} if console else {}),
+            **({"app": app} if app else {}),
         }
         sock.sendall(json.dumps(hello).encode() + b"\n")
         answer = json.loads(sock.makefile("rb").readline() or b"{}")
@@ -330,9 +334,12 @@ class AgentWriter(BatchWriter):
             "long_transaction_ms": self.config.long_transaction_ms,
         }
         can, console = capabilities(self.config), console_offers()
+        app = appinfo.describe(self.config)
 
         def hello(addr: str) -> socket.socket | None:
-            return connect(addr, self.config.max_traces, thresholds, can, console=console, service=self.config.service)
+            return connect(
+                addr, self.config.max_traces, thresholds, can, console=console, service=self.config.service, app=app
+            )
 
         addr = address(self.config)
         self._sock = hello(addr) if addr else None

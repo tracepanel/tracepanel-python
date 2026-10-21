@@ -20,19 +20,27 @@ DISTRIBUTIONS = {
 }
 
 _framework: str | None = None
+_named: tuple[str, str | None] | None = None
 
 
 def set_framework(name: str) -> None:
     """The web framework this process serves with, and its version when it is a known one."""
-    global _framework  # noqa: PLW0603 (one per process)
+    global _framework, _named  # noqa: PLW0603 (one per process)
     distribution = DISTRIBUTIONS.get(name)
     if distribution is None:
-        _framework = None
+        _framework = _named = None
         return
     try:
-        _framework = f"{name} {metadata.version(distribution)}"
+        version = metadata.version(distribution)
     except metadata.PackageNotFoundError:
-        _framework = name
+        _framework, _named = name, (name, None)
+        return
+    _framework, _named = f"{name} {version}", (name, version)
+
+
+def framework() -> tuple[str, str | None] | None:
+    """The known web framework this process serves with and its version: ("Django", "6.0.1")."""
+    return _named
 
 
 def attrs() -> Attrs:
