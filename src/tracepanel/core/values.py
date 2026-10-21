@@ -10,11 +10,13 @@ with summarize(), and guard() what a repr() may do (Django blocks queries meanwh
 """
 
 import functools
+import json
 import re
 import reprlib
 from collections.abc import Callable, Mapping
 from typing import TypeVar
 
+from tracepanel._compat import override
 from tracepanel.core import conf
 from tracepanel.core.frames import MASK, SENSITIVE
 from tracepanel.core.model import Attrs, Scalar, Trace
@@ -151,8 +153,28 @@ def _safe(show: Callable[[object], str], value: object) -> str:
         return f"<unrepresentable {type(value).__name__}>"
 
 
+def _quoted(text: str) -> str:
+    """A string as Python can read it, in double quotes: "django.db.backends.postgresql", as a reader writes one."""
+    return json.dumps(text, ensure_ascii=False)
+
+
+class _DoubleQuoted(reprlib.Repr):
+    """reprlib's limits, its strings in double quotes: settings and a template's context read as they are written."""
+
+    @override
+    def repr_str(self, x: str, level: int) -> str:
+        del level
+        shown = _quoted(x[: self.maxstring])
+        if len(shown) > self.maxstring:
+            head = max(0, (self.maxstring - 3) // 2)
+            tail = max(0, self.maxstring - 3 - head)
+            shown = _quoted(x[:head] + x[len(x) - tail :])
+            shown = shown[:head] + self.fillvalue + shown[len(shown) - tail :]
+        return shown
+
+
 def _limited(limit: int, *, items: int, level: int, longest: int) -> reprlib.Repr:
-    shown = reprlib.Repr()
+    shown = _DoubleQuoted()
     shown.maxstring = shown.maxother = limit
     shown.maxlist = shown.maxtuple = shown.maxset = shown.maxfrozenset = shown.maxdeque = items
     shown.maxdict = min(items, 50)

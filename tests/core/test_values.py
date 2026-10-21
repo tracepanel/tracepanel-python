@@ -44,7 +44,7 @@ def test_a_setting_with_a_secret_name_is_masked_whole(name: str) -> None:
     ],
 )
 def test_a_setting_with_a_plain_name_is_shown(name: str) -> None:
-    assert values.setting_repr(name, "x") == "'x'"
+    assert values.setting_repr(name, "x") == '"x"'
 
 
 def test_secrets_inside_a_setting_are_masked_at_any_depth() -> None:
@@ -67,27 +67,27 @@ def test_secrets_inside_a_setting_are_masked_at_any_depth() -> None:
     }
 
     assert values.setting_repr("DATABASES", databases) == (
-        "{'default': {'ENGINE': 'django.db.backends.postgresql', 'NAME': 'shop', 'OPTIONS': {'password': ********, "
-        "'sslmode': 'require'}, 'PASSWORD': ********, 'USER': 'shop'}}"
+        '{"default": {"ENGINE": "django.db.backends.postgresql", "NAME": "shop", "OPTIONS": {"password": ********, '
+        '"sslmode": "require"}, "PASSWORD": ********, "USER": "shop"}}'
     )
 
     assert values.setting_repr("CACHES", caches) == (
-        "{'default': {'BACKEND': 'django.core.cache.backends.redis.RedisCache', 'KEY_FUNCTION': 'shop.cache.key', "
-        "'KEY_PREFIX': 'shop', 'OPTIONS': {'password': ********}}}"
+        '{"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "KEY_FUNCTION": "shop.cache.key", '
+        '"KEY_PREFIX": "shop", "OPTIONS": {"password": ********}}}'
     )
 
-    assert values.setting_repr("LIST", [("ann", {"token": "t"})]) == "[('ann', {'token': ********})]"
+    assert values.setting_repr("LIST", [("ann", {"token": "t"})]) == '[("ann", {"token": ********})]'
 
 
 @pytest.mark.parametrize(
     ("value", "shown"),
     [
-        ("https://abc123@o1.ingest.sentry.io/42", "'https://********@o1.ingest.sentry.io/42'"),
-        ("postgres://shop:pw@db:5432/shop", "'postgres://********@db:5432/shop'"),
-        ("redis://:pw@cache:6379/0", "'redis://********@cache:6379/0'"),
+        ("https://abc123@o1.ingest.sentry.io/42", '"https://********@o1.ingest.sentry.io/42"'),
+        ("postgres://shop:pw@db:5432/shop", '"postgres://********@db:5432/shop"'),
+        ("redis://:pw@cache:6379/0", '"redis://********@cache:6379/0"'),
         # No credentials: as it is.
-        ("https://example.com/path?a=1", "'https://example.com/path?a=1'"),
-        ("ann@example.com", "'ann@example.com'"),
+        ("https://example.com/path?a=1", '"https://example.com/path?a=1"'),
+        ("ann@example.com", '"ann@example.com"'),
     ],
 )
 def test_the_credentials_in_a_url_are_masked_whatever_its_name(value: str, shown: str) -> None:
@@ -97,9 +97,11 @@ def test_the_credentials_in_a_url_are_masked_whatever_its_name(value: str, shown
 
 
 def test_a_setting_is_cut_past_its_limits() -> None:
-    assert values.setting_repr("INSTALLED_APPS", [f"app{i}" for i in range(30)]) == repr([f"app{i}" for i in range(30)])
+    assert values.setting_repr("INSTALLED_APPS", [f"app{i}" for i in range(30)]) == (
+        "[" + ", ".join(f'"app{i}"' for i in range(30)) + "]"
+    )
 
-    assert values.setting_repr("BIG", "x" * 600) == f"'{'x' * 247}...{'x' * 248}'"
+    assert values.setting_repr("BIG", "x" * 600) == f'"{"x" * 247}...{"x" * 248}"'
 
     shown = values.setting_repr("HUGE", [["y" * 400] * 20] * 3)
     assert (len(shown), shown[-3:]) == (values.SETTING_MAX, "...")
@@ -117,7 +119,7 @@ def test_a_broken_repr_is_named_not_raised() -> None:
 def test_settings_are_the_uppercase_names_sorted() -> None:
     shown = values.settings_reprs({"DEBUG": True, "lower": 1, "ALLOWED_HOSTS": ["*"], "SECRET_KEY": "s"})
 
-    assert shown == {"ALLOWED_HOSTS": "['*']", "DEBUG": "True", "SECRET_KEY": MASK}
+    assert shown == {"ALLOWED_HOSTS": '["*"]', "DEBUG": "True", "SECRET_KEY": MASK}
 
 
 def test_a_context_keeps_its_names_in_order_with_the_locals_rules() -> None:
@@ -136,12 +138,12 @@ def test_a_context_keeps_its_names_in_order_with_the_locals_rules() -> None:
     assert attrs == {
         "template.context.names": ["title", "csrf_token", "session", "config", "books", "db"],
         "template.context.values": [
-            "'Books'",
+            '"Books"',
             MASK,
             MASK,
-            "{'DEBUG': True, 'SECRET_KEY': ********}",
+            '{"DEBUG": True, "SECRET_KEY": ********}',
             "[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, ...]",
-            "'postgres://********@db/shop'",
+            '"postgres://********@db/shop"',
         ],
     }
 

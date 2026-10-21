@@ -81,7 +81,7 @@ def test_a_template_keeps_its_context_without_a_query_more(
             "<WSGIRequest: GET '/context-page/'>",
             IsStr(regex=r"<SimpleLazyObject: .*>"),
             IsStr(regex=r"PermWrapper\(<SimpleLazyObject: .*>\)"),
-            "'Users'",
+            '"Users"',
             "<QuerySet of User, not evaluated>",
             "<QuerySet of Group: 1 row>",
             "<User: ann>",
@@ -111,7 +111,7 @@ def test_a_template_keeps_its_context_without_a_query_more(
             # {% include ... with user=first %}
             "<User: ann>",
             IsStr(regex=r"PermWrapper\(<SimpleLazyObject: .*>\)"),
-            "'Users'",
+            '"Users"',
             "<QuerySet of User, not evaluated>",
             "<QuerySet of Group: 1 row>",
             "<User: ann>",
