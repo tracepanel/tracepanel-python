@@ -1,6 +1,6 @@
 [project]
 name = "tracepanel"
-version = "0.4.0"
+version = "0.4.1"
 description = "Traces and logs for Python apps: every request, task and command with its SQL and log lines, N+1 queries found"
 readme = "README.md"
 license = "MIT"
