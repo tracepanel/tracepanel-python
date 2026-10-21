@@ -12,19 +12,19 @@ the whole package (a submodule loads while its package is still importing).
 import importlib.abc
 import importlib.machinery
 import sys
-import threading
 from collections.abc import Callable, Sequence
 from types import ModuleType
 from typing import Any
 
 from tracepanel._compat import override
+from tracepanel.core import forks
 
 Hook = Callable[[ModuleType], None]
 
 _waiting: dict[str, list[Hook]] = {}
 # Modules whose own code has run: their hooks are running, or have (a hook added by one of them runs at once).
 _loaded: set[str] = set()
-_lock = threading.Lock()
+_lock = forks.lock()
 
 
 def when_imported(name: str, hook: Hook) -> None:

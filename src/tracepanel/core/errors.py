@@ -4,9 +4,7 @@ Integrations call capture() where their framework reports an exception (Django's
 task, a GraphQL resolver).
 """
 
-import threading
-
-from tracepanel.core import conf
+from tracepanel.core import conf, forks
 from tracepanel.core.context import current_span, current_trace, now_us
 from tracepanel.core.frames import from_traceback
 from tracepanel.core.model import ChainedError, Error
@@ -69,7 +67,7 @@ def capture(exc: BaseException, *, handled: bool) -> None:
 # The latest exception logged in each open trace (logger.exception): when a request ends up a 5xx with no
 # exception of its own, a framework caught and logged it (django-ninja, custom handlers), so that is the error.
 _logged: dict[str, BaseException] = {}
-_logged_lock = threading.Lock()
+_logged_lock = forks.lock()
 
 
 def remember_logged(trace_id: str, exc: BaseException) -> None:

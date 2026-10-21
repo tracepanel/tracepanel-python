@@ -14,11 +14,10 @@ publishing (with the enqueuing trace and span), `started` in `task_prerun`, `ret
 process was killed leaves the console's Live list. Eager tasks send none: they run inside their caller.
 """
 
-import threading
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from tracepanel.core import conf, errors, registry, services
+from tracepanel.core import conf, errors, forks, registry, services
 from tracepanel.core.context import adopt, current_span, current_trace, now_us, record_span, recorded, start_trace
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
@@ -48,7 +47,7 @@ _runs: dict[str, TaskRun] = {}
 # Task id -> (when publishing started, the id the enqueue span will get, the trace's span count then): known before
 # the message leaves, so the worker's link can point at that span, and what publishing recorded can go under it.
 _published: dict[str, tuple[int, str, int]] = {}
-_lock = threading.Lock()
+_lock = forks.lock()
 _beat = False
 
 

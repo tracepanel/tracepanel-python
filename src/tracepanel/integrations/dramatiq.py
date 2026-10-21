@@ -19,11 +19,10 @@ processes, so a message whose process was killed leaves the console's Live list.
 import os
 import socket
 import sys
-import threading
 from contextvars import ContextVar
 from typing import Any
 
-from tracepanel.core import conf, errors, registry, services
+from tracepanel.core import conf, errors, forks, registry, services
 from tracepanel.core.context import adopt, current_trace, now_us, record_span, recorded, start_trace
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
@@ -46,7 +45,7 @@ SENT = "tracepanel_sent"
 _run: ContextVar[TaskRun | None] = ContextVar("tracepanel_dramatiq_run", default=None)
 # Message id -> (when the send started, the id the enqueue span will get, the trace's span count then).
 _sending: dict[str, tuple[int, str, int]] = {}
-_lock = threading.Lock()
+_lock = forks.lock()
 # Whether the send in progress in this thread is the message's first: before_enqueue tells after_enqueue.
 _first_send: ContextVar[bool] = ContextVar("tracepanel_dramatiq_first_send", default=True)
 # The messages this process processes now, for its heartbeat; one that was retried leaves at once.

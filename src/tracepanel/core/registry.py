@@ -11,14 +11,13 @@ import importlib
 import importlib.machinery
 import importlib.util
 import sys
-import threading
 from dataclasses import dataclass
 from types import ModuleType
 
-from tracepanel.core import conf, imports
+from tracepanel.core import conf, forks, imports
 
 _installed: set[str] = set()
-_lock = threading.Lock()
+_lock = forks.lock()
 
 
 @dataclass(frozen=True, slots=True)

@@ -21,6 +21,18 @@
   traces showed their arguments as the backend stored them (`['a']`), its
   events as a tuple: the trace now shows the tuple too. RQ and Dramatiq
   already matched.
+- A process forked while the writer was sending to the agent no longer hangs
+  its traces and task events. A worker that forks (RQ's work horse for each
+  job, Celery's prefork pool, gunicorn with `--preload`) copies only the
+  thread that forks: a lock the parent's writer thread held at that moment
+  (sending a batch or a heartbeat, starting the agent) stayed held in the
+  child, so the child's writer waited forever and its jobs never reached the
+  console. Every lock of Tracepanel's is free again in a forked child. The
+  child already opened its own connection to the agent, with its own hello.
+  It now also closes its copy of the parent's.
+- A task event goes to the agent at once, not after the writer's 50 ms wait
+  for more traces. A job shorter than that sent `started` and `finished`
+  together, and the Tasks page's Live never showed it running.
 
 ## 0.4.0 (2026-10-21)
 

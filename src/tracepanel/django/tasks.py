@@ -15,11 +15,10 @@ never runs one: neither sends any.
 
 import functools
 import sys
-import threading
 from contextvars import ContextVar
 from typing import Any
 
-from tracepanel.core import conf, errors
+from tracepanel.core import conf, errors, forks
 from tracepanel.core.context import current_trace, start_span, start_trace
 from tracepanel.core.frames import origin
 from tracepanel.core.model import Attrs, Link
@@ -35,7 +34,7 @@ BACKENDS = {"DatabaseBackend": "database", "RQBackend": "rq"}
 NO_QUEUE = frozenset({"ImmediateBackend", "DummyBackend"})
 
 _runs: dict[str, TaskRun] = {}
-_lock = threading.Lock()
+_lock = forks.lock()
 # (trace id, span id) of the enqueue in progress: a run that starts meanwhile runs inline (ImmediateBackend).
 _enqueuing: ContextVar[tuple[str, str] | None] = ContextVar("tracepanel_django_task_enqueue", default=None)
 
