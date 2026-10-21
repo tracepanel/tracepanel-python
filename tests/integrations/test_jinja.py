@@ -72,7 +72,7 @@ def test_a_render_keeps_the_context_it_got_masked() -> None:
     assert span.attrs == {
         "template.name": "page.html",
         "template.context.names": ["title", "token", "dsn"],
-        "template.context.values": ["'Hi'", "********", "'https://********@sentry.io/1'"],
+        "template.context.values": ['"Hi"', "********", '"https://********@sentry.io/1"'],
     }
 
 
@@ -87,7 +87,7 @@ def test_an_async_render_keeps_its_context_once() -> None:
         {
             "template.name": "page.html",
             "template.context.names": ["title"],
-            "template.context.values": ["'Hi'"],
+            "template.context.values": ['"Hi"'],
         },
         {
             "template.name": "row.html",

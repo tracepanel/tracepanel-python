@@ -259,10 +259,10 @@ def test_the_hello_carries_the_apps_settings_masked_and_its_versions(tmp_path: P
         {
             "DEBUG": "True",
             "SECRET_KEY": "********",
-            "ROOT_URLCONF": "'tests.project.urls'",
-            "INSTALLED_APPS": IsStr(regex=r"\['django.contrib.auth', .*'tracepanel.django'.*\]"),
-            "DATABASES": IsStr(regex=r"\{'analytics': \{.*'default': \{.*\}\}"),
-            "PASSWORD_HASHERS": IsStr(regex=r"\['django.contrib.auth.hashers.PBKDF2PasswordHasher', .*\]"),
+            "ROOT_URLCONF": '"tests.project.urls"',
+            "INSTALLED_APPS": IsStr(regex=r'\["django.contrib.auth", .*"tracepanel.django".*\]'),
+            "DATABASES": IsStr(regex=r'\{"analytics": \{.*"default": \{.*\}\}'),
+            "PASSWORD_HASHERS": IsStr(regex=r'\["django.contrib.auth.hashers.PBKDF2PasswordHasher", .*\]'),
         }
     )
     assert all(name.isupper() for name in app["settings"])

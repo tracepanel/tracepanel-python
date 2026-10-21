@@ -32,6 +32,9 @@
   as not shown. A template included in a loop keeps the context of its first
   3 renders, a trace 100 in all. They stay on this machine.
   `capture_template_context` turns them off.
+- Settings and a template's context show their strings in double quotes,
+  `"django.db.backends.postgresql"`, as one writes them, still Python a
+  reader can paste.
 
 ## 0.4.1 (2026-10-21)
 

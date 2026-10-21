@@ -309,8 +309,8 @@ def test_the_app_tab_shows_app_config_masked_and_flasks_version(app: Flask) -> N
             "DEBUG": "True",
             "SECRET_KEY": "********",
             "MAIL_PASSWORD": "********",
-            "REDIS_URL": "'redis://********@cache:6379/0'",
-            "SQLALCHEMY_DATABASE_URI": "'sqlite://'",
+            "REDIS_URL": '"redis://********@cache:6379/0"',
+            "SQLALCHEMY_DATABASE_URI": '"sqlite://"',
             "PROPAGATE_EXCEPTIONS": "False",
         }
     )
