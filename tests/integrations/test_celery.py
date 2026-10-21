@@ -251,7 +251,7 @@ def test_a_queued_task_tells_the_agent_each_step(client: Client, recorder: Recor
             "queue": "celery",
             "worker": IsStr,
             "retries": 0,
-            "args": "['queued']",
+            "args": "('queued',)",
             "kwargs": "{}",
         },
         {
@@ -263,6 +263,42 @@ def test_a_queued_task_tells_the_agent_each_step(client: Client, recorder: Recor
             "state": "SUCCESS",
         },
     ]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_tasks_arguments_read_the_same_queued_running_and_in_its_trace(recorder: Recorder) -> None:
+    # The worker decodes the tuple the caller passed as a list.
+    passed = jobs.count_users.delay("passed")
+    named = jobs.count_users.apply_async(kwargs={"prefix": "named"})
+    # An app hides a secret from Celery's logs and monitors with argsrepr: it stays hidden here too.
+    hidden = jobs.count_users.apply_async(("s3cret",), argsrepr="('<hidden>',)")  # type: ignore[call-arg]
+    with start_worker(jobs.app, pool="solo", perform_ping_check=False, shutdown_timeout=10):
+        for result in (passed, named, hidden):
+            result.get(timeout=10)
+    shown = {
+        (event["id"], event["event"]): (event["args"], event["kwargs"])
+        for event in recorder.events
+        if event["event"] in {"enqueued", "started"}
+    }
+    traced = {
+        run.attrs["task.id"]: (run.attrs["task.args"], run.attrs["task.kwargs"])
+        for run in by_kind(recorder.traces, "task")
+    }
+
+    assert shown == {
+        (passed.id, "enqueued"): ("('passed',)", "{}"),
+        (passed.id, "started"): ("('passed',)", "{}"),
+        (named.id, "enqueued"): ("()", "{'prefix': 'named'}"),
+        (named.id, "started"): ("()", "{'prefix': 'named'}"),
+        (hidden.id, "enqueued"): ("('<hidden>',)", "{}"),
+        (hidden.id, "started"): ("('<hidden>',)", "{}"),
+    }
+
+    assert traced == {
+        passed.id: ("('passed',)", "{}"),
+        named.id: ("()", "{'prefix': 'named'}"),
+        hidden.id: ("('<hidden>',)", "{}"),
+    }
 
 
 @pytest.mark.django_db(transaction=True)

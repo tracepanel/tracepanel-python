@@ -23,7 +23,16 @@ from tracepanel.core.context import adopt, current_span, current_trace, now_us, 
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
-from tracepanel.integrations._tasks import Heartbeat, TaskRun, event_repr, task_event, task_repr, trigger
+from tracepanel.integrations._tasks import (
+    Arguments,
+    Heartbeat,
+    TaskRun,
+    arguments,
+    event_repr,
+    task_event,
+    task_repr,
+    trigger,
+)
 from tracepanel.storage import agent
 from tracepanel.storage.transport import complete, get_writer, role
 
@@ -130,13 +139,18 @@ def after_publish(
     )
 
 
-def _arguments(body: object) -> tuple[object, object]:
-    """The args and kwargs of a message's body: (args, kwargs, embed) in Celery's protocol 2, a dict in protocol 1."""
+def _arguments(body: object, headers: Mapping[str, Any]) -> Arguments:
+    """The arguments of a message: its body's (args, kwargs, embed) in Celery's protocol 2, a dict in protocol 1.
+
+    Shown as Celery's argsrepr and kwargsrepr, which the message carries to the worker: the same text there.
+    """
+    args: object = None
+    kwargs: object = None
     if isinstance(body, (tuple, list)) and len(body) >= 2:  # noqa: PLR2004 (args, kwargs)
-        return body[0], body[1]
-    if isinstance(body, Mapping):
-        return body.get("args"), body.get("kwargs")
-    return None, None
+        args, kwargs = body[0], body[1]
+    elif isinstance(body, Mapping):
+        args, kwargs = body.get("args"), body.get("kwargs")
+    return arguments(args, kwargs, shown=(headers.get("argsrepr"), headers.get("kwargsrepr")))
 
 
 def _enqueued(  # noqa: PLR0913 (what the event tells)
@@ -151,7 +165,6 @@ def _enqueued(  # noqa: PLR0913 (what the event tells)
     config = conf.get_config()
     if not task_id or conf.matches(name, config.ignore_tasks):
         return
-    args, kwargs = _arguments(body) if config.capture_task_args else (None, None)
     task_event(
         "enqueued",
         SYSTEM,
@@ -159,8 +172,7 @@ def _enqueued(  # noqa: PLR0913 (what the event tells)
         name=name,
         queue=queue or None,
         retries=int(headers.get("retries") or 0),
-        args=event_repr("args", args) if args is not None else None,
-        kwargs=event_repr("kwargs", kwargs) if kwargs is not None else None,
+        **(_arguments(body, headers).event() if config.capture_task_args else {}),
         trace_id=parent[0] if parent else None,
         span_id=parent[1] if parent else None,
     )
@@ -178,10 +190,9 @@ def _running() -> list[str]:
 _heart = Heartbeat(SYSTEM, _running)
 
 
-def _started(task_id: str, task: "Task[Any, Any]", attrs: Attrs, kwargs: Mapping[str, object]) -> None:
+def _started(task_id: str, task: "Task[Any, Any]", attrs: Attrs, called: Arguments | None) -> None:
     hostname = str(attrs.get("task.worker") or "")
     _heart.start(hostname)
-    capture = conf.get_config().capture_task_args
     task_event(
         "started",
         SYSTEM,
@@ -190,8 +201,7 @@ def _started(task_id: str, task: "Task[Any, Any]", attrs: Attrs, kwargs: Mapping
         queue=attrs.get("task.queue"),
         worker=hostname or None,
         retries=attrs.get("task.retries"),
-        args=event_repr("args", kwargs.get("args")) if capture else None,
-        kwargs=event_repr("kwargs", kwargs.get("kwargs")) if capture else None,
+        **(called.event() if called is not None else {}),
     )
 
 
@@ -210,17 +220,26 @@ def prerun(task_id: str | None = None, task: "Task[Any, Any] | None" = None, **k
         "task.retries": int(getattr(request, "retries", 0) or 0),
         "task.eager": eager,
     }
+    # As the enqueued event showed them: Celery's argsrepr and kwargsrepr come with the message.
+    called = (
+        arguments(
+            kwargs.get("args"),
+            kwargs.get("kwargs"),
+            shown=(getattr(request, "argsrepr", None), getattr(request, "kwargsrepr", None)),
+        )
+        if conf.get_config().capture_task_args
+        else None
+    )
     if not eager:
         attrs.update(_broker(task.app))
-        _started(task_id, task, attrs, kwargs)
+        _started(task_id, task, attrs, called)
     published = _header(request, PUBLISHED)
     if isinstance(published, int):
         attrs["task.queue_wait"] = max(started - published, 0)
     trigger = _header(request, TRIGGER)
     attrs["task.trigger"] = str(trigger) if trigger else ("request" if eager and current_trace() else "other")
-    if conf.get_config().capture_task_args:
-        attrs["task.args"] = task_repr("args", kwargs.get("args"))
-        attrs["task.kwargs"] = task_repr("kwargs", kwargs.get("kwargs"))
+    if called is not None:
+        attrs.update(called.attrs())
 
     links: list[Link] = []
     parent = _header(request, PARENT)

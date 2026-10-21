@@ -8,6 +8,7 @@ import django
 import pytest
 from dirty_equals import IsInt
 
+from tests.profiles import share
 from tracepanel.core import conf, frames, profile
 from tracepanel.core.context import start_trace
 from tracepanel.core.profile import MAX_STACKS, OTHER, Recording
@@ -175,3 +176,67 @@ def busy(seconds: float) -> None:
     end = time.perf_counter() + seconds
     while time.perf_counter() < end:
         pass
+
+
+def test_work_handed_to_another_thread_is_sampled_there(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRACEPANEL_PROFILE_INTERVAL_MS", "1")
+    conf.reset()
+
+    with start_trace("command", "hop", profile=True) as trace:
+        worker = threading.Thread(target=profile.followed(busy), args=(0.15,))
+        worker.start()
+        worker.join()
+
+    assert trace.profile is not None
+    assert "busy" in in_app(trace.profile)
+    # While the work is away, the trace's own thread only waits for it: its join is not what the profile shows.
+    assert share(trace, "busy") > 0.5
+
+
+def test_outside_a_profiled_trace_a_call_is_left_as_it_is() -> None:
+    assert profile.followed(busy) is busy
+
+    with start_trace("command", "plain"):
+        assert profile.followed(busy) is busy
+
+
+def test_traces_sharing_a_thread_are_each_sampled_where_their_work_went(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Two requests on one event loop: neither can be told apart there, each can in its worker thread.
+    monkeypatch.setenv("TRACEPANEL_PROFILE_INTERVAL_MS", "1")
+    conf.reset()
+    sampler = profile.Sampler()
+    first, second = sampler.start(), sampler.start()
+
+    def work(recording: Recording) -> None:
+        with sampler.follow(recording):
+            busy(0.15)
+
+    workers = [threading.Thread(target=work, args=(recording,)) for recording in (first, second)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    documents = [sampler.stop(first), sampler.stop(second)]
+
+    for document in documents:
+        assert document is not None
+        assert {"busy", "test_traces_sharing_a_thread_are_each_sampled_where_their_work_went.<locals>.work"} <= in_app(
+            document
+        )
+
+
+def test_work_coming_back_to_the_traces_own_thread_is_sampled_there(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRACEPANEL_PROFILE_INTERVAL_MS", "1")
+    conf.reset()
+    sampler = profile.Sampler()
+    recording = sampler.start()
+
+    with sampler.follow(recording):
+        busy(0.1)
+    document = sampler.stop(recording)
+
+    assert document is not None
+    assert "busy" in in_app(document)
+    assert recording.away == 0

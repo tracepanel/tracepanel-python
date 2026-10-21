@@ -9,13 +9,16 @@ The awaiting code waits for the thread: the call is sequential, as if made in pl
 work ends becomes current in the awaiting context, as it would be had the call run there: the transaction then holds
 what the request does until COMMIT, which makes its parent current again. Concurrent tasks have contexts of their own,
 so a transaction never takes in another task's calls.
+
+A profiled request follows its work into the thread too: the endpoint's frames are there, while the event loop's thread
+waits in its selector.
 """
 
 from collections.abc import Callable
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
-from tracepanel.core import imports
+from tracepanel.core import imports, profile
 from tracepanel.core.context import current_span, current_trace, set_current_span
 from tracepanel.core.patching import patch, patched
 
@@ -47,7 +50,7 @@ def _patch(module: ModuleType) -> None:
                 ended.append(current_span())
 
         try:
-            return await original(call, *args, **kwargs)
+            return await original(profile.followed(call), *args, **kwargs)
         finally:
             if ended and ended[0] is not before:
                 set_current_span(ended[0])

@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A request's profile shows its sync view or endpoint under an ASGI server.
+  Django runs a sync view through `sync_to_async`, and FastAPI and Starlette
+  run a sync endpoint through `run_in_threadpool`, in a worker thread. The
+  profile sampled the thread the request started in, the event loop's, which
+  waited in its selector meanwhile: the flame graph showed
+  `KqueueSelector.select` (or `EpollSelector.select`) and none of the view.
+  The profile now follows the work into the worker thread, and leaves out the
+  loop's thread while it waits. Async views and WSGI apps were not affected.
+- A Celery task's arguments read the same while queued and while running in
+  the Tasks page's Live, and in its trace. The enqueued event showed the
+  arguments the caller passed (`('a',)`), the started event and the trace
+  what the worker decoded from the message (`['a']`). All three now show
+  Celery's own `argsrepr` and `kwargsrepr`, which the message carries, so an
+  app that hides a secret there hides it in Tracepanel too. Django Tasks'
+  traces showed their arguments as the backend stored them (`['a']`), its
+  events as a tuple: the trace now shows the tuple too. RQ and Dramatiq
+  already matched.
+
 ## 0.4.0 (2026-10-21)
 
 Needs `tracepanel-agent` 0.4.0 (installed with it): an app says what it offers

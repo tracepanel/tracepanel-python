@@ -190,6 +190,10 @@ def test_a_queued_task_tells_the_agent_each_step(client: Client, recorder: Recor
         },
     ]
 
+    # The task's trace shows its arguments as its events do.
+    (run,) = by_kind(recorder.traces, "task")
+    assert run.attrs == IsPartialDict({"task.args": "('queued',)", "task.kwargs": "{}"})
+
 
 @pytest.mark.django_db
 def test_immediate_and_ignored_tasks_send_no_events(client: Client, recorder: Recorder, settings: Settings) -> None:

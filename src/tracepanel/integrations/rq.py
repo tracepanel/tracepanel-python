@@ -27,7 +27,7 @@ from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
 from tracepanel.core.patching import patch, patched
-from tracepanel.integrations._tasks import Heartbeat, event_repr, task_event, task_repr, trigger
+from tracepanel.integrations._tasks import Heartbeat, arguments, event_repr, task_event, task_repr, trigger
 from tracepanel.storage import agent
 from tracepanel.storage.transport import complete, get_writer, role
 
@@ -114,8 +114,7 @@ def _enqueued(queue: str, job: Any, parent: tuple[str, str] | None) -> None:  # 
         name=str(job.func_name),
         queue=queue,
         retries=_attempt(job),
-        args=event_repr("args", tuple(job.args or ())) if capture else None,
-        kwargs=event_repr("kwargs", dict(job.kwargs or {})) if capture else None,
+        **(arguments(job.args, job.kwargs).event() if capture else {}),
         trace_id=parent[0] if parent else None,
         span_id=parent[1] if parent else None,
     )
@@ -135,8 +134,7 @@ def _started(job: Any) -> None:  # noqa: ANN401 (rq.job.Job)
         queue=job.origin or None,
         worker=worker,
         retries=_attempt(job),
-        args=event_repr("args", tuple(job.args or ())) if capture else None,
-        kwargs=event_repr("kwargs", dict(job.kwargs or {})) if capture else None,
+        **(arguments(job.args, job.kwargs).event() if capture else {}),
     )
 
 
@@ -178,8 +176,7 @@ def _run_attrs(job: Any, *, eager: bool, started: int) -> Attrs:  # noqa: ANN401
         # Runs inline, in the caller's process: web or command, not a worker.
         attrs["service.role"] = role(caller)
     if conf.get_config().capture_task_args:
-        attrs["task.args"] = task_repr("args", tuple(job.args or ()))
-        attrs["task.kwargs"] = task_repr("kwargs", dict(job.kwargs or {}))
+        attrs.update(arguments(job.args, job.kwargs).attrs())
     return attrs
 
 

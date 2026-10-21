@@ -29,7 +29,7 @@ from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
 from tracepanel.core.patching import patch, patched
-from tracepanel.integrations._tasks import Heartbeat, TaskRun, event_repr, task_event, task_repr, trigger
+from tracepanel.integrations._tasks import Heartbeat, TaskRun, arguments, event_repr, task_event, task_repr, trigger
 from tracepanel.storage import agent
 from tracepanel.storage.transport import complete, get_writer
 
@@ -71,7 +71,7 @@ def _queue(message: Any) -> str:  # noqa: ANN401 (dramatiq.Message)
 def _arguments(message: Any) -> dict[str, object]:  # noqa: ANN401 (dramatiq.Message)
     if not conf.get_config().capture_task_args:
         return {}
-    return {"args": event_repr("args", tuple(message.args)), "kwargs": event_repr("kwargs", dict(message.kwargs))}
+    return arguments(message.args, message.kwargs).event()
 
 
 def _actor_path(broker: Any, actor_name: str) -> str:  # noqa: ANN401 (dramatiq.Broker)
@@ -202,8 +202,7 @@ class TracepanelHooks:
         if isinstance(published, int):
             attrs["task.queue_wait"] = max(started - published, 0)
         if conf.get_config().capture_task_args:
-            attrs["task.args"] = task_repr("args", tuple(message.args))
-            attrs["task.kwargs"] = task_repr("kwargs", dict(message.kwargs))
+            attrs.update(arguments(message.args, message.kwargs).attrs())
         context = start_trace("task", name, attrs, root_kind="task.run")
         trace = context.__enter__()
         parent = options.get(PARENT)

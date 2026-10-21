@@ -4,15 +4,23 @@ One daemon thread looks at the stacks of the threads running a profiled trace ev
 each stack it sees. It starts with the first profiled trace and stops once none has run for a while. A thread is
 sampled only while it runs exactly one profiled trace: an event loop running several at once can't tell from outside
 which one a frame belongs to, so their samples are dropped for that time.
+
+A trace's work can hop to another thread: an ASGI server runs a sync view through sync_to_async, a sync endpoint
+through run_in_threadpool, in a worker thread, while the event loop's thread waits in its selector. The hop follows it
+(`followed()`): the worker thread is sampled for the trace until the call returns, and the thread it came from is not.
 """
 
 import sys
 import threading
 import time
 from collections import Counter
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from http.cookies import CookieError, SimpleCookie
 from types import CodeType, FrameType
+from typing import ParamSpec, TypeVar
 
 from tracepanel.core import conf
 from tracepanel.core.frames import is_in_app, library_path, relative
@@ -32,6 +40,9 @@ _OWN = "tracepanel"
 Key = tuple[CodeType | None, str | None]
 OTHER: Key = (None, "(other)")
 
+P = ParamSpec("P")
+R = TypeVar("R")
+
 
 @dataclass(slots=True, eq=False)
 class Recording:
@@ -41,6 +52,12 @@ class Recording:
     interval_us: int
     stacks: Counter[tuple[Key, ...]] = field(default_factory=Counter)
     samples: int = 0
+    # Calls running its work in other threads: meanwhile its own thread only waits for them, and is not sampled.
+    away: int = 0
+
+
+# The recording of the trace running in this context: the work a worker thread does for it is sampled for it too.
+current: ContextVar[Recording | None] = ContextVar("tracepanel_profile", default=None)
 
 
 class Sampler:
@@ -80,6 +97,32 @@ class Sampler:
                 self._slow_down()
         return document(recording)
 
+    @contextmanager
+    def follow(self, recording: Recording) -> Generator[None, None, None]:
+        """Sample the calling thread for a trace whose work hops into it, and not the thread it came from, meanwhile.
+
+        Work that comes back to the trace's own thread (a sync view under WSGI, after async_to_sync) is sampled there.
+        """
+        thread_id = threading.get_ident()
+        if thread_id == recording.thread_id:
+            yield
+            return
+        with self._lock:
+            recording.away += 1
+            self._threads.setdefault(thread_id, []).append(recording)
+        try:
+            yield
+        finally:
+            with self._lock:
+                recording.away -= 1
+                running = self._threads.get(thread_id, [])
+                if recording in running:
+                    running.remove(recording)
+                if not running:
+                    self._threads.pop(thread_id, None)
+                if not self._threads:
+                    self._slow_down()
+
     def _quicken(self, interval_s: float) -> None:
         """Hand the GIL over as often as the sampler wakes, while traces are profiled.
 
@@ -110,17 +153,16 @@ class Sampler:
                         self._thread = None
                         return
                     continue
-                # One profiled trace on a thread: its stack is that trace's.
-                alone = [running[0] for running in self._threads.values() if len(running) == 1]
+                alone = _alone(self._threads)
             idle = 0
             if alone:
                 self._sample(alone)
 
     @staticmethod
-    def _sample(recordings: list[Recording]) -> None:
+    def _sample(recordings: list[tuple[int, Recording]]) -> None:
         frames = sys._current_frames()  # noqa: SLF001
-        for recording in recordings:
-            frame = frames.get(recording.thread_id)
+        for thread_id, recording in recordings:
+            frame = frames.get(thread_id)
             if frame is None:
                 continue
             try:
@@ -129,6 +171,35 @@ class Sampler:
             except (AttributeError, ValueError, RuntimeError):
                 continue
             count(recording, keys)
+
+
+def _alone(threads: dict[int, list[Recording]]) -> list[tuple[int, Recording]]:
+    """Each thread running one profiled trace's work, and that trace: its stack is that trace's.
+
+    A trace's own thread does not run its work while the work is away in another thread (that thread does).
+    """
+    alone: list[tuple[int, Recording]] = []
+    for thread_id, running in threads.items():
+        present = [recording for recording in running if not (recording.away and recording.thread_id == thread_id)]
+        if len(present) == 1:
+            alone.append((thread_id, present[0]))
+    return alone
+
+
+def followed(func: Callable[P, R]) -> Callable[P, R]:
+    """`func`, sampled for the current context's profiled trace in whatever thread runs it; as is outside one.
+
+    For a call handed to a worker thread while the trace's own thread waits for it.
+    """
+    recording = current.get()
+    if recording is None:
+        return func
+
+    def call(*args: P.args, **kwargs: P.kwargs) -> R:
+        with SAMPLER.follow(recording):
+            return func(*args, **kwargs)
+
+    return call
 
 
 def stack(frame: FrameType | None) -> tuple[Key, ...]:
