@@ -34,3 +34,15 @@ during: list[Callable[[], None]] = []
 def watched() -> None:
     for look in during:
         look()
+
+
+@task
+def fan_out() -> str:
+    # Enqueues another task from inside its run: on the immediate backend, it runs right there.
+    return str(count_users.enqueue("inner").id)
+
+
+@task
+def groups_per_user() -> int:
+    # N+1 inside a task: the groups of every user are loaded one by one.
+    return sum(len(list(user.groups.all())) for user in User.objects.order_by("id"))
