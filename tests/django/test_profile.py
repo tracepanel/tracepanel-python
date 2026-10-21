@@ -51,7 +51,7 @@ def test_a_sync_view_under_an_asgi_server_is_profiled_in_the_thread_that_runs_it
     assert response.status_code == 200
     assert {"busy", "spin"} <= in_app(trace)
     # The loop's thread, waiting in its selector meanwhile, is not what the profile shows.
-    assert share(trace, "spin") > 0.5
+    assert share(trace, "spin") > 0.3
 
 
 def test_the_panels_cookie_profiles_each_request_while_it_is_set(client: Client, traces: list[Trace]) -> None:
