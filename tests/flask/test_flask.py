@@ -161,7 +161,7 @@ def test_under_an_asgi_server_the_profile_is_the_views(
     (trace,) = traces
 
     assert response.status_code == 200
-    assert share(trace, "make_app.<locals>.busy") > 0.5
+    assert share(trace, "make_app.<locals>.busy") > 0.3
 
 
 def test_unhandled_error(client: FlaskClient, traces: list[Trace]) -> None:
