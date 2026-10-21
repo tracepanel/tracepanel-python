@@ -15,7 +15,7 @@ import contextlib
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from tracepanel.core.context import now_us
@@ -42,9 +42,57 @@ class TaskRun:
 
 
 def task_repr(name: str, value: object) -> str:
-    """Arguments and results for local debugging: masked like locals, cut to a readable size."""
-    text = safe_repr(name, value)
-    return text if len(text) <= MAX_REPR else f"{text[:MAX_REPR]}…"
+    """A value for a task trace (its result, a retry's reason): masked like locals, cut to a readable size."""
+    return _cut(safe_repr(name, value), MAX_REPR)
+
+
+@dataclass(frozen=True, slots=True)
+class Arguments:
+    """A task call's arguments as text, rendered once: the same text in each of its events and in its trace.
+
+    Built from what each side has: the caller's values when it enqueues, the worker's once the message is decoded.
+    """
+
+    args: str
+    kwargs: str
+
+    def event(self) -> dict[str, object]:
+        """The task event's `args` and `kwargs`, cut to a glance."""
+        return {"args": _cut(self.args, MAX_EVENT_REPR), "kwargs": _cut(self.kwargs, MAX_EVENT_REPR)}
+
+    def attrs(self) -> dict[str, str]:
+        """The task trace's `task.args` and `task.kwargs`."""
+        return {"task.args": _cut(self.args, MAX_REPR), "task.kwargs": _cut(self.kwargs, MAX_REPR)}
+
+
+def arguments(args: object, kwargs: object, *, shown: tuple[object, object] = (None, None)) -> Arguments:
+    """A call's arguments as text, alike on both sides of the queue.
+
+    `shown`: the queue's own text for them, carried in the message (Celery's argsrepr and kwargsrepr), taken as it
+    is, so an app that hides a secret there hides it here too. Otherwise the values go positional as a tuple and by
+    name as a dict, masked like locals: a serializer hands the worker a list where the caller passed a tuple.
+    """
+    shown_args, shown_kwargs = shown
+    return Arguments(
+        args=shown_args if isinstance(shown_args, str) and shown_args else safe_repr("args", _positional(args)),
+        kwargs=shown_kwargs if isinstance(shown_kwargs, str) and shown_kwargs else safe_repr("kwargs", _named(kwargs)),
+    )
+
+
+def _positional(args: object) -> object:
+    if args is None:
+        return ()
+    return tuple(args) if isinstance(args, (list, tuple)) else args
+
+
+def _named(kwargs: object) -> object:
+    if kwargs is None:
+        return dict[str, object]()
+    return dict(kwargs) if isinstance(kwargs, Mapping) else kwargs
+
+
+def _cut(text: str, limit: int) -> str:
+    return text if len(text) <= limit else f"{text[:limit]}…"
 
 
 def trigger(caller: Trace | None) -> str:
@@ -58,9 +106,8 @@ def task_event(event: str, system: str, task_id: str, **fields: object) -> None:
 
 
 def event_repr(name: str, value: object) -> str:
-    """Arguments for a task event: masked like locals, cut to a glance."""
-    text = safe_repr(name, value)
-    return text if len(text) <= MAX_EVENT_REPR else f"{text[:MAX_EVENT_REPR]}…"
+    """A value for a task event (a retry's reason): masked like locals, cut to a glance."""
+    return _cut(safe_repr(name, value), MAX_EVENT_REPR)
 
 
 class Heartbeat:

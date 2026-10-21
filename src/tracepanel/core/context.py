@@ -63,6 +63,7 @@ def start_trace(
     trace.spans.append(root)
     trace_token, span_token = _trace.set(trace), _span.set(root)
     recording = profiling.SAMPLER.start() if profiling.wanted(asked=profile) else None
+    recording_token = profiling.current.set(recording)
     try:
         yield trace
     except BaseException:
@@ -70,6 +71,7 @@ def start_trace(
         raise
     finally:
         trace.duration = root.duration = (time.perf_counter_ns() - started) // 1000
+        profiling.current.reset(recording_token)
         if recording is not None:
             trace.profile = profiling.SAMPLER.stop(recording)
         root.name = trace.name

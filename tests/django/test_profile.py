@@ -1,9 +1,12 @@
+import asyncio
+
 import pytest
 from dirty_equals import IsInt
-from django.test import Client
+from django.test import AsyncClient, Client
 from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
+from tests.profiles import share
 from tracepanel.core import conf
 from tracepanel.core.model import Trace
 from tracepanel.storage import agent
@@ -38,6 +41,17 @@ def test_a_request_asking_by_header_is_profiled(
     assert {"busy", "spin"} <= in_app(trace)
     validator.validate(trace.to_dict())
     assert "Set-Cookie" not in response.headers
+
+
+def test_a_sync_view_under_an_asgi_server_is_profiled_in_the_thread_that_runs_it(traces: list[Trace]) -> None:
+    # As uvicorn serves it: the event loop in this thread, the view in sync_to_async's worker thread.
+    response = asyncio.run(AsyncClient().get("/busy/", headers={"X-Tracepanel-Profile": "1"}))
+    (trace,) = traces
+
+    assert response.status_code == 200
+    assert {"busy", "spin"} <= in_app(trace)
+    # The loop's thread, waiting in its selector meanwhile, is not what the profile shows.
+    assert share(trace, "spin") > 0.5
 
 
 def test_the_panels_cookie_profiles_each_request_while_it_is_set(client: Client, traces: list[Trace]) -> None:

@@ -24,7 +24,7 @@ from tracepanel.core.context import current_trace, start_span, start_trace
 from tracepanel.core.frames import origin
 from tracepanel.core.model import Attrs, Link
 from tracepanel.core.patching import patch, patched
-from tracepanel.integrations._tasks import Heartbeat, TaskRun, event_repr, task_event, task_repr, trigger
+from tracepanel.integrations._tasks import Heartbeat, TaskRun, arguments, task_event, task_repr, trigger
 from tracepanel.storage import agent
 from tracepanel.storage.transport import complete, role
 
@@ -59,10 +59,7 @@ def _in_flight(task_result: Any) -> bool:  # noqa: ANN401 (TaskResult)
 def _arguments(task_result: Any) -> dict[str, object]:  # noqa: ANN401 (TaskResult)
     if not conf.get_config().capture_task_args:
         return {}
-    return {
-        "args": event_repr("args", tuple(task_result.args)),
-        "kwargs": event_repr("kwargs", dict(task_result.kwargs)),
-    }
+    return arguments(task_result.args, task_result.kwargs).event()
 
 
 def on_enqueued(sender: object, task_result: Any = None, **kwargs: object) -> None:  # noqa: ANN401, ARG001 (signal API)
@@ -181,8 +178,8 @@ def on_started(sender: object, task_result: Any = None, **kwargs: object) -> Non
         # Runs in the caller's process: web or command, not a worker.
         attrs["service.role"] = role(caller) if caller is not None else "worker"
     if conf.get_config().capture_task_args:
-        attrs["task.args"] = task_repr("args", task_result.args)
-        attrs["task.kwargs"] = task_repr("kwargs", task_result.kwargs)
+        # As its events show them: a tuple and a dict, whatever the backend stored.
+        attrs.update(arguments(task_result.args, task_result.kwargs).attrs())
     context = start_trace("task", task.module_path, attrs, root_kind="task.run")
     trace = context.__enter__()
     if inline is not None:

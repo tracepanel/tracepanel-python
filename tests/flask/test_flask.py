@@ -1,3 +1,5 @@
+import asyncio
+import time
 from collections.abc import Generator
 
 import pytest
@@ -6,6 +8,8 @@ from dirty_equals import IsPartialDict, IsStr
 flask = pytest.importorskip("flask")
 flask_sqlalchemy = pytest.importorskip("flask_sqlalchemy")
 
+import httpx  # noqa: E402
+from asgiref.wsgi import WsgiToAsgi  # noqa: E402
 from flask import Flask, render_template_string, request  # noqa: E402 (optional test group)
 from flask.testing import FlaskClient  # noqa: E402
 from flask_sqlalchemy import SQLAlchemy  # noqa: E402
@@ -18,6 +22,7 @@ from werkzeug.test import Client  # noqa: E402
 import tracepanel.flask  # noqa: E402
 import tracepanel.wsgi  # noqa: E402
 from tests.agentstore import AgentStore, issues  # noqa: E402
+from tests.profiles import share  # noqa: E402
 from tracepanel.core import conf  # noqa: E402
 from tracepanel.core.model import Trace  # noqa: E402
 
@@ -58,6 +63,13 @@ def make_app() -> Flask:
         # One query for the players, one more per player for its team: an N+1.
         names = [f"{player.name} ({player.team.name})" for player in db.session.scalars(select(Player))]
         return {"team": team_id, "players": names}
+
+    @app.get("/busy")
+    def busy() -> dict[str, int]:
+        end, turns = time.perf_counter() + 0.15, 0
+        while time.perf_counter() < end:
+            turns += 1
+        return {"turns": turns}
 
     @app.get("/boom")
     def boom() -> str:
@@ -131,6 +143,25 @@ def test_request_is_a_trace_named_after_its_rule(client: FlaskClient, traces: li
     assert response.headers["Server-Timing"] == IsStr(
         regex=r'db;dur=[\d.]+;desc="6 queries".*tracepanel-issues;desc="pending"'
     )
+
+
+def test_under_an_asgi_server_the_profile_is_the_views(
+    app: Flask, traces: list[Trace], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRACEPANEL_PROFILE_INTERVAL_MS", "1")
+    conf.reset()
+
+    async def get() -> httpx.Response:
+        # asgiref runs the WSGI app in a worker thread, where its trace starts: the event loop stays out of it.
+        transport = httpx.ASGITransport(app=WsgiToAsgi(app))
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.get("/busy", headers={"X-Tracepanel-Profile": "1"})
+
+    response = asyncio.run(get())
+    (trace,) = traces
+
+    assert response.status_code == 200
+    assert share(trace, "make_app.<locals>.busy") > 0.5
 
 
 def test_unhandled_error(client: FlaskClient, traces: list[Trace]) -> None:

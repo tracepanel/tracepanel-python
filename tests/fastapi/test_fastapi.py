@@ -1,4 +1,5 @@
 import threading
+import time
 from collections.abc import Generator, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Annotated, Any
@@ -22,6 +23,7 @@ from strawberry.fastapi import GraphQLRouter  # noqa: E402
 
 import tracepanel.fastapi  # noqa: E402
 from tests.agentstore import AgentStore, issues  # noqa: E402
+from tests.profiles import share  # noqa: E402
 from tracepanel._compat import override  # noqa: E402
 from tracepanel.core import conf  # noqa: E402
 from tracepanel.core.model import Trace  # noqa: E402
@@ -66,6 +68,15 @@ class Query:
         return players()
 
 
+def spin(seconds: float) -> int:
+    """Busy in project code for a while: what a profile shows."""
+    end = time.perf_counter() + seconds
+    turns = 0
+    while time.perf_counter() < end:
+        turns += 1
+    return turns
+
+
 class Account(BaseModel):
     email: str
     password: str
@@ -78,6 +89,10 @@ def make_app() -> FastAPI:
     @app.get("/players/{team_id}")
     def roster(team_id: int) -> dict[str, object]:
         return {"team": team_id, "players": players()}
+
+    @app.get("/busy")
+    def busy() -> dict[str, int]:
+        return {"turns": spin(0.15)}
 
     @app.get("/boom")
     def boom() -> None:
@@ -147,6 +162,23 @@ def test_request_is_a_trace_named_after_its_route(client: TestClient, traces: li
     assert response.headers["Server-Timing"] == IsStr(
         regex=r'db;dur=[\d.]+;desc="6 queries".*tracepanel-issues;desc="pending"'
     )
+
+
+def test_a_sync_endpoint_is_profiled_in_the_thread_that_runs_it(
+    client: TestClient, traces: list[Trace], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRACEPANEL_PROFILE_INTERVAL_MS", "1")
+    conf.reset()
+
+    response = client.get("/busy", headers={"X-Tracepanel-Profile": "1"})
+    (trace,) = traces
+
+    assert response.status_code == 200
+    assert trace.profile is not None
+    in_app = {frame["function"] for frame in trace.profile["frames"] if frame["in_app"]}  # type: ignore[union-attr]
+    assert {"make_app.<locals>.busy", "spin"} <= in_app
+    # The thread the endpoint runs in, not the event loop's, which waits in its selector meanwhile.
+    assert share(trace, "spin") > 0.5
 
 
 def test_unhandled_error(client: TestClient, traces: list[Trace]) -> None:
