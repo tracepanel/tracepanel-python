@@ -2,18 +2,21 @@ import pytest
 
 pytest.importorskip("django_tasks_db")
 
+from datetime import timedelta
 from typing import Any
 
 from dirty_equals import IsInstance, IsInt, IsPartialDict, IsPositiveInt, IsStr
 from django.contrib.auth.models import User
 from django.core.management import call_command
 from django.test import Client
+from django.utils import timezone
 from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
-from tests.agentstore import AgentStore
+from tests.agentstore import AgentStore, issues
 from tests.project import django_jobs
 from tests.tasklive import Recorder, live, live_when, named, without_heartbeats
+from tracepanel.core.context import start_trace
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Link, Span, Trace
 from tracepanel.storage import agent, transport
@@ -67,6 +70,7 @@ def test_failed_task(client: Client, traces: list[Trace]) -> None:
     assert [(error.type, error.message, error.handled) for error in run.errors] == [
         ("builtins.ValueError", "bounce list unavailable", False)
     ]
+    assert run.errors[0].frames[-1].locals == {"msg": "'bounce list unavailable'"}
 
 
 @pytest.mark.django_db(transaction=True)
@@ -79,15 +83,23 @@ def test_database_worker_run_is_linked_by_task_id(client: Client, traces: list[T
 
     # No headers: the worker can't name the enqueue span; the store links them.
     assert run.links == []
-    assert run.attrs == IsPartialDict(
-        {
-            "task.id": enqueue.attrs["task.id"],
-            "task.eager": False,
-            "task.backend": "database",
-            "task.queue_wait": IsInt(ge=0),
-            "task.state": "SUCCESS",
-        }
-    )
+    assert {key: value for key, value in run.attrs.items() if key.startswith("task.")} == {
+        "task.system": "django",
+        "task.name": "tests.project.django_jobs.queued_count",
+        "task.id": enqueue.attrs["task.id"],
+        "task.queue": "default",
+        "task.backend": "database",
+        "task.retries": 0,
+        "task.eager": False,
+        "task.queue_wait": IsInt(ge=0),
+        "task.priority": 0,
+        # The database worker's id, random unless it is given one.
+        "task.worker": IsStr(min_length=1),
+        "task.args": "('queued',)",
+        "task.kwargs": "{}",
+        "task.state": "SUCCESS",
+        "task.result": "'queued: 5'",
+    }
     assert enqueue.attrs["messaging.system"] == "database"
 
 
@@ -271,3 +283,63 @@ def test_the_agent_lists_a_task_queued_then_running_until_it_ends(store: AgentSt
     finally:
         django_jobs.during.clear()
         set_writer(None)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_deferred_task_says_when_it_was_due_its_priority_and_its_worker(
+    traces: list[Trace], users: list[User]
+) -> None:
+    due = timezone.now() - timedelta(seconds=1)
+    with start_trace("http", "POST /reports/") as request:
+        result = django_jobs.queued_count.using(run_after=due, priority=7).enqueue("later")
+    work("worker-later")
+    (run,) = by_kind(traces, "task")
+    (enqueue,) = [span for span in request.spans if span.kind == "task.enqueue"]
+
+    assert enqueue.attrs == {
+        "task.system": "django",
+        "task.name": "tests.project.django_jobs.queued_count",
+        "task.queue": "default",
+        "task.priority": 7,
+        "task.backend": "database",
+        "code.origin": IsStr,
+        "task.eta": due.isoformat(),
+        "messaging.system": "database",
+        "task.id": str(result.id),
+    }
+    assert run.attrs == IsPartialDict(
+        {"task.eta": due.isoformat(), "task.priority": 7, "task.worker": "worker-later", "task.state": "SUCCESS"}
+    )
+
+
+@pytest.mark.django_db
+def test_a_task_enqueued_inline_from_a_task_follows_it(traces: list[Trace], users: list[User]) -> None:
+    with start_trace("http", "POST /reports/"):
+        outer = django_jobs.fan_out.enqueue()
+    runs = {trace.attrs["task.id"]: trace for trace in by_kind(traces, "task")}
+    (inner_id,) = set(runs) - {str(outer.id)}
+
+    assert {key: runs[inner_id].attrs.get(key) for key in ("task.parent_id", "task.root_id", "task.trigger")} == {
+        "task.parent_id": str(outer.id),
+        "task.root_id": str(outer.id),
+        "task.trigger": "task",
+    }
+    assert {"task.parent_id", "task.root_id"} & runs[str(outer.id)].attrs.keys() == set()
+
+
+@pytest.mark.django_db
+def test_issues_inside_a_task(traces: list[Trace], users: list[User]) -> None:
+    django_jobs.groups_per_user.enqueue()
+    (run,) = by_kind(traces, "task")
+
+    assert [issue.kind for issue in issues(run)] == ["n+1"]
+
+
+@pytest.mark.django_db
+def test_arguments_can_be_left_out(traces: list[Trace], users: list[User], settings: Settings) -> None:
+    settings.TRACEPANEL = {"capture_task_args": False}
+
+    django_jobs.count_users.enqueue("secret")
+    (run,) = by_kind(traces, "task")
+
+    assert {"task.args", "task.kwargs", "task.result"} & run.attrs.keys() == set()

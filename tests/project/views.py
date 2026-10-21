@@ -105,6 +105,28 @@ def users_page(request: HttpRequest) -> HttpResponse:
     return render(request, "tests/users.html", {"users": User.objects.order_by("id")})
 
 
+class Counted:
+    """A value whose repr() runs a query: a template's context shows it without running it."""
+
+    def __repr__(self) -> str:
+        return f"<{User.objects.count()} users>"
+
+
+def context_page(request: HttpRequest) -> HttpResponse:
+    # One query for the groups (evaluated here), one for the first user; `users` is never evaluated.
+    groups = Group.objects.order_by("id")
+    list(groups)
+    context = {
+        "title": "Users",
+        "users": User.objects.order_by("id"),
+        "groups": groups,
+        "first": User.objects.order_by("id").first(),
+        "counted": Counted(),
+        "api_key": "k-123",
+    }
+    return render(request, "tests/context.html", context)
+
+
 def html(request: HttpRequest) -> HttpResponse:
     return HttpResponse("<html><body><h1>hi</h1></body></html>")
 

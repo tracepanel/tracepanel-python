@@ -69,6 +69,12 @@ class Config:
     # Keep a request's headers, query, body (what the app read), cookies and session (development only, masked; they
     # never leave this machine).
     capture_request: bool = True
+    # Send the app's settings (Django's, Flask's app.config) to the console, masked (development only; they never
+    # leave this machine).
+    capture_settings: bool = True
+    # Keep repr() of the context each template is rendered with (development only, masked; it never leaves this
+    # machine).
+    capture_template_context: bool = True
     # Sample where each trace's time goes in code (a flame graph in the console): every trace when on; one request
     # with an X-Tracepanel-Profile: 1 header or a tracepanel_profile=1 cookie either way.
     profile: bool = False
@@ -146,6 +152,8 @@ class Settings(TypedDict, total=False):
     user_switch: bool
     capture_task_args: bool
     capture_request: bool
+    capture_settings: bool
+    capture_template_context: bool
     profile: bool
     profile_enabled: bool
     profile_interval_ms: int

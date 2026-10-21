@@ -7,7 +7,7 @@ from django.contrib.auth.models import Group, User
 from jsonschema import Draft202012Validator
 
 from tests.agentstore import AGENT_SCHEMAS, AgentStore
-from tracepanel.core import conf
+from tracepanel.core import appinfo, conf
 from tracepanel.core.model import Trace
 from tracepanel.storage import agent, transport
 
@@ -80,3 +80,14 @@ def fresh_config(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]
     conf.reset()
     yield
     conf.reset()
+
+
+@pytest.fixture(autouse=True)
+def fresh_app_info() -> Generator[None, None, None]:
+    """What a hello says of the app is worked out anew in each test, from the sources the test leaves in place."""
+    settings, packages = appinfo._settings, list(appinfo._packages)  # noqa: SLF001
+    appinfo.reset()
+    yield
+    appinfo._settings = settings  # noqa: SLF001
+    appinfo._packages[:] = packages  # noqa: SLF001
+    appinfo.reset()

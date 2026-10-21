@@ -12,8 +12,17 @@ A task's trace reaches the agent when the task ends. Until then task events say 
 publishing (with the enqueuing trace and span), `started` in `task_prerun`, `retried` in `task_retry`, `finished` in
 `task_postrun`; each worker process sends a `heartbeat` with the tasks it runs every HEARTBEAT_S, so a task whose
 process was killed leaves the console's Live list. Eager tasks send none: they run inside their caller.
+
+Canvas workflows link up by themselves: the next step of a chain, a chord's callback and a `link` callback are sent
+from inside the run before them, so their traces link to it (`enqueued_by`). Each run also records the ids Celery
+gives it: `task.parent_id`, `task.root_id` and `task.group_id` (a group's or a chord's header tasks).
+
+A run stopped by its soft time limit fails with SoftTimeLimitExceeded and says the limit (`task.timeout`). The hard
+limit kills the pool process before the run can say anything: the worker's main process then writes the run's trace,
+failed with TimeLimitExceeded, and says it finished.
 """
 
+import functools
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -22,11 +31,14 @@ from tracepanel.core.context import adopt, current_span, current_trace, now_us, 
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
+from tracepanel.core.patching import patch, patched
 from tracepanel.integrations._tasks import (
     Arguments,
     Heartbeat,
     TaskRun,
+    Workflow,
     arguments,
+    eta,
     event_repr,
     task_event,
     task_repr,
@@ -44,9 +56,12 @@ PARENT = "tracepanel_parent"
 PUBLISHED = "tracepanel_published"
 TRIGGER = "tracepanel_trigger"
 _runs: dict[str, TaskRun] = {}
-# Task id -> (when publishing started, the id the enqueue span will get, the trace's span count then): known before
-# the message leaves, so the worker's link can point at that span, and what publishing recorded can go under it.
-_published: dict[str, tuple[int, str, int]] = {}
+# Task id -> (when publishing started, the id the enqueue span will get, the trace's span count then, the message's
+# priority): known before the message leaves, so the worker's link can point at that span, and what publishing
+# recorded can go under it.
+_published: dict[str, tuple[int, str, int, object]] = {}
+# The exceptions a time limit stops a run with (billiard's).
+TIME_LIMITS = frozenset({"SoftTimeLimitExceeded", "TimeLimitExceeded"})
 _lock = forks.lock()
 _beat = False
 
@@ -93,9 +108,11 @@ def before_publish(sender: str | None = None, headers: dict[str, Any] | None = N
     if trace is not None:
         span_id = new_id()
         headers[PARENT] = f"{trace.id}:{span_id}"
+        properties = kwargs.get("properties")
+        priority = properties.get("priority") if isinstance(properties, Mapping) else None
         with _lock:
-            _published[task_id] = (now_us(), span_id, recorded())
-    del sender, kwargs
+            _published[task_id] = (now_us(), span_id, recorded(), priority)
+    del sender
 
 
 def after_publish(
@@ -115,10 +132,9 @@ def after_publish(
     _enqueued(str(sender), task_id, headers=headers, queue=routing_key, body=kwargs.get("body"), parent=parent)
     if published is None or trace is None:
         return
-    start, span_id, mark = published
+    start, span_id, mark, priority = published
     # The broker's commands while publishing (Redis LPUSH…) go under the enqueue span.
     adopt(span_id, mark)
-    eta = headers.get("eta")
     record_span(
         "task.enqueue",
         f"enqueue {sender}",
@@ -129,8 +145,9 @@ def after_publish(
             "task.name": str(sender),
             "task.id": task_id,
             "task.queue": routing_key or None,
-            "task.eta": str(eta) if eta else None,
+            "task.eta": eta(headers.get("eta")),
             "task.retries": int(headers.get("retries") or 0),
+            **({"task.priority": priority} if isinstance(priority, int) else {}),
             "code.origin": origin(),
             **_broker(_current_app()),
         },
@@ -239,6 +256,7 @@ def prerun(task_id: str | None = None, task: "Task[Any, Any] | None" = None, **k
     attrs["task.trigger"] = str(trigger) if trigger else ("request" if eager and current_trace() else "other")
     if called is not None:
         attrs.update(called.attrs())
+    attrs.update(_scheduling(request))
 
     links: list[Link] = []
     parent = _header(request, PARENT)
@@ -267,13 +285,49 @@ def prerun(task_id: str | None = None, task: "Task[Any, Any] | None" = None, **k
         _runs[task_id] = TaskRun(context=context, trace=trace)
 
 
-def failure(task_id: str | None = None, exception: BaseException | None = None, **kwargs: object) -> None:
+def _scheduling(request: object) -> Attrs:
+    """When the run was due, its priority, and the workflow Celery's canvas put it in: those the request has."""
+    attrs: Attrs = {}
+    due = eta(getattr(request, "eta", None))
+    if due:
+        attrs["task.eta"] = due
+    priority = (getattr(request, "delivery_info", None) or {}).get("priority")
+    if isinstance(priority, int):
+        attrs["task.priority"] = priority
+    workflow = Workflow(
+        parent_id=_text(getattr(request, "parent_id", None)),
+        root_id=_text(getattr(request, "root_id", None)),
+        group_id=_text(getattr(request, "group", None)),
+    )
+    attrs.update(workflow.attrs(str(getattr(request, "id", "") or "")))
+    return attrs
+
+
+def _text(value: object) -> str | None:
+    return str(value) if value else None
+
+
+def _soft_limit(task: object) -> object:
+    """The soft time limit the run had: the message's, the task's, or the worker's default."""
+    limits = getattr(getattr(task, "request", None), "timelimit", None)
+    soft = limits[1] if isinstance(limits, (list, tuple)) and len(limits) == 2 else None  # noqa: PLR2004 (hard, soft)
+    app_conf = getattr(getattr(task, "app", None), "conf", None)
+    return soft or getattr(task, "soft_time_limit", None) or getattr(app_conf, "task_soft_time_limit", None)
+
+
+def failure(
+    sender: object = None, task_id: str | None = None, exception: BaseException | None = None, **kwargs: object
+) -> None:
     del kwargs
     run = _runs.get(task_id or "")
     if run is None or exception is None:
         return
     errors.capture(exception, handled=False)
     run.trace.status = "error"
+    if type(exception).__name__ in TIME_LIMITS:
+        limit = _soft_limit(sender)
+        if isinstance(limit, (int, float)):
+            run.trace.attrs["task.timeout"] = limit
 
 
 def retry(request: object = None, reason: object = None, **kwargs: object) -> None:
@@ -320,6 +374,76 @@ def postrun(task_id: str | None = None, retval: object = None, state: str | None
         task_event("finished", SYSTEM, task_id or "", worker=trace.attrs.get("task.worker"), state=state)
 
 
+def _on_timeout(original: Any) -> Any:  # noqa: ANN401
+    @functools.wraps(original)
+    def on_timeout(self: Any, soft: bool, timeout: float) -> Any:  # noqa: ANN401, FBT001 (Celery's signature)
+        result = original(self, soft, timeout)
+        if not soft:
+            _killed(self, timeout)
+        return result
+
+    return on_timeout
+
+
+def _killed(request: Any, timeout: float) -> None:  # noqa: ANN401 (celery.worker.request.Request)
+    """The hard time limit killed the pool process running it: its trace never ended there, so it is written here."""
+    name = str(getattr(request, "task_name", "") or getattr(request, "name", ""))
+    task_id = str(getattr(request, "id", "") or "")
+    if not task_id or conf.matches(name, conf.get_config().ignore_tasks):
+        return
+    headers: Mapping[str, Any] = getattr(request, "request_dict", None) or {}
+    hostname = str(getattr(request, "hostname", "") or "") or None
+    attrs: Attrs = {
+        "task.system": SYSTEM,
+        "task.name": name,
+        "task.id": task_id,
+        "task.queue": str((getattr(request, "delivery_info", None) or {}).get("routing_key") or "") or None,
+        "task.worker": hostname,
+        "task.retries": int(headers.get("retries") or 0),
+        "task.eager": False,
+        "task.trigger": str(headers.get(TRIGGER) or "other"),
+        **_broker(getattr(request, "app", None)),
+        **_scheduling(_Headers(headers)),
+    }
+    if conf.get_config().capture_task_args:
+        attrs.update(
+            arguments(
+                getattr(request, "args", None),
+                getattr(request, "kwargs", None),
+                shown=(headers.get("argsrepr"), headers.get("kwargsrepr")),
+            ).attrs()
+        )
+    started = getattr(request, "time_start", None)
+    with start_trace("task", name, attrs, root_kind="task.run") as trace:
+        parent = headers.get(PARENT)
+        if isinstance(parent, str) and ":" in parent:
+            parent_trace, parent_span = parent.split(":", 1)
+            trace.links.append(Link(kind="enqueued_by", trace_id=parent_trace, span_id=parent_span))
+        from billiard.exceptions import TimeLimitExceeded  # noqa: PLC0415 (Celery's own dependency)
+
+        errors.capture(TimeLimitExceeded(timeout), handled=False)
+    trace.attrs["task.state"] = "FAILURE"
+    trace.attrs["task.timeout"] = timeout
+    if isinstance(started, (int, float)) and started > 0:
+        # It ran from when the pool process took it until now.
+        trace.start = trace.spans[0].start = int(started * 1_000_000)
+        trace.duration = trace.spans[0].duration = max(now_us() - trace.start, 0)
+    complete(trace)
+    task_event("finished", SYSTEM, task_id, worker=hostname, state="FAILURE")
+
+
+class _Headers:
+    """A message's headers read as a task's request (eta, delivery_info, parent_id…), for _scheduling."""
+
+    def __init__(self, headers: Mapping[str, Any]) -> None:
+        self.id = headers.get("id")
+        self.eta = headers.get("eta")
+        self.delivery_info = headers.get("delivery_info")
+        self.parent_id = headers.get("parent_id")
+        self.root_id = headers.get("root_id")
+        self.group = headers.get("group")
+
+
 def on_beat_init(**kwargs: object) -> None:
     """Everything beat publishes is a scheduled run."""
     del kwargs
@@ -361,3 +485,8 @@ def install() -> None:
     registry.get("logging").install()
     signals.worker_process_shutdown.connect(on_worker_shutdown, dispatch_uid="tracepanel.worker_shutdown", weak=False)
     signals.worker_shutdown.connect(on_worker_shutdown, dispatch_uid="tracepanel.worker_shutdown_main", weak=False)
+    # No signal tells of the hard time limit: the request's handler does, in the worker's main process.
+    from celery.worker.request import Request  # noqa: PLC0415
+
+    if not patched(Request, "on_timeout"):
+        patch(Request, "on_timeout", _on_timeout(Request.on_timeout))

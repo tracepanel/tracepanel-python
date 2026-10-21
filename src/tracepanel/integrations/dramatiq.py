@@ -14,8 +14,16 @@ Retries puts the message back, tracepanel sees the send in the thread still proc
 error) right then, before another thread can start the next attempt. A delayed message moved to its queue when due is
 not sent again. Each worker process says it is there when it boots and sends a `heartbeat` with the messages it
 processes, so a message whose process was killed leaves the console's Live list.
+
+A message's trace says the worker process that ran it (`task.worker`, the same name its events give), when a delayed
+message was due (`task.eta`) and its actor's priority. A message sent from inside another's run (the next step of a
+pipeline, a group's completion callback, an `on_success` or `on_failure` callback, any send in an actor) links to
+that run and records it as `task.parent_id`, with the first message of the line as `task.root_id`; the messages of a
+group share a `task.group_id`. A message stopped by its time limit (the TimeLimit middleware) fails with
+TimeLimitExceeded and says the limit (`task.timeout`, in seconds).
 """
 
+import functools
 import os
 import socket
 import sys
@@ -28,7 +36,18 @@ from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
 from tracepanel.core.patching import patch, patched
-from tracepanel.integrations._tasks import Heartbeat, TaskRun, arguments, event_repr, task_event, task_repr, trigger
+from tracepanel.integrations._tasks import (
+    Heartbeat,
+    TaskRun,
+    Workflow,
+    arguments,
+    eta,
+    event_repr,
+    sent_from,
+    task_event,
+    task_repr,
+    trigger,
+)
 from tracepanel.storage import agent
 from tracepanel.storage.transport import complete, get_writer
 
@@ -39,6 +58,14 @@ PUBLISHED = "tracepanel_published"
 TRIGGER = "tracepanel_trigger"
 # Set on a message's first send: a send of a message that has it is Retries' requeue or a delayed message moved on.
 SENT = "tracepanel_sent"
+# The workflow a message belongs to: the message whose run sent it, the first of that line, its group.
+PARENT_TASK = "tracepanel_parent_task"
+ROOT_TASK = "tracepanel_root_task"
+GROUP = "tracepanel_group"
+# When a delayed message is due: Dramatiq drops its own `eta` option as it moves the message to its queue.
+ETA = "tracepanel_eta"
+# The group whose messages this thread sends now (group.run).
+_group: ContextVar[str | None] = ContextVar("tracepanel_dramatiq_group", default=None)
 # The run open in this worker thread: before_process_message and after_process_message come from the same thread.
 # Not keyed by message id: a retry keeps the id, and Retries requeues it (in its own after_ hook, before tracepanel's)
 # soon enough for another thread to start the next attempt while this one is still being closed.
@@ -100,11 +127,19 @@ class TracepanelHooks:
 
     def before_enqueue(self, broker: Any, message: Any, delay: int) -> None:  # noqa: ANN401, ARG002
         options = message.options
-        _first_send.set(SENT not in options)
+        first = SENT not in options
+        _first_send.set(first)
         options[SENT] = True
         options[PUBLISHED] = now_us()
-        options[TRIGGER] = trigger(current_trace())
         trace = current_trace()
+        if first:
+            _join(options, sent_from(trace, message.message_id))
+        if options.get("eta"):
+            # A delayed send (a retry's backoff too): moved on when due, the message keeps it.
+            options[ETA] = eta(options["eta"])
+        if first or trace is not None:
+            # A delayed message moved to its queue when due keeps how its send was triggered.
+            options[TRIGGER] = trigger(trace)
         if trace is None:
             return
         span_id = new_id()
@@ -132,8 +167,9 @@ class TracepanelHooks:
                 "task.name": name,
                 "task.id": message.message_id,
                 "task.queue": message.queue_name,
-                "task.eta": f"+{delay} ms" if delay else None,
+                "task.eta": message.options.get(ETA) if delay else None,
                 "task.retries": int(message.options.get("retries") or 0),
+                **_priority(broker, message),
                 "code.origin": origin(),
                 **_broker(broker),
             },
@@ -187,16 +223,24 @@ class TracepanelHooks:
             return
         options = message.options
         started = now_us()
+        # A worker that didn't boot here (one in a test) is still this process.
+        _heart.start(_heart.worker or f"dramatiq@{socket.gethostname()}:{os.getpid()}")
         attrs: Attrs = {
             "task.system": SYSTEM,
             "task.name": name,
             "task.id": message.message_id,
             "task.queue": message.queue_name,
+            "task.worker": _heart.worker or None,
             "task.retries": int(options.get("retries") or 0),
             "task.eager": False,
             "task.trigger": str(options.get(TRIGGER) or "other"),
             **_broker(broker),
+            **_priority(broker, message),
         }
+        due = options.get(ETA)
+        if due:
+            attrs["task.eta"] = due
+        attrs.update(_workflow(options).attrs(message.message_id))
         published = options.get(PUBLISHED)
         if isinstance(published, int):
             attrs["task.queue_wait"] = max(started - published, 0)
@@ -212,8 +256,6 @@ class TracepanelHooks:
         self._started(message, name, attrs)
 
     def _started(self, message: Any, name: str, attrs: Attrs) -> None:  # noqa: ANN401
-        # A worker that didn't boot here (one in a test) still beats.
-        _heart.start(_heart.worker or f"dramatiq@{socket.gethostname()}:{os.getpid()}")
         with _lock:
             _processing.add(message.message_id)
         task_event(
@@ -229,7 +271,7 @@ class TracepanelHooks:
 
     def after_process_message(
         self,
-        broker: Any,  # noqa: ANN401, ARG002
+        broker: Any,  # noqa: ANN401
         message: Any,  # noqa: ANN401
         *,
         result: object = None,
@@ -250,6 +292,10 @@ class TracepanelHooks:
             trace.attrs["task.state"] = "FAILURE" if failed else "RETRY"
             if not failed:
                 trace.attrs["task.retry_reason"] = task_repr("reason", exception)
+            if type(exception).__name__ == "TimeLimitExceeded":
+                limit = _time_limit(broker, message)
+                if limit is not None:
+                    trace.attrs["task.timeout"] = limit
             errors.capture(exception, handled=not failed)
             trace.status = "error" if failed else "ok"
         run.context.__exit__(None, None, None)
@@ -271,8 +317,67 @@ class TracepanelHooks:
         get_writer().flush()
 
 
+def _join(options: dict[str, Any], workflow: Workflow) -> None:
+    """A message's first send: the run that sends it and that run's root, and the group being sent, if any."""
+    if workflow.parent_id:
+        options[PARENT_TASK] = workflow.parent_id
+        options[ROOT_TASK] = workflow.root_id
+    group = _group.get()
+    if group:
+        options[GROUP] = group
+
+
+def _workflow(options: dict[str, Any]) -> Workflow:
+    parent, root, group = options.get(PARENT_TASK), options.get(ROOT_TASK), options.get(GROUP)
+    return Workflow(
+        parent_id=str(parent) if parent else None,
+        root_id=str(root) if root else None,
+        group_id=str(group) if group else None,
+    )
+
+
+def _priority(broker: Any, message: Any) -> Attrs:  # noqa: ANN401
+    """The actor's priority (Dramatiq's, for the worker's order of work): one this process doesn't know has none."""
+    try:
+        priority = broker.get_actor(message.actor_name).priority
+    except Exception:  # noqa: BLE001
+        return {}
+    return {"task.priority": priority} if isinstance(priority, int) else {}
+
+
+def _time_limit(broker: Any, message: Any) -> float | None:  # noqa: ANN401
+    """The time limit that stopped the message, in seconds: its own, its actor's, or the TimeLimit middleware's."""
+    from dramatiq.middleware import TimeLimit  # noqa: PLC0415 (optional dependency)
+
+    default = next((m.time_limit for m in broker.middleware if isinstance(m, TimeLimit)), None)
+    try:
+        actor = broker.get_actor(message.actor_name).options.get("time_limit")
+    except Exception:  # noqa: BLE001
+        actor = None
+    limit = message.options.get("time_limit") or actor or default
+    return limit / 1000 if isinstance(limit, (int, float)) else None
+
+
+def _group_run(original: Any) -> Any:  # noqa: ANN401
+    @functools.wraps(original)
+    def run(self: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 (dramatiq.group)
+        # The messages sent meanwhile are this group's: an inner group is a group of its own.
+        token = _group.set(new_id())
+        try:
+            return original(self, *args, **kwargs)
+        finally:
+            _group.reset(token)
+
+    return run
+
+
 def _finished(message: Any, state: str) -> None:  # noqa: ANN401
-    """`finished`, unless the message was retried (it waits for its next attempt: Retries said so already)."""
+    """`finished`, unless the message was retried (it waits for its next attempt: Retries said so already).
+
+    A retried attempt leaves the message alone: its next attempt may already run in another thread.
+    """
+    if state == "RETRY":
+        return
     with _lock:
         processing = message.message_id in _processing
         _processing.discard(message.message_id)
@@ -309,6 +414,9 @@ def install() -> None:
         _add(self)
 
     patch(broker_class, "__init__", init)
+    from dramatiq.composition import group  # noqa: PLC0415
+
+    patch(group, "run", _group_run(group.run))
     if dramatiq.broker.global_broker is not None:
         _add(dramatiq.broker.global_broker)
     # Its task events: the console's Live list of tasks.

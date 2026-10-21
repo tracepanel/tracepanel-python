@@ -4,6 +4,61 @@
 
 ### Added
 
+- Task workflows link up across Celery, RQ, Dramatiq and Django Tasks. A
+  run records the task it follows (`task.parent_id`), the first task of its
+  workflow (`task.root_id`) and its group (`task.group_id`): Celery's chain,
+  group and chord ids, RQ's `depends_on` (every id in `task.depends_on`) and
+  Groups, Dramatiq's pipelines and groups, and any task sent from inside
+  another's run. A step sent from inside the run before it (a Celery chain or
+  `link`, a chord's callback, a Dramatiq pipeline or callback, a job enqueued
+  by a job) links to that run, so the console lists the steps as related.
+- RQ's `on_success`, `on_failure` and `on_stopped` callbacks run as traces of
+  their own, linked to their job's.
+- A run stopped by its time limit says the limit in `task.timeout` (seconds):
+  Celery's soft limit (SoftTimeLimitExceeded), RQ's `job_timeout`
+  (JobTimeoutException) and Dramatiq's TimeLimit (TimeLimitExceeded). Celery's
+  hard limit kills the pool process before the run can say anything: the
+  worker's main process now writes its trace, failed with TimeLimitExceeded,
+  and tells the Tasks page's Live that it finished.
+- RQ, Dramatiq and Django Tasks traces name their worker (`task.worker`), as
+  Celery's do: RQ's worker name, Dramatiq's worker process (the name its task
+  events give) and the Django Tasks backend's worker id.
+- Every queue says when a delayed task was due (`task.eta`, ISO 8601) and its
+  priority (`task.priority`), on the run's trace as well as on the enqueue:
+  Celery's eta or countdown and message priority, RQ's `enqueue_at` and
+  `enqueue_in`, Dramatiq's delay and actor priority, Django Tasks'
+  `run_after` and priority.
+- The app's settings and versions reach the console, for its App tab (needs
+  an agent that serves `api/app`). The hello to the agent carries them, once
+  per process: Django's UPPERCASE settings and Flask's `app.config`, each
+  value as `repr()` shows it, cut long. A setting whose name holds a secret
+  (`SECRET_KEY`, `*PASSWORD*`, `*TOKEN*`, `*KEY*`, `*SIGNATURE*`) is masked
+  whole, and so is such a key inside one: the `PASSWORD` in `DATABASES`, a
+  password in a cache's `OPTIONS`. The credentials in a URL are masked
+  whatever its name: a Sentry DSN reads
+  `https://********@o1.ingest.sentry.io/1`.
+  `PASSWORD_HASHERS`, `AUTH_PASSWORD_VALIDATORS` and the like stay readable.
+  The versions are Python's, the framework's, and those of the packages that
+  matter that are installed: the database drivers, the ORM, the task queues,
+  the servers, tracepanel itself, and for Django the packages its
+  `INSTALLED_APPS` come from. FastAPI, Starlette and Falcon apps send the
+  versions only. `capture_settings` turns the settings off.
+- A template span keeps the context the template got, as Django's template
+  debug panels show it: its names in order, each value as an error's local
+  variables show theirs (`repr()`, cut, under a sensitive name masked, the
+  credentials in a URL too), 40 names at most (`template.context.*`). Django
+  templates have the context processors' entries (`csrf_token` masked), an
+  included template its own context, and Django's own `block` and `forloop`
+  are left out. Jinja templates have what `render()` got, in Flask,
+  Starlette, FastAPI and Django's Jinja2 backend alike. Showing a value never
+  runs a query: a QuerySet shows its model, and its row count only once it
+  ran, a lazy object stays lazy, and a value whose `repr()` would query reads
+  as not shown. A template included in a loop keeps the context of its first
+  3 renders, a trace 100 in all. They stay on this machine.
+  `capture_template_context` turns them off.
+- Settings and a template's context show their strings in double quotes,
+  `"django.db.backends.postgresql"`, as one writes them, still Python a
+  reader can paste.
 - FastStream: each message a subscriber handles is a task trace, named
   after the handler's function, on Kafka (aiokafka and Confluent), RabbitMQ,
   NATS and Redis. The trace says the broker, the topic, queue, subject or
@@ -13,9 +68,24 @@
   and logs inside the handler land in its trace. A publish inside a trace is
   a `task.enqueue` span, and the message's headers carry the trace context
   (`traceparent`), so the handler's trace links to the trace that published
-  it. The Tasks page's Live lists the messages queued and handled, and the
-  app as a worker (`service@host`). It works in a FastStream app, under
-  FastStream's FastAPI routers and with `faststream-fastapi`.
+  it. A message a handler publishes follows its run, as a task sent from
+  another's run does (`task.parent_id`, `task.root_id`), and a RabbitMQ
+  message says its priority (`task.priority`). The Tasks page's Live lists
+  the messages queued and handled, and the app as a worker (`service@host`).
+  It works in a FastStream app, under FastStream's FastAPI routers and with
+  `faststream-fastapi`.
+
+### Fixed
+
+- RQ jobs scheduled with `enqueue_at` or `enqueue_in`, or enqueued in a batch
+  with `enqueue_many` (and Groups), have their enqueue span, their link to it
+  and their `enqueued` event. Only `enqueue` had them.
+- A delayed Dramatiq message keeps how its send was triggered. Moved to its
+  queue when due, it said `other`. Its `task.eta` is a time, like Celery's,
+  not `+500 ms`.
+- A Dramatiq message retried while its next attempt already ran in another
+  worker thread no longer says `finished` for the attempt that failed. The
+  Tasks page's Live dropped the running attempt.
 
 ## 0.4.1 (2026-10-21)
 

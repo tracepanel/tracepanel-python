@@ -44,3 +44,23 @@ release = threading.Event()
 @app.task
 def waits() -> bool:
     return release.wait(10)
+
+
+@app.task
+def summarize(results: list[str]) -> str:
+    # A chord's callback: the results of its header, in order.
+    return ", ".join(results)
+
+
+@app.task
+def fan_out() -> str:
+    # A task that queues another from inside its run.
+    return count_users.delay("inner").id
+
+
+@app.task(soft_time_limit=2)
+def overruns() -> None:
+    # What billiard raises in the task when its soft time limit passes (the solo pool has no time limits).
+    from billiard.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
+
+    raise SoftTimeLimitExceeded
