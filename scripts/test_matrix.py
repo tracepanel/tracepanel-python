@@ -32,6 +32,7 @@ GROUPS = [
     "flask",
     "falcon",
     "otel",
+    "faststream",
 ]
 
 

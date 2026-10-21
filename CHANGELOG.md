@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- FastStream: each message a subscriber handles is a task trace, named
+  after the handler's function, on Kafka (aiokafka and Confluent), RabbitMQ,
+  NATS and Redis. The trace says the broker, the topic, queue, subject or
+  channel, the message's id, how many times it was delivered before when the
+  broker says, and the outcome: an exception is an error with its locals, a
+  nack the broker delivers again is a retry. SQL, HTTP calls, Redis commands
+  and logs inside the handler land in its trace. A publish inside a trace is
+  a `task.enqueue` span, and the message's headers carry the trace context
+  (`traceparent`), so the handler's trace links to the trace that published
+  it. The Tasks page's Live lists the messages queued and handled, and the
+  app as a worker (`service@host`). It works in a FastStream app, under
+  FastStream's FastAPI routers and with `faststream-fastapi`.
+
 ## 0.4.1 (2026-10-21)
 
 ### Fixed

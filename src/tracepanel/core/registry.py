@@ -101,6 +101,7 @@ INTEGRATIONS: tuple[Integration, ...] = (
     Integration("celery", "Celery", ("celery",), "tracepanel.integrations.celery"),
     Integration("dramatiq", "Dramatiq", ("dramatiq",), "tracepanel.integrations.dramatiq"),
     Integration("rq", "RQ", ("rq",), "tracepanel.integrations.rq"),
+    Integration("faststream", "FastStream", ("faststream",), "tracepanel.integrations.faststream"),
     Integration("strawberry", "Strawberry", ("strawberry",), "tracepanel.integrations.strawberry"),
     Integration("jinja", "Jinja", ("jinja2",), "tracepanel.integrations.jinja"),
     Integration("otel", "OpenTelemetry", ("opentelemetry.sdk",), "tracepanel.integrations.otel"),
