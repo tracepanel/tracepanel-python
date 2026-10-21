@@ -5,21 +5,24 @@ The agent under test is the one uv built from ../tracepanel (or $TRACEPANEL_AGEN
 
 import dataclasses
 import json
+import platform
 import signal
 import socket
 import subprocess
 import threading
 import time
+from importlib import metadata
 from pathlib import Path
 
+import django
 import pytest
-from dirty_equals import IsPartialDict, IsStr
+from dirty_equals import IsList, IsPartialDict, IsStr
 from django.contrib.auth.models import User
 from django.test import Client
 
 from tests.agentstore import AgentStore
 from tracepanel.console import proxy
-from tracepanel.core import conf
+from tracepanel.core import conf, runtime
 from tracepanel.core.context import record_span, start_trace
 from tracepanel.core.model import Trace
 from tracepanel.storage import agent
@@ -236,3 +239,54 @@ def test_an_app_that_offers_nothing_says_nothing(tmp_path: Path, monkeypatch: py
 
     assert "capabilities" not in hello
     assert "console" not in hello
+
+
+@pytest.fixture
+def django_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This process as a Django app: another framework's tests may have set up theirs."""
+    monkeypatch.setattr(runtime, "_framework", None)
+    monkeypatch.setattr(runtime, "_named", None)
+    runtime.set_framework("Django")
+
+
+def test_the_hello_carries_the_apps_settings_masked_and_its_versions(tmp_path: Path, django_app: None) -> None:
+    hello = _hello(tmp_path, conf.get_config())
+    app = hello["app"]
+    assert isinstance(app, dict)
+
+    assert app["settings"] == IsPartialDict(
+        {
+            "DEBUG": "True",
+            "SECRET_KEY": "********",
+            "ROOT_URLCONF": "'tests.project.urls'",
+            "INSTALLED_APPS": IsStr(regex=r"\['django.contrib.auth', .*'tracepanel.django'.*\]"),
+            "DATABASES": IsStr(regex=r"\{'analytics': \{.*'default': \{.*\}\}"),
+            "PASSWORD_HASHERS": IsStr(regex=r"\['django.contrib.auth.hashers.PBKDF2PasswordHasher', .*\]"),
+        }
+    )
+    assert all(name.isupper() for name in app["settings"])
+    assert list(app["settings"]) == sorted(app["settings"])
+
+    assert app["versions"] == IsList(
+        {"name": "Python", "version": platform.python_version(), "kind": "runtime"},
+        {"name": "Django", "version": django.get_version(), "kind": "framework"},
+        {"name": "tracepanel", "version": metadata.version("tracepanel"), "kind": "package"},
+        check_order=False,
+        length=...,
+    )
+    assert app["versions"][:2] == [
+        {"name": "Python", "version": platform.python_version(), "kind": "runtime"},
+        {"name": "Django", "version": django.get_version(), "kind": "framework"},
+    ]
+    packages = app["versions"][2:]
+    assert [package["name"].lower() for package in packages] == sorted(package["name"].lower() for package in packages)
+    assert {package["kind"] for package in packages} == {"package"}
+    assert "django" not in {package["name"].lower() for package in packages}
+
+
+def test_with_capture_settings_off_the_hello_carries_the_versions_only(tmp_path: Path, django_app: None) -> None:
+    config = dataclasses.replace(conf.get_config(), capture_settings=False)
+
+    hello = _hello(tmp_path, config)
+
+    assert hello["app"] == {"versions": IsList(IsPartialDict({"kind": "runtime"}), length=...)}

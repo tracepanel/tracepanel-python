@@ -43,6 +43,7 @@ urlpatterns = [
     path("untouched-user/", views.untouched_user),
     path("html/", views.html),
     path("users-page/", views.users_page),
+    path("context-page/", views.context_page),
     path("multi-backend/", views.multi_backend),
     path("welcome-email/", views.welcome_email),
     path("create-group/", views.create_group),
