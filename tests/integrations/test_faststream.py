@@ -533,6 +533,74 @@ def test_the_agent_lists_a_message_running_until_its_handler_ends(store: AgentSt
         set_writer(None)
 
 
+# ---------- workflows ----------
+
+
+def test_a_message_published_by_a_handler_follows_its_run(recorder: Recorder) -> None:
+    broker = KafkaBroker()
+
+    @broker.subscriber("orders")
+    async def place(body: dict[str, int]) -> None:
+        await broker.publish(body, "invoices")
+
+    @broker.subscriber("invoices")
+    async def invoice(body: dict[str, int]) -> None:
+        await broker.publish(body, "emails")
+
+    @broker.subscriber("emails")
+    async def email(body: dict[str, int]) -> None:
+        pass
+
+    async def send(tested: KafkaBroker) -> None:
+        with start_trace("http", "POST /orders"):
+            await tested.publish({"id": 7}, "orders")
+
+    handle(broker, TestKafkaBroker, send)
+    # The in-memory broker runs each next step inside the publish: the last step's trace ends first.
+    first, second, third = sorted(tasks(recorder), key=lambda trace: trace.start)
+    (to_invoices,) = enqueues(first)
+    (to_emails,) = enqueues(second)
+
+    assert [trace.name.rsplit(".", 1)[-1] for trace in (first, second, third)] == ["place", "invoice", "email"]
+
+    assert {"task.parent_id", "task.root_id"} & first.attrs.keys() == set()
+    assert second.attrs == IsPartialDict(
+        {
+            "task.id": to_invoices.attrs["task.id"],
+            "task.parent_id": first.attrs["task.id"],
+            "task.root_id": first.attrs["task.id"],
+        }
+    )
+    # The third step's root stays the first: the line started there.
+    assert third.attrs == IsPartialDict(
+        {
+            "task.id": to_emails.attrs["task.id"],
+            "task.parent_id": second.attrs["task.id"],
+            "task.root_id": first.attrs["task.id"],
+        }
+    )
+
+    assert [link.span_id for link in (*second.links, *third.links)] == [to_invoices.id, to_emails.id]
+
+
+def test_a_rabbitmq_message_says_its_priority(recorder: Recorder) -> None:
+    broker = RabbitBroker()
+    broker.subscriber("orders")(on_order_created)
+
+    async def send(tested: RabbitBroker) -> None:
+        with start_trace("http", "POST /orders") as request:
+            await tested.publish({"id": 7}, "orders", priority=5)
+        recorder.traces.append(request)
+
+    handle(broker, TestRabbitBroker, send)
+    (task,) = tasks(recorder)
+    (publish,) = enqueues(recorder.traces[-1])
+
+    assert publish.attrs == IsPartialDict({"task.priority": 5})
+
+    assert task.attrs == IsPartialDict({"task.priority": 5})
+
+
 # ---------- under FastAPI ----------
 
 

@@ -7,6 +7,10 @@ are, with the broker in `messaging.system` and the topic, queue, subject or chan
 Its headers carry the W3C `traceparent`, the trace and span that sent it and the id of its task in the console's Live,
 as the Java SDK's messages do. The handler's run is a `task` trace named after its function, linked back to the
 publish (`sent_by`). Inside it, SQL, HTTP calls, Redis commands, logs and the rest land in the trace as in any task's.
+A message published from inside a handler's run follows it: that run's task is its `task.parent_id`, the first
+task of the line its `task.root_id`, carried in its headers as the task's id is. A RabbitMQ message's priority is
+`task.priority`, on the publish and on the run. No broker FastStream speaks to delays a message or limits a handler's
+time, so there is no `task.eta` or `task.timeout`.
 
 Arguments and results are kept for local debugging only (masked like locals) and never leave the machine. A message's
 body is its argument.
@@ -29,7 +33,16 @@ from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
 from tracepanel.core.patching import patch, patched
-from tracepanel.integrations._tasks import Heartbeat, TaskRun, arguments, event_repr, task_event, task_repr
+from tracepanel.integrations._tasks import (
+    Heartbeat,
+    TaskRun,
+    Workflow,
+    arguments,
+    event_repr,
+    sent_from,
+    task_event,
+    task_repr,
+)
 from tracepanel.storage import agent
 from tracepanel.storage.transport import complete
 
@@ -39,6 +52,9 @@ SYSTEMS = {"kafka": "kafka", "confluent": "kafka", "rabbit": "rabbitmq", "nats":
 # its task has in the console's Live from its publish on.
 SENT_BY = "tracepanel-sent-by"
 TASK_ID = "tracepanel-task-id"
+# A message published from inside a handler's run: that run's task is its parent, the run's root its root.
+PARENT_TASK = "tracepanel-parent-task"
+ROOT_TASK = "tracepanel-root-task"
 # Messages whose last delivery was nacked, by system and task id, with how many times: a broker that doesn't count
 # deliveries gets its count from here. The oldest go past a bound (a message nacked once may never come back).
 FAILURES_KEPT = 1000
@@ -104,7 +120,10 @@ def _received(system: str, raw: object, subscriber: object) -> tuple[str, Attrs]
     if system == "rabbitmq":
         queue = getattr(getattr(subscriber, "queue", None), "name", None)
         routing_key = _text(getattr(first, "routing_key", None))
-        return _text(queue) or routing_key, {"messaging.rabbitmq.destination.routing_key": routing_key or None}
+        return _text(queue) or routing_key, {
+            "messaging.rabbitmq.destination.routing_key": routing_key or None,
+            "task.priority": _int(getattr(first, "priority", None)),
+        }
     if system == "nats":
         return _text(getattr(first, "subject", None)), {}
     if system == "redis" and isinstance(first, dict):
@@ -171,12 +190,22 @@ def _handler_name(call_next: object) -> str | None:
     return f"{module}.{name}" if module else str(name)
 
 
+def _workflow(headers: dict[str, Any]) -> Workflow:
+    parent, root = _text(headers.get(PARENT_TASK)), _text(headers.get(ROOT_TASK))
+    return Workflow(parent_id=parent or None, root_id=root or None)
+
+
 def _publish_destination(system: str, cmd: object) -> tuple[str, Attrs]:
     """Where a message goes: the topic, subject or channel, or the exchange (the queue's name for the default one)."""
     destination = _text(getattr(cmd, "destination", None))
     if system == "rabbitmq":
         exchange = _text(getattr(getattr(cmd, "exchange", None), "name", None))
-        return exchange or destination, {"messaging.rabbitmq.destination.routing_key": destination or None}
+        options = getattr(cmd, "message_options", None)
+        priority = options.get("priority") if isinstance(options, dict) else None
+        return exchange or destination, {
+            "messaging.rabbitmq.destination.routing_key": destination or None,
+            "task.priority": _int(priority),
+        }
     return destination, {}
 
 
@@ -255,6 +284,10 @@ class TracepanelHooks:
             headers[SENT_BY] = f"{trace.id}:{span.id}"
             if task_id is not None:
                 headers[TASK_ID] = task_id
+            workflow = sent_from(trace, task_id or "")
+            if workflow.parent_id and workflow.root_id:
+                headers[PARENT_TASK] = workflow.parent_id
+                headers[ROOT_TASK] = workflow.root_id
             try:
                 result = await call_next(cmd)
             except Exception as exc:
@@ -315,6 +348,7 @@ class TracepanelHooks:
             "messaging.destination.name": destination,
             "messaging.message.id": _text(msg.message_id) or None,
             **place,
+            **_workflow(headers).attrs(task_id),
         }
         # Sent by a trace the agent has: linked to it. The caller's span would link it a second time.
         if "w3c.trace_id" in caller:
