@@ -135,6 +135,8 @@ NEWER: list[tuple[str, int, Callable[[Data], str]]] = [
     ("/logs/series", 200, lambda _: "logs/series"),
     ("/logs/series", 400, lambda _: "logs/series?q=level:loud"),
     ("/tasks/live", 200, lambda _: "tasks/live"),
+    # What the app said of itself in its hello: settings and versions.
+    ("/app", 200, lambda _: "app?service=shop"),
 ]
 CASES += [case for case in NEWER if case[0] in OPENAPI["paths"]]
 

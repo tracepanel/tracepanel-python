@@ -145,3 +145,25 @@ def test_a_template_rendered_by_hand_keeps_its_context() -> None:
         "template.context.values": ["1", "********", *[str(i) for i in range(38)]],
         "template.context.omitted": 7,
     }
+
+
+def test_django_s_own_loop_state_is_left_out() -> None:
+    with start_trace("http", "GET /") as trace:
+        Template("{% for n in ns %}{% include inner %}{% endfor %}").render(
+            Context({"ns": [1, 2], "inner": Template("{{ n }}")})
+        )
+
+    (_, first, second) = templates(trace)
+
+    assert (first.attrs, second.attrs) == (
+        {
+            "template.name": "<string template>",
+            "template.context.names": ["ns", "inner", "n"],
+            "template.context.values": ["[1, 2]", '<Template template_string="{{ n }}...">', "1"],
+        },
+        {
+            "template.name": "<string template>",
+            "template.context.names": ["ns", "inner", "n"],
+            "template.context.values": ["[1, 2]", '<Template template_string="{{ n }}...">', "2"],
+        },
+    )

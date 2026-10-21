@@ -32,9 +32,9 @@ def _name(template: Any) -> str:  # noqa: ANN401 (a Jinja Template)
     return str(template.name) if template.name else STRING
 
 
-def _context(args: tuple[Any, ...], kwargs: dict[str, Any]) -> Attrs:
+def _context(name: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Attrs:
     """template.context.* of render()'s arguments, as Jinja reads them (dict(*args, **kwargs)); none when off."""
-    if not values.context_wanted(current_trace()):
+    if not values.context_wanted(current_trace(), name):
         return {}
     try:
         return values.context_attrs(dict(*args, **kwargs))
@@ -53,7 +53,7 @@ def _wrap(module: Any) -> None:  # noqa: ANN401 (jinja2.environment)
         name = _name(self)
         token = _rendering.set(True)
         try:
-            with start_span("template", name, {"template.name": name, **_context(args, kwargs)}):
+            with start_span("template", name, {"template.name": name, **_context(name, args, kwargs)}):
                 return render(self, *args, **kwargs)
         finally:
             _rendering.reset(token)
@@ -62,7 +62,7 @@ def _wrap(module: Any) -> None:  # noqa: ANN401 (jinja2.environment)
         if _rendering.get():
             return await render_async(self, *args, **kwargs)
         name = _name(self)
-        with start_span("template", name, {"template.name": name, **_context(args, kwargs)}):
+        with start_span("template", name, {"template.name": name, **_context(name, args, kwargs)}):
             return await render_async(self, *args, **kwargs)
 
     patch(template, "render", traced)

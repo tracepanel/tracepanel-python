@@ -107,19 +107,32 @@ def test_the_context_is_left_out_when_turned_off(monkeypatch: pytest.MonkeyPatch
     assert [span.attrs for span in trace.spans if span.kind == "template"] == [{"template.name": "<string template>"}]
 
 
-def test_a_trace_keeps_the_contexts_of_its_first_renders_only() -> None:
-    template = jinja2.Environment(autoescape=True).from_string("{{ n }}")
+def test_a_trace_keeps_the_contexts_of_each_templates_first_renders_only() -> None:
+    environment = jinja2.Environment(loader=jinja2.DictLoader({"row.html": "{{ n }}"}), autoescape=True)
 
     with start_trace("http", "GET /") as trace:
-        for n in range(values.MAX_CONTEXTS + 5):
-            template.render(n=n)
+        for n in range(5):
+            environment.get_template("row.html").render(n=n)
 
     spans = [span for span in trace.spans if span.kind == "template"]
 
-    assert len(spans) == values.MAX_CONTEXTS + 5
-    assert spans[values.MAX_CONTEXTS - 1].attrs == {
-        "template.name": "<string template>",
-        "template.context.names": ["n"],
-        "template.context.values": [str(values.MAX_CONTEXTS - 1)],
-    }
-    assert spans[values.MAX_CONTEXTS].attrs == {"template.name": "<string template>"}
+    assert [span.attrs for span in spans] == [
+        *[
+            {"template.name": "row.html", "template.context.names": ["n"], "template.context.values": [str(n)]}
+            for n in range(values.MAX_CONTEXTS_PER_TEMPLATE)
+        ],
+        *[{"template.name": "row.html"}] * (5 - values.MAX_CONTEXTS_PER_TEMPLATE),
+    ]
+
+
+def test_a_trace_keeps_so_many_contexts_in_all() -> None:
+    names = [f"t{n}.html" for n in range(values.MAX_CONTEXTS + 5)]
+    environment = jinja2.Environment(loader=jinja2.DictLoader(dict.fromkeys(names, "x")), autoescape=True)
+
+    with start_trace("http", "GET /") as trace:
+        for name in names:
+            environment.get_template(name).render(n=1)
+
+    kept = [span for span in trace.spans if span.kind == "template" and "template.context.names" in span.attrs]
+
+    assert [span.name for span in kept] == names[: values.MAX_CONTEXTS]

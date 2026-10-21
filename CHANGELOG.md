@@ -24,12 +24,14 @@
   variables show theirs (`repr()`, cut, under a sensitive name masked, the
   credentials in a URL too), 40 names at most (`template.context.*`). Django
   templates have the context processors' entries (`csrf_token` masked), an
-  included template its own context, and Jinja templates what `render()` got,
-  in Flask, Starlette, FastAPI and Django's Jinja2 backend alike. Showing a
-  value never runs a query: a QuerySet shows its model, and its row count only
-  once it ran, a lazy object stays lazy, and a value whose `repr()` would query
-  reads as not shown. A trace keeps the contexts of its first 100 renders.
-  They stay on this machine. `capture_template_context` turns them off.
+  included template its own context, and Django's own `block` and `forloop`
+  are left out. Jinja templates have what `render()` got, in Flask,
+  Starlette, FastAPI and Django's Jinja2 backend alike. Showing a value never
+  runs a query: a QuerySet shows its model, and its row count only once it
+  ran, a lazy object stays lazy, and a value whose `repr()` would query reads
+  as not shown. A template included in a loop keeps the context of its first
+  3 renders, a trace 100 in all. They stay on this machine.
+  `capture_template_context` turns them off.
 
 ## 0.4.1 (2026-10-21)
 

@@ -9,11 +9,11 @@ A framework can say how to show its own objects without touching them (Django's 
 with summarize(), and guard() what a repr() may do (Django blocks queries meanwhile).
 """
 
-import contextlib
+import functools
 import re
 import reprlib
-from collections.abc import Callable, Iterator, Mapping
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Mapping
+from typing import TypeVar
 
 from tracepanel.core import conf
 from tracepanel.core.frames import MASK, SENSITIVE
@@ -32,11 +32,13 @@ _USERINFO = re.compile(r"(?P<scheme>\b[a-zA-Z][a-zA-Z0-9+.-]*://)(?P<userinfo>[^
 _MAX_DEPTH = 8
 
 
+@functools.lru_cache(maxsize=4096)
 def setting_sensitive(name: str) -> bool:
     """Whether a setting (or a key inside one) holds a secret: SECRET_KEY, PASSWORD, STRIPE_API_KEY, AWS_TOKEN."""
     return name.upper() not in SETTING_PLAIN and SETTING_SENSITIVE.search(name) is not None
 
 
+@functools.lru_cache(maxsize=4096)
 def local_sensitive(name: str) -> bool:
     """The rule of an error's local variables: password, token, csrf_token, session, api_key."""
     return SENSITIVE.search(name) is not None
@@ -58,7 +60,9 @@ _MASKED = _Shown(MASK)
 
 Summarizer = Callable[[object], str | None]
 _summarizers: list[Summarizer] = []
-_guards: list[Callable[[], AbstractContextManager[object]]] = []
+# Each blocks what a repr() must not do and returns what undoes it: plain calls, as a capture can run per render.
+Guard = Callable[[], Callable[[], None]]
+_guards: list[Guard] = []
 
 
 def summarize(summarizer: Summarizer) -> None:
@@ -67,18 +71,23 @@ def summarize(summarizer: Summarizer) -> None:
         _summarizers.append(summarizer)
 
 
-def guard(make: Callable[[], AbstractContextManager[object]]) -> None:
-    """A context every capture runs in: Django's blocks queries, so no repr() runs one."""
-    if make not in _guards:
-        _guards.append(make)
+def guard(block: Guard) -> None:
+    """What every capture runs under: Django's blocks queries, so no repr() runs one."""
+    if block not in _guards:
+        _guards.append(block)
 
 
-@contextlib.contextmanager
-def guarded() -> Iterator[None]:
-    with contextlib.ExitStack() as stack:
-        for make in _guards:
-            stack.enter_context(make())
-        yield
+T = TypeVar("T")
+
+
+def guarded(run: Callable[[], T]) -> T:
+    """run() under every guard."""
+    undo = [block() for block in _guards]
+    try:
+        return run()
+    finally:
+        for each in reversed(undo):
+            each()
 
 
 def mask_url(text: str) -> str:
@@ -167,23 +176,27 @@ def setting_repr(name: str, value: object) -> str:
 
 def settings_reprs(values: Mapping[str, object]) -> dict[str, str]:
     """Every UPPERCASE setting, by name, as setting_repr() shows it."""
-    with guarded():
-        return {name: setting_repr(name, values[name]) for name in sorted(values) if name.isupper()}
+    return guarded(lambda: {name: setting_repr(name, values[name]) for name in sorted(values) if name.isupper()})
 
 
 # A template's context: the locals' limits (tracepanel.core.frames).
 _CONTEXT = _limited(160, items=10, level=3, longest=40)
 MAX_CONTEXT = 40
 # The contexts one trace keeps: a template included in a loop of thousands of rows renders that many times, and each
-# one's context would cost its repr()s. The first ones show what the template got.
+# render's context would cost its repr()s. The first renders of each template show what it got, the loop's variable
+# included.
 MAX_CONTEXTS = 100
+MAX_CONTEXTS_PER_TEMPLATE = 3
 
 
-def context_wanted(trace: Trace | None) -> bool:
-    """Whether a template rendered in this trace gets its context: the setting is on, the trace's budget not spent."""
-    if trace is None or trace.contexts >= MAX_CONTEXTS or not conf.get_config().capture_template_context:
+def context_wanted(trace: Trace | None, template: str) -> bool:
+    """Whether this render of `template` gets its context: the setting is on, the trace's budget not spent."""
+    if trace is None or not conf.get_config().capture_template_context:
         return False
-    trace.contexts += 1
+    seen = trace.contexts.get(template, 0)
+    if seen >= MAX_CONTEXTS_PER_TEMPLATE or sum(trace.contexts.values()) >= MAX_CONTEXTS:
+        return False
+    trace.contexts[template] = seen + 1
     return True
 
 
@@ -195,8 +208,7 @@ def context_attrs(items: Mapping[str, object]) -> Attrs:
     """`template.context.*`: its top-level names, their masked repr()s, how many were left out past MAX_CONTEXT."""
     names = [name for name in items if not name.startswith("__")]
     kept = names[:MAX_CONTEXT]
-    with guarded():
-        shown = [MASK if local_sensitive(name) else _safe(_context_repr, items[name]) for name in kept]
+    shown = guarded(lambda: [MASK if local_sensitive(name) else _safe(_context_repr, items[name]) for name in kept])
     attrs: Attrs = {"template.context.names": list[Scalar](kept), "template.context.values": list[Scalar](shown)}
     if len(names) > len(kept):
         attrs["template.context.omitted"] = len(names) - len(kept)

@@ -72,8 +72,8 @@ def _template_name(template: Template) -> str:
 def context_items(context: Any) -> dict[str, object]:  # noqa: ANN401 (Django's Context)
     """A Context's names as the template sees them: later layers win, each name where it was first set.
 
-    Its first layer is Django's builtins (True, False, None), and `block` the {% block %} a template renders in
-    (an include inside one sees it): Django's own, not the view's.
+    Its first layer is Django's builtins (True, False, None), `block` the {% block %} a template renders in (an
+    include inside one sees it) and `forloop` the state of a {% for %} it renders in: Django's own, not the view's.
     """
     items: dict[str, object] = {}
     for layer in getattr(context, "dicts", [])[1:]:
@@ -81,6 +81,9 @@ def context_items(context: Any) -> dict[str, object]:  # noqa: ANN401 (Django's 
             items.update(layer)
     if isinstance(items.get("block"), BlockNode):
         del items["block"]
+    loop = items.get("forloop")
+    if isinstance(loop, dict) and "parentloop" in loop and "counter0" in loop:
+        del items["forloop"]
     return items
 
 
@@ -89,7 +92,7 @@ def record_context(context: Any) -> None:  # noqa: ANN401 (Django's Context)
     span = current_span()
     if span is None or span.kind != "template" or "template.context.names" in span.attrs:
         return
-    if not values.context_wanted(current_trace()):
+    if not values.context_wanted(current_trace(), span.name):
         return
     # The page renders whatever its context holds.
     with contextlib.suppress(Exception):

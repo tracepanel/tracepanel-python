@@ -1,7 +1,6 @@
 """Settings and a template's context as the console shows them: repr()-ed, cut, secrets masked."""
 
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 
 import pytest
 from dirty_equals import IsStr
@@ -178,11 +177,9 @@ def frameworks(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_a_framework_summarizes_its_objects_and_guards_the_capture(frameworks: None) -> None:
     entered: list[str] = []
 
-    @contextmanager
-    def guard() -> Iterator[None]:
+    def guard() -> Callable[[], None]:
         entered.append("in")
-        yield
-        entered.append("out")
+        return lambda: entered.append("out")
 
     values.summarize(lambda value: "<lazy, not evaluated>" if isinstance(value, Lazy) else None)
     values.guard(guard)

@@ -6,16 +6,19 @@ count would make one, and is shown as not shown instead.
 """
 
 import contextlib
-from collections.abc import Iterable, Iterator
+import functools
+from collections.abc import Callable, Iterable
+from contextvars import ContextVar
 from importlib import metadata
 
 from django.apps import apps
 from django.conf import settings
-from django.db import connections
+from django.db.backends.base.base import BaseDatabaseWrapper
 from django.db.models.query import QuerySet
 from django.utils.functional import Promise
 
 from tracepanel.core import appinfo, values
+from tracepanel.core.patching import patch, patched
 
 
 def _settings() -> dict[str, object]:
@@ -47,27 +50,33 @@ def summary(value: object) -> str | None:
     return None
 
 
-def _blocked(*_args: object, **_kwargs: object) -> object:
-    raise values.Blocked
+# Set while a value is shown: no cursor opens meanwhile, in this thread or task.
+_showing: ContextVar[bool] = ContextVar("tracepanel_showing", default=False)
 
 
-@contextlib.contextmanager
-def no_queries() -> Iterator[None]:
-    """No query runs meanwhile on this thread's connections: opening a cursor raises values.Blocked.
+def no_queries() -> Callable[[], None]:
+    """No query runs until the returned call: opening a cursor raises values.Blocked (see _guard_cursors)."""
+    token = _showing.set(True)
+    return lambda: _showing.reset(token)
+
+
+def _guard_cursors() -> None:
+    """Every cursor, plain or chunked, on every backend, comes from _cursor(): it refuses one while a value is shown.
 
     Before the cursor, not in an execute wrapper: a debug cursor logs a statement even when a wrapper refuses it.
     """
-    blocked = []
-    for connection in connections.all():
-        connection.cursor = connection.chunked_cursor = _blocked  # type: ignore[method-assign]
-        blocked.append(connection)
-    try:
-        yield
-    finally:
-        for connection in blocked:
-            for name in ("cursor", "chunked_cursor"):
-                with contextlib.suppress(AttributeError):
-                    delattr(connection, name)
+    if patched(BaseDatabaseWrapper, "_cursor"):
+        return
+    # The one place every cursor comes from; private, so the stubs don't know it.
+    original: Callable[..., object] = getattr(BaseDatabaseWrapper, "_cursor")  # noqa: B009
+
+    @functools.wraps(original)
+    def _cursor(self: BaseDatabaseWrapper, *args: object, **kwargs: object) -> object:
+        if _showing.get():
+            raise values.Blocked
+        return original(self, *args, **kwargs)
+
+    patch(BaseDatabaseWrapper, "_cursor", _cursor)
 
 
 def install() -> None:
@@ -75,3 +84,4 @@ def install() -> None:
     appinfo.add_packages(_app_packages)
     values.summarize(summary)
     values.guard(no_queries)
+    _guard_cursors()

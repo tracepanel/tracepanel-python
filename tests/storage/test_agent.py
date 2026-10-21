@@ -16,13 +16,14 @@ from pathlib import Path
 
 import django
 import pytest
-from dirty_equals import IsList, IsPartialDict, IsStr
+import yaml
+from dirty_equals import IsList, IsPartialDict, IsPositiveInt, IsStr
 from django.contrib.auth.models import User
 from django.test import Client
 
-from tests.agentstore import AgentStore
+from tests.agentstore import AGENT_SCHEMAS, AgentStore
 from tracepanel.console import proxy
-from tracepanel.core import conf, runtime
+from tracepanel.core import appinfo, conf, runtime
 from tracepanel.core.context import record_span, start_trace
 from tracepanel.core.model import Trace
 from tracepanel.storage import agent
@@ -290,3 +291,23 @@ def test_with_capture_settings_off_the_hello_carries_the_versions_only(tmp_path:
     hello = _hello(tmp_path, config)
 
     assert hello["app"] == {"versions": IsList(IsPartialDict({"kind": "runtime"}), length=...)}
+
+
+def test_the_agent_serves_what_the_hello_said_of_the_app(store: AgentStore, django_app: None) -> None:
+    if "/app" not in yaml.safe_load((AGENT_SCHEMAS / "openapi.yaml").read_text())["paths"]:
+        pytest.skip("the released agent doesn't serve api/app: a newer one does")
+    config = dataclasses.replace(store.config(), service="shop")
+    writer = agent.AgentWriter(config)
+
+    assert writer.connected()
+
+    answer = store.get("app", service="shop")
+
+    assert answer == {
+        "service": "shop",
+        "agent": IsStr(),
+        "connected": True,
+        "received": IsPositiveInt,
+        "settings": IsPartialDict({"DEBUG": "True", "SECRET_KEY": "********"}),
+        "versions": appinfo.describe(config)["versions"],
+    }
