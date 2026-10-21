@@ -1,4 +1,6 @@
+import time
 from collections.abc import Generator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from dirty_equals import IsInstance, IsInt, IsList, IsPartialDict, IsPositiveInt, IsStr
@@ -9,13 +11,17 @@ from pytest_django.fixtures import Settings
 
 from tests.agentstore import AgentStore, issues, newer
 from tests.tasklive import Recorder, live, live_when, named, without_heartbeats
-from tracepanel.core.model import Link, Trace
+from tracepanel.core.context import start_trace
+from tracepanel.core.model import Link, Span, Trace
 from tracepanel.storage import agent, transport
 from tracepanel.storage.transport import set_writer
 
 pytest.importorskip("celery")
 
+from celery import chain, chord, group
+from celery.contrib.testing.mocks import TaskMessage
 from celery.contrib.testing.worker import start_worker
+from celery.worker.request import Request
 
 from tests.project import jobs
 
@@ -26,6 +32,21 @@ def by_kind(traces: list[Trace], kind: str) -> list[Trace]:
 
 def task_attrs(trace: Trace) -> dict[str, object]:
     return {key: value for key, value in trace.attrs.items() if key.startswith("task.")}
+
+
+def workflow(trace: Trace) -> dict[str, object]:
+    return {key: trace.attrs[key] for key in ("task.parent_id", "task.root_id", "task.group_id") if key in trace.attrs}
+
+
+def enqueues(trace: Trace) -> list[Span]:
+    return [span for span in trace.spans if span.kind == "task.enqueue"]
+
+
+def run_all(*results: object) -> None:
+    """Run what is queued in a worker until each result is ready."""
+    with start_worker(jobs.app, pool="solo", perform_ping_check=False, shutdown_timeout=10):
+        for result in results:
+            result.get(timeout=10, propagate=False)  # type: ignore[attr-defined]
 
 
 @pytest.mark.django_db
@@ -80,16 +101,22 @@ def test_queued_task_runs_in_a_worker_linked_to_its_request(
         "messaging.system": "memory",
     }
     assert task.attrs["messaging.system"] == "memory"
-    assert task_attrs(task) == IsPartialDict(
-        {
-            "task.queue": "celery",
-            "task.eager": False,
-            "task.trigger": "request",
-            "task.queue_wait": IsInt(ge=0),
-            "task.state": "SUCCESS",
-            "task.result": "'queued: 5'",
-        }
-    )
+    assert task_attrs(task) == {
+        "task.system": "celery",
+        "task.name": "tests.project.jobs.count_users",
+        "task.id": enqueue.attrs["task.id"],
+        "task.queue": "celery",
+        "task.worker": IsStr(min_length=1),
+        "task.retries": 0,
+        "task.eager": False,
+        "task.queue_wait": IsInt(ge=0),
+        "task.trigger": "request",
+        "task.args": "('queued',)",
+        "task.kwargs": "{}",
+        "task.priority": 0,
+        "task.state": "SUCCESS",
+        "task.result": "'queued: 5'",
+    }
     assert task.links == [Link(kind="enqueued_by", trace_id=request.id, span_id=enqueue.id)]
 
 
@@ -102,6 +129,7 @@ def test_failed_task(traces: list[Trace]) -> None:
     assert [(error.type, error.message, error.handled) for error in task.errors] == [
         ("builtins.ValueError", "boom", False)
     ]
+    assert task.errors[0].frames[-1].locals == {"message": "'boom'"}
     assert [issue.kind for issue in issues(task)] == ["error"]
 
 
@@ -402,3 +430,197 @@ def test_the_agent_lists_a_task_queued_then_running_until_it_ends(client: Client
     finally:
         jobs.release.set()
         set_writer(None)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_chain_links_each_step_to_the_one_before(traces: list[Trace], users: list[User]) -> None:
+    with start_trace("http", "POST /reports/") as request:
+        result = chain(jobs.count_users.si("a"), jobs.count_users.si("b"), jobs.count_users.si("c")).apply_async()
+    run_all(result)
+    # Celery sends a step's arguments on as a list.
+    steps = {trace.attrs["task.args"]: trace for trace in by_kind(traces, "task")}
+    first, second, third = steps["('a',)"], steps["['b']"], steps["['c']"]
+    (sent,) = enqueues(request)
+
+    assert [workflow(step) for step in (first, second, third)] == [
+        {},
+        {"task.parent_id": first.attrs["task.id"], "task.root_id": first.attrs["task.id"]},
+        {"task.parent_id": second.attrs["task.id"], "task.root_id": first.attrs["task.id"]},
+    ]
+
+    # Each step is sent from inside the run before it: its trace is the one that enqueued it.
+    assert [step.links for step in (first, second, third)] == [
+        [Link(kind="enqueued_by", trace_id=request.id, span_id=sent.id)],
+        [Link(kind="enqueued_by", trace_id=first.id, span_id=enqueues(first)[0].id)],
+        [Link(kind="enqueued_by", trace_id=second.id, span_id=enqueues(second)[0].id)],
+    ]
+
+    assert [step.attrs["task.trigger"] for step in (first, second, third)] == ["request", "task", "task"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_group_and_a_chord_share_their_group_id(traces: list[Trace], users: list[User]) -> None:
+    with start_trace("http", "POST /reports/"):
+        both = group(jobs.count_users.si("g1"), jobs.count_users.si("g2")).apply_async()
+        summary = chord([jobs.count_users.si("h1"), jobs.count_users.si("h2")], jobs.summarize.s()).apply_async()
+    run_all(both, summary)
+    runs = {str(trace.attrs["task.args"]): trace for trace in by_kind(traces, "task")}
+    (callback,) = [trace for trace in by_kind(traces, "task") if trace.name == "tests.project.jobs.summarize"]
+    header = {runs["('h1',)"].attrs["task.id"], runs["('h2',)"].attrs["task.id"]}
+
+    assert workflow(runs["('g1',)"]) == {"task.group_id": IsStr(min_length=1)}
+    assert workflow(runs["('g2',)"]) == {"task.group_id": runs["('g1',)"].attrs["task.group_id"]}
+    assert workflow(runs["('h2',)"]) == {"task.group_id": runs["('h1',)"].attrs["task.group_id"]}
+
+    # The chord's callback is sent by the header task that finished last, from inside its run.
+    assert callback.attrs["task.parent_id"] in header
+    assert workflow(callback) == {
+        "task.parent_id": callback.attrs["task.parent_id"],
+        "task.root_id": callback.attrs["task.parent_id"],
+        "task.group_id": runs["('h1',)"].attrs["task.group_id"],
+    }
+    assert [link.trace_id for link in callback.links] == [
+        trace.id for trace in by_kind(traces, "task") if trace.attrs["task.id"] == callback.attrs["task.parent_id"]
+    ]
+
+    assert callback.attrs["task.result"] == "'h1: 5, h2: 5'"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_link_callback_and_a_task_sent_from_a_task_follow_it(traces: list[Trace], users: list[User]) -> None:
+    linked = jobs.count_users.apply_async(("first",), link=jobs.count_users.si("then"))
+    fanned = jobs.fan_out.delay()
+    with start_worker(jobs.app, pool="solo", perform_ping_check=False, shutdown_timeout=10):
+        jobs.app.AsyncResult(fanned.get(timeout=10)).get(timeout=10)
+        linked.get(timeout=10)
+        deadline = time.monotonic() + 10
+        while len(by_kind(traces, "task")) < 4 and time.monotonic() < deadline:
+            time.sleep(0.02)
+    runs = {str(trace.attrs["task.args"]): trace for trace in by_kind(traces, "task")}
+    parent = runs["()"]
+
+    assert workflow(runs["['then']"]) == {
+        "task.parent_id": linked.id,
+        "task.root_id": linked.id,
+    }
+    assert workflow(runs["('inner',)"]) == {"task.parent_id": parent.attrs["task.id"], "task.root_id": fanned.id}
+
+    assert runs["('inner',)"].links == [Link(kind="enqueued_by", trace_id=parent.id, span_id=enqueues(parent)[0].id)]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_delayed_task_says_when_it_was_due_and_its_priority(traces: list[Trace], users: list[User]) -> None:
+    due = datetime.now(UTC) + timedelta(milliseconds=200)
+    with start_trace("http", "POST /reports/") as request:
+        result = jobs.count_users.apply_async(("later",), eta=due, priority=3)
+    run_all(result)
+    (task,) = by_kind(traces, "task")
+    (enqueue,) = enqueues(request)
+
+    assert enqueue.attrs == {
+        "task.system": "celery",
+        "task.name": "tests.project.jobs.count_users",
+        "task.id": result.id,
+        "task.queue": "celery",
+        "task.eta": due.isoformat(),
+        "task.retries": 0,
+        "task.priority": 3,
+        "code.origin": IsStr,
+        "messaging.system": "memory",
+    }
+    assert task_attrs(task) == IsPartialDict({"task.eta": due.isoformat(), "task.priority": 3, "task.state": "SUCCESS"})
+
+
+@pytest.mark.django_db
+def test_a_task_stopped_by_its_soft_time_limit_says_so(traces: list[Trace]) -> None:
+    jobs.overruns.apply()
+    (task,) = traces
+
+    assert (task.status, task.attrs["task.state"], task.attrs["task.timeout"]) == ("error", "FAILURE", 2)
+    assert [(error.type, error.handled) for error in task.errors] == [
+        ("billiard.exceptions.SoftTimeLimitExceeded", False)
+    ]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_task_stopped_by_its_time_limit_finishes_failed(recorder: Recorder) -> None:
+    result = jobs.overruns.delay()
+    run_all(result)
+    (task,) = by_kind(recorder.traces, "task")
+
+    assert task_attrs(task) == IsPartialDict({"task.state": "FAILURE", "task.timeout": 2})
+    assert without_heartbeats(recorder.events)[-1] == {
+        "event": "finished",
+        "system": "celery",
+        "id": result.id,
+        "time": IsPositiveInt,
+        "worker": IsStr,
+        "state": "FAILURE",
+    }
+
+
+def test_a_task_killed_by_its_hard_time_limit_still_has_its_trace(recorder: Recorder) -> None:
+    # What the worker's main process holds of a task its pool process runs, as Celery's own tests build it.
+    message = TaskMessage(
+        jobs.waits.name,
+        args=(),
+        kwargs={},
+        argsrepr="()",
+        kwargsrepr="{}",
+        timelimit=(5, None),
+        tracepanel_trigger="request",
+        tracepanel_parent="01TRACE:01SPAN",
+    )
+    message.delivery_info = {"exchange": "", "routing_key": "celery", "priority": 0, "redelivered": False}
+    request = Request(message, app=jobs.app, task=jobs.waits, hostname="celery@test")
+
+    request.on_timeout(soft=False, timeout=5.0)
+    (task,) = recorder.traces
+
+    assert task_attrs(task) == {
+        "task.system": "celery",
+        "task.name": "tests.project.jobs.waits",
+        "task.id": request.id,
+        "task.queue": "celery",
+        "task.worker": "celery@test",
+        "task.retries": 0,
+        "task.eager": False,
+        "task.trigger": "request",
+        "task.args": "()",
+        "task.kwargs": "{}",
+        "task.state": "FAILURE",
+        "task.timeout": 5.0,
+    }
+    assert (task.status, [(error.type, error.handled) for error in task.errors]) == (
+        "error",
+        [("billiard.exceptions.TimeLimitExceeded", False)],
+    )
+    assert task.links == [Link(kind="enqueued_by", trace_id="01TRACE", span_id="01SPAN")]
+
+    assert recorder.events == [
+        {
+            "event": "finished",
+            "system": "celery",
+            "id": request.id,
+            "time": IsPositiveInt,
+            "worker": "celery@test",
+            "state": "FAILURE",
+        }
+    ]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_console_shows_a_chains_steps_as_related(store: AgentStore, users: list[User]) -> None:
+    writer = store.writer()
+    set_writer(writer)
+    try:
+        result = chain(jobs.count_users.si("a"), jobs.count_users.si("b")).apply_async()
+        run_all(result)
+        writer.flush()
+    finally:
+        set_writer(None)
+    (runs, _) = store.search_traces("task:tests.project.jobs.count_users")
+    first, second = sorted(runs, key=lambda run: run["start"])
+
+    assert store.related(str(first["id"]))["enqueued"] == [IsPartialDict(id=second["id"])]
+    assert store.related(str(second["id"]))["enqueued_by"] == IsPartialDict(id=first["id"])

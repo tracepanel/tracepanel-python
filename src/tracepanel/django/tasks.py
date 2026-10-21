@@ -11,6 +11,10 @@ A task's trace reaches the agent when it ends. Until then task events say where 
 trace). A worker process sends a `heartbeat` with the tasks it runs, from its first task on, so a task whose worker
 was killed leaves the console's Live list. The ImmediateBackend runs a task inside `enqueue()` and the DummyBackend
 never runs one: neither sends any.
+
+A run says the worker that ran it (`task.worker`, the backend's worker id), when it was due (`task.eta`, from
+`run_after`) and its priority. Django Tasks carry nothing else to the worker, and have no time limit: a task enqueued
+from inside another's run knows that run (`task.parent_id`, `task.root_id`) only when it runs inline.
 """
 
 import functools
@@ -23,7 +27,16 @@ from tracepanel.core.context import current_trace, start_span, start_trace
 from tracepanel.core.frames import origin
 from tracepanel.core.model import Attrs, Link
 from tracepanel.core.patching import patch, patched
-from tracepanel.integrations._tasks import Heartbeat, TaskRun, arguments, task_event, task_repr, trigger
+from tracepanel.integrations._tasks import (
+    Heartbeat,
+    TaskRun,
+    arguments,
+    eta,
+    sent_from,
+    task_event,
+    task_repr,
+    trigger,
+)
 from tracepanel.storage import agent
 from tracepanel.storage.transport import complete, role
 
@@ -79,8 +92,13 @@ def on_enqueued(sender: object, task_result: Any = None, **kwargs: object) -> No
     )
 
 
+def _worker(task_result: Any) -> str:  # noqa: ANN401 (TaskResult)
+    """The worker running this attempt: the backend adds its id to the result's as the attempt starts."""
+    return str(task_result.worker_ids[-1]) if task_result.worker_ids else ""
+
+
 def _started(task_result: Any) -> None:  # noqa: ANN401 (TaskResult)
-    worker = str(task_result.worker_ids[-1]) if task_result.worker_ids else ""
+    worker = _worker(task_result)
     _heart.start(worker)
     task_event(
         "started",
@@ -104,6 +122,9 @@ def _enqueue_attrs(task: Any) -> Attrs:  # noqa: ANN401 (django.tasks.Task)
         "task.backend": task.backend,
         "code.origin": origin(),
     }
+    due = eta(task.run_after)
+    if due:
+        attrs["task.eta"] = due
     if kind not in NO_QUEUE:
         attrs["messaging.system"] = BACKENDS.get(kind, kind.lower())
     return attrs
@@ -171,11 +192,19 @@ def on_started(sender: object, task_result: Any = None, **kwargs: object) -> Non
         "task.retries": max(task_result.attempts - 1, 0),
         "task.eager": inline is not None,
         "task.queue_wait": _waited(task_result),
+        "task.priority": task.priority,
     }
+    due = eta(task.run_after)
+    if due:
+        attrs["task.eta"] = due
     if inline is not None:
         attrs["task.trigger"] = trigger(caller)
         # Runs in the caller's process: web or command, not a worker.
         attrs["service.role"] = role(caller) if caller is not None else "worker"
+        # Enqueued from inside another task's run: that run is its parent.
+        attrs.update(sent_from(caller, str(task_result.id)).attrs(str(task_result.id)))
+    else:
+        attrs["task.worker"] = _worker(task_result) or None
     if conf.get_config().capture_task_args:
         # As its events show them: a tuple and a dict, whatever the backend stored.
         attrs.update(arguments(task_result.args, task_result.kwargs).attrs())
@@ -210,7 +239,7 @@ def on_finished(sender: object, task_result: Any = None, **kwargs: object) -> No
     run.context.__exit__(None, None, None)
     complete(trace)
     if _in_flight(task_result):
-        worker = str(task_result.worker_ids[-1]) if task_result.worker_ids else None
+        worker = _worker(task_result) or None
         task_event("finished", SYSTEM, str(task_result.id), worker=worker, state=trace.attrs["task.state"])
 
 

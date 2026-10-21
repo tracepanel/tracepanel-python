@@ -9,6 +9,11 @@ While a task is in flight, before its trace exists, task events tell the agent w
 `retried`, `finished`, and a worker's `heartbeat`. The console lists the tasks queued, running and waiting to be
 retried from them (the Tasks page's Live). Any queue sends the same events; `system` says which one. A task run
 eagerly, inside its caller, sends none: it is never in flight apart from it.
+
+Every queue names the same things alike: `task.worker` (the worker that ran it), `task.eta` (when it was due to run,
+ISO 8601), `task.priority`, `task.timeout` (the time limit in seconds, on a run that hit it) and the workflow it
+belongs to: `task.parent_id` (the task it follows: the one whose run sent it, or the one it waits for),
+`task.root_id` (the first task of the workflow) and `task.group_id` (the group it runs in).
 """
 
 import contextlib
@@ -17,10 +22,11 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from tracepanel.core.context import now_us
 from tracepanel.core.frames import safe_repr
-from tracepanel.core.model import Trace
+from tracepanel.core.model import Attrs, Trace
 from tracepanel.storage.transport import send_event
 
 MAX_REPR = 2000
@@ -97,6 +103,43 @@ def _cut(text: str, limit: int) -> str:
 
 def trigger(caller: Trace | None) -> str:
     return TRIGGERS.get(caller.kind, "other") if caller is not None else "other"
+
+
+def eta(at: object) -> str | None:
+    """When a task is due, as `task.eta`: ISO 8601, from a datetime (naive: UTC), epoch milliseconds or text."""
+    if isinstance(at, datetime):
+        return (at if at.tzinfo else at.replace(tzinfo=UTC)).isoformat()
+    if isinstance(at, (int, float)) and not isinstance(at, bool) and at > 0:
+        return datetime.fromtimestamp(at / 1000, tz=UTC).isoformat()
+    return at if isinstance(at, str) and at else None
+
+
+@dataclass(frozen=True, slots=True)
+class Workflow:
+    """Where a task stands among others: the task it follows, the workflow's first task, the group it runs in."""
+
+    parent_id: str | None = None
+    root_id: str | None = None
+    group_id: str | None = None
+
+    def attrs(self, task_id: str) -> Attrs:
+        """The run's `task.parent_id`, `task.root_id` and `task.group_id`, those it has: a task is not its own root."""
+        known = {"task.parent_id": self.parent_id, "task.root_id": self.root_id, "task.group_id": self.group_id}
+        return {key: value for key, value in known.items() if value and value != task_id}
+
+
+def sent_from(trace: Trace | None, task_id: str = "") -> Workflow:
+    """The workflow of a task sent from inside a task's run: that run's task is its parent, the run's root its root.
+
+    Not when the run sends its own task again (a retry): the task keeps the workflow it had.
+    """
+    if trace is None or trace.kind != "task":
+        return Workflow()
+    parent = str(trace.attrs.get("task.id") or "")
+    if not parent or parent == task_id:
+        return Workflow()
+    root = trace.attrs.get("task.root_id")
+    return Workflow(parent_id=parent, root_id=str(root) if root else parent)
 
 
 def task_event(event: str, system: str, task_id: str, **fields: object) -> None:

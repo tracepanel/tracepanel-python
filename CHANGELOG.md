@@ -4,6 +4,30 @@
 
 ### Added
 
+- Task workflows link up across Celery, RQ, Dramatiq and Django Tasks. A
+  run records the task it follows (`task.parent_id`), the first task of its
+  workflow (`task.root_id`) and its group (`task.group_id`): Celery's chain,
+  group and chord ids, RQ's `depends_on` (every id in `task.depends_on`) and
+  Groups, Dramatiq's pipelines and groups, and any task sent from inside
+  another's run. A step sent from inside the run before it (a Celery chain or
+  `link`, a chord's callback, a Dramatiq pipeline or callback, a job enqueued
+  by a job) links to that run, so the console lists the steps as related.
+- RQ's `on_success`, `on_failure` and `on_stopped` callbacks run as traces of
+  their own, linked to their job's.
+- A run stopped by its time limit says the limit in `task.timeout` (seconds):
+  Celery's soft limit (SoftTimeLimitExceeded), RQ's `job_timeout`
+  (JobTimeoutException) and Dramatiq's TimeLimit (TimeLimitExceeded). Celery's
+  hard limit kills the pool process before the run can say anything: the
+  worker's main process now writes its trace, failed with TimeLimitExceeded,
+  and tells the Tasks page's Live that it finished.
+- RQ, Dramatiq and Django Tasks traces name their worker (`task.worker`), as
+  Celery's do: RQ's worker name, Dramatiq's worker process (the name its task
+  events give) and the Django Tasks backend's worker id.
+- Every queue says when a delayed task was due (`task.eta`, ISO 8601) and its
+  priority (`task.priority`), on the run's trace as well as on the enqueue:
+  Celery's eta or countdown and message priority, RQ's `enqueue_at` and
+  `enqueue_in`, Dramatiq's delay and actor priority, Django Tasks'
+  `run_after` and priority.
 - The app's settings and versions reach the console, for its App tab (needs
   an agent that serves `api/app`). The hello to the agent carries them, once
   per process: Django's UPPERCASE settings and Flask's `app.config`, each
@@ -35,6 +59,18 @@
 - Settings and a template's context show their strings in double quotes,
   `"django.db.backends.postgresql"`, as one writes them, still Python a
   reader can paste.
+
+### Fixed
+
+- RQ jobs scheduled with `enqueue_at` or `enqueue_in`, or enqueued in a batch
+  with `enqueue_many` (and Groups), have their enqueue span, their link to it
+  and their `enqueued` event. Only `enqueue` had them.
+- A delayed Dramatiq message keeps how its send was triggered. Moved to its
+  queue when due, it said `other`. Its `task.eta` is a time, like Celery's,
+  not `+500 ms`.
+- A Dramatiq message retried while its next attempt already ran in another
+  worker thread no longer says `finished` for the attempt that failed. The
+  Tasks page's Live dropped the running attempt.
 
 ## 0.4.1 (2026-10-21)
 
