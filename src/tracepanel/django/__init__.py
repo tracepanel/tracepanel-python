@@ -61,6 +61,7 @@ def install() -> None:
         return
     console.install()
     from tracepanel.django import (  # noqa: PLC0415 (collectors patch Django: import them only when used)
+        appinfo,
         auth,
         cache,
         commands,
@@ -77,6 +78,7 @@ def install() -> None:
     if MIDDLEWARE not in settings.MIDDLEWARE:
         settings.MIDDLEWARE = [MIDDLEWARE, *settings.MIDDLEWARE]
     sync_to_async.install()
+    appinfo.install()
     sql.install()
     transactions.install()
     cache.install()

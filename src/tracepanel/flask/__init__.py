@@ -10,14 +10,15 @@ and puts the trace's headers on Werkzeug's debugger page. The framework-free int
 render a `template` span), SQLAlchemy (Flask-SQLAlchemy too), Celery, logging.
 Settings come from `app.config["TRACEPANEL"]` (the same names as Django's TRACEPANEL dict) and install()'s keyword
 arguments; TRACEPANEL_* variables override them. The session is recorded as the view left it, and Flask-Login's user
-when it loaded one; there is no user switching: Flask has no user model of its own.
+when it loaded one; app.config goes to the console's App tab, masked. There is no user switching: Flask has no user
+model of its own.
 """
 
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, Unpack, cast
 
 from tracepanel import _setup
-from tracepanel.core import conf, errors
+from tracepanel.core import appinfo, conf, errors
 from tracepanel.core import request as details
 from tracepanel.core.conf import Settings
 from tracepanel.core.context import current_trace, start_span
@@ -143,4 +144,6 @@ def install(app: "Flask", **settings: Unpack[Settings]) -> None:
     app.dispatch_request = _dispatch(app)  # type: ignore[method-assign]
     got_request_exception.connect(_on_exception, app, weak=False)
     _debugger()
+    # The console's App tab: app.config's UPPERCASE keys, masked (TRACEPANEL's own among them).
+    appinfo.use_settings(lambda: dict(app.config))
     _setup.started("Flask")

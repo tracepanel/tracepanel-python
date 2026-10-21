@@ -126,6 +126,8 @@ class Trace:
     issues: list[Issue] = field(default_factory=list)
     # Where its time went in code, when it was profiled (core.profile builds it, ready for JSON).
     profile: dict[str, object] | None = None
+    # How many renders of each template got their context (core.values.context_wanted): not sent, a budget.
+    contexts: dict[str, int] = field(default_factory=dict, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, object]:
         """The trace as JSON-ready dicts, without copying values (it is serialized right away, never mutated)."""

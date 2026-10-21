@@ -1,9 +1,10 @@
 import asyncio
 import time
 from collections.abc import Generator
+from importlib import metadata
 
 import pytest
-from dirty_equals import IsPartialDict, IsStr
+from dirty_equals import IsList, IsPartialDict, IsStr
 
 flask = pytest.importorskip("flask")
 flask_sqlalchemy = pytest.importorskip("flask_sqlalchemy")
@@ -23,7 +24,7 @@ import tracepanel.flask  # noqa: E402
 import tracepanel.wsgi  # noqa: E402
 from tests.agentstore import AgentStore, issues  # noqa: E402
 from tests.profiles import share  # noqa: E402
-from tracepanel.core import conf  # noqa: E402
+from tracepanel.core import appinfo, conf  # noqa: E402
 from tracepanel.core.model import Trace  # noqa: E402
 
 
@@ -248,7 +249,7 @@ def test_templates_are_spans(client: FlaskClient, traces: list[Trace]) -> None:
     (template,) = [span for span in trace.spans if span.kind == "template"]
     in_template = [span.name for span in trace.spans if span.kind == "sql" and span.parent_id == template.id]
 
-    assert (template.name, template.attrs) == ("<string template>", {"template.name": "<string template>"})
+    assert (template.name, template.attrs["template.name"]) == ("<string template>", "<string template>")
     # The session's transaction, opened by the view's first query, is still open while the template renders.
     assert (template.parent_id, transaction.parent_id) == (transaction.id, view.id)
     assert in_template == ["SELECT team"] * 5
@@ -276,3 +277,46 @@ def test_a_form_the_view_read_is_recorded_masked(client: FlaskClient, traces: li
         trace.attrs["url.query"],
         trace.attrs["http.request.body"],
     ) == ("r-1", "next=/home", "email=ann@example.com&password=********")
+
+
+def test_a_template_keeps_the_context_flask_gave_it(client: FlaskClient, traces: list[Trace]) -> None:
+    client.get("/rendered")
+    (trace,) = traces
+
+    (template,) = [span for span in trace.spans if span.kind == "template"]
+
+    assert template.attrs == {
+        "template.name": "<string template>",
+        # Flask's context processor adds g and the request; config is a global of the environment's, not context.
+        "template.context.names": ["players", "g", "request"],
+        "template.context.values": [
+            # Flask-SQLAlchemy's repr: no attribute loaded for it (each player's team loads in the template).
+            "[<Player 1>, <Player 2>, <Player 3>, <Player 4>, <Player 5>]",
+            "<flask.g of 'tests.flask.test_flask'>",
+            "<Request 'http://localhost/rendered' [GET]>",
+        ],
+    }
+
+
+def test_the_app_tab_shows_app_config_masked_and_flasks_version(app: Flask) -> None:
+    app.config["MAIL_PASSWORD"] = "pw"
+    app.config["REDIS_URL"] = "redis://:pw@cache:6379/0"
+
+    described = appinfo.describe(conf.get_config())
+
+    assert described["settings"] == IsPartialDict(
+        {
+            "DEBUG": "True",
+            "SECRET_KEY": "********",
+            "MAIL_PASSWORD": "********",
+            "REDIS_URL": "'redis://********@cache:6379/0'",
+            "SQLALCHEMY_DATABASE_URI": "'sqlite://'",
+            "PROPAGATE_EXCEPTIONS": "False",
+        }
+    )
+
+    assert described["versions"] == IsList(
+        IsPartialDict({"kind": "runtime"}),
+        {"name": "Flask", "version": metadata.version("flask"), "kind": "framework"},
+        length=...,
+    )

@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- The app's settings and versions reach the console, for its App tab (needs
+  an agent that serves `api/app`). The hello to the agent carries them, once
+  per process: Django's UPPERCASE settings and Flask's `app.config`, each
+  value as `repr()` shows it, cut long. A setting whose name holds a secret
+  (`SECRET_KEY`, `*PASSWORD*`, `*TOKEN*`, `*KEY*`, `*SIGNATURE*`) is masked
+  whole, and so is such a key inside one: the `PASSWORD` in `DATABASES`, a
+  password in a cache's `OPTIONS`. The credentials in a URL are masked
+  whatever its name: a Sentry DSN reads
+  `https://********@o1.ingest.sentry.io/1`.
+  `PASSWORD_HASHERS`, `AUTH_PASSWORD_VALIDATORS` and the like stay readable.
+  The versions are Python's, the framework's, and those of the packages that
+  matter that are installed: the database drivers, the ORM, the task queues,
+  the servers, tracepanel itself, and for Django the packages its
+  `INSTALLED_APPS` come from. FastAPI, Starlette and Falcon apps send the
+  versions only. `capture_settings` turns the settings off.
+- A template span keeps the context the template got, as Django's template
+  debug panels show it: its names in order, each value as an error's local
+  variables show theirs (`repr()`, cut, under a sensitive name masked, the
+  credentials in a URL too), 40 names at most (`template.context.*`). Django
+  templates have the context processors' entries (`csrf_token` masked), an
+  included template its own context, and Django's own `block` and `forloop`
+  are left out. Jinja templates have what `render()` got, in Flask,
+  Starlette, FastAPI and Django's Jinja2 backend alike. Showing a value never
+  runs a query: a QuerySet shows its model, and its row count only once it
+  ran, a lazy object stays lazy, and a value whose `repr()` would query reads
+  as not shown. A template included in a loop keeps the context of its first
+  3 renders, a trace 100 in all. They stay on this machine.
+  `capture_template_context` turns them off.
+
 ## 0.4.1 (2026-10-21)
 
 ### Fixed
