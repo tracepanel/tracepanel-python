@@ -9,7 +9,6 @@ logging_name="replica")`), else the database's name, made unique with the host (
 already has it. EXPLAIN runs on the engine of that alias.
 """
 
-import threading
 import time
 import weakref
 from collections.abc import Mapping, Sequence
@@ -17,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from tracepanel.core import explain as plans
-from tracepanel.core import sql
+from tracepanel.core import forks, sql
 from tracepanel.core.context import OpenSpan, current_span, current_trace, now_us, open_span
 from tracepanel.core.frames import origin
 from tracepanel.core.model import Attrs, Scalar, Span, Trace
@@ -43,7 +42,7 @@ def _database(connection: Any) -> Attrs:  # noqa: ANN401 (sqlalchemy.engine.Conn
 # Engines by the db.alias their statements carry (EXPLAIN runs on the one a query came from), and back.
 _engines: "weakref.WeakValueDictionary[str, Any]" = weakref.WeakValueDictionary()
 _aliases: "weakref.WeakKeyDictionary[Any, str]" = weakref.WeakKeyDictionary()
-_lock = threading.Lock()
+_lock = forks.lock()
 
 
 def engine_alias(engine: Any) -> str:  # noqa: ANN401 (sqlalchemy.engine.Engine)

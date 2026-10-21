@@ -22,7 +22,7 @@ from http.cookies import CookieError, SimpleCookie
 from types import CodeType, FrameType
 from typing import ParamSpec, TypeVar
 
-from tracepanel.core import conf
+from tracepanel.core import conf, forks
 from tracepanel.core.frames import is_in_app, library_path, relative
 
 HEADER = "x-tracepanel-profile"
@@ -64,7 +64,7 @@ class Sampler:
     """The thread that samples, and which thread runs which profiled trace."""
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        self._lock = forks.lock()
         self._threads: dict[int, list[Recording]] = {}
         self._thread: threading.Thread | None = None
         # The interpreter's GIL switch interval before the first profiled trace, put back after the last one.

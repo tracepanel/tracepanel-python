@@ -3,14 +3,13 @@
 import functools
 import inspect
 import sys
-import threading
 import time
 from collections.abc import Awaitable, Callable, Coroutine, Generator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from tracepanel.core import explain as plans
-from tracepanel.core import sql
+from tracepanel.core import forks, sql
 from tracepanel.core.callers import Callers
 from tracepanel.core.context import current_trace, now_us
 from tracepanel.core.model import Attrs, Scalar, Span
@@ -321,7 +320,7 @@ class Where:
 
 # Explainers by db.alias: the last connection seen under each alias says how to reach its database.
 _explainers: dict[str, tuple[str, plans.Execute | None]] = {}
-_lock = threading.Lock()
+_lock = forks.lock()
 
 
 def attrs(where: Where) -> Attrs:

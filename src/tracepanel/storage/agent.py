@@ -12,6 +12,7 @@ by `{"ok": true}` (or a refusal with its reason); then frames, a 4-byte big-endi
 `Trace.to_dict()`, or an object of task events, `{"tasks": [...]}` (an agent from before ignores it).
 """
 
+import contextlib
 import json
 import os
 import platform
@@ -20,14 +21,13 @@ import socket
 import struct
 import subprocess
 import sys
-import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 
 from tracepanel._agent import AGENT, find_agent_bin
 from tracepanel._compat import override
-from tracepanel.core import conf
+from tracepanel.core import conf, forks
 from tracepanel.core.model import Trace
 from tracepanel.storage.transport import BatchWriter, Event
 
@@ -129,7 +129,7 @@ def unavailable(config: conf.Config) -> str:
     return f"the agent isn't running (see {store_dir(config) / LOG_FILE}): traces aren't kept until it is."
 
 
-_start_lock = threading.Lock()
+_start_lock = forks.lock()
 _start_after = 0.0
 
 
@@ -291,14 +291,20 @@ class AgentWriter(BatchWriter):
         self._sock: socket.socket | None = None
         self._retry_at = 0.0
         self._warned = False
-        # The writer thread sends; a console asking what the app offers connects first (connected()).
-        self._lock = threading.Lock()
+        # The writer thread sends; a console asking what the app offers connects first (connected()). Free in a forked
+        # child even if the parent's writer held it as the process forked (sending, starting the agent).
+        self._lock = forks.lock()
         super().__init__()
 
     @override
     def _start(self) -> None:
-        # After a fork the child has its own connection to make: the parent's socket is the parent's.
-        self._sock = None
+        # After a fork the child makes its own connection, with its own hello: the parent's socket is the parent's.
+        # The child's copy of it is closed (the parent's connection stays open), so no frame of the child's can go
+        # into the parent's stream, between two of its frames.
+        inherited, self._sock = getattr(self, "_sock", None), None
+        if inherited is not None:
+            with contextlib.suppress(OSError):
+                inherited.close()
         self._retry_at = 0.0
         super()._start()
 

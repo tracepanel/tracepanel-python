@@ -6,19 +6,19 @@ So do task events (send_event): a task's steps while it is in flight, before its
 
 import atexit
 import contextlib
-import os
 import queue
 import threading
 import time
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from tracepanel.core import conf, errors, runtime
+from tracepanel.core import conf, errors, forks, runtime
 from tracepanel.core.model import Trace
 
 QUEUE_SIZE = 1000
 BATCH_SIZE = 50
-# After the first trace, how long the writer waits for more before writing: fewer commits under steady traffic.
+# After the first trace, how long the writer waits for more before writing: fewer commits under steady traffic. A task
+# event doesn't wait: a task shorter than the wait would be started and finished at once, never seen running.
 BATCH_WAIT_S = 0.05
 
 
@@ -41,7 +41,8 @@ class BatchWriter:
         self.dropped = 0
         self._start()
         atexit.register(self.flush)
-        os.register_at_fork(after_in_child=self._start)
+        # A forked child (a work horse, a pool's process) starts with a queue and a thread of its own.
+        forks.after_fork(self._start)
 
     def _start(self) -> None:
         self._queue: queue.Queue[Trace | Event] = queue.Queue(QUEUE_SIZE)
@@ -66,12 +67,16 @@ class BatchWriter:
     def _run(self) -> None:
         while True:
             batch = [self._queue.get()]
-            deadline = time.monotonic() + BATCH_WAIT_S
+            # A task event goes at once, with whatever is queued already.
+            deadline = time.monotonic() + (BATCH_WAIT_S if isinstance(batch[0], Trace) else 0)
             while len(batch) < BATCH_SIZE:
                 try:
-                    batch.append(self._queue.get(timeout=max(deadline - time.monotonic(), 0)))
+                    item = self._queue.get(timeout=max(deadline - time.monotonic(), 0))
                 except queue.Empty:
                     break
+                batch.append(item)
+                if not isinstance(item, Trace):
+                    deadline = 0.0
             traces = [item for item in batch if isinstance(item, Trace)]
             events = [item for item in batch if not isinstance(item, Trace)]
             try:

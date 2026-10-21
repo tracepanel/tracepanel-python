@@ -16,12 +16,11 @@ Live list. A queue with `is_async=False` sends none: its jobs run inside the cal
 """
 
 import functools
-import threading
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
-from tracepanel.core import conf, errors, registry, services
+from tracepanel.core import conf, errors, forks, registry, services
 from tracepanel.core.context import adopt, current_span, current_trace, now_us, record_span, recorded, start_trace
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
@@ -38,7 +37,7 @@ TRIGGER = "tracepanel_trigger"
 MAX_RETRIES = "tracepanel_max_retries"
 # The jobs this process performs now, for its heartbeat.
 _running: set[str] = set()
-_lock = threading.Lock()
+_lock = forks.lock()
 
 
 def _running_ids() -> list[str]:
