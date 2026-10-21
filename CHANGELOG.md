@@ -1,15 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-10-21)
 
-### Changed
-
-- What the app offers the console is said once, in the hello to the agent:
-  its service, what its traces hold (`profile`, `request`) and what its
-  console answers (`explain`, Django's `users`). The console's
-  `api/capabilities` comes from the agent, which offers EXPLAIN and switching
-  users only through the app's console. The app's console no longer answers it
-  itself, and connects to the agent first, so the agent has heard the hello.
+Needs `tracepanel-agent` 0.4.0 (installed with it): an app says what it offers
+the console in its hello, and the agent answers `api/capabilities`.
 
 ### Added
 
@@ -70,6 +64,15 @@
   `profile_interval_ms` sets how often it samples (every millisecond by
   default). The console's
   capabilities say whether profiling is on.
+
+### Changed
+
+- What the app offers the console is said once, in the hello to the agent:
+  its service, what its traces hold (`profile`, `request`) and what its
+  console answers (`explain`, Django's `users`). The console's
+  `api/capabilities` comes from the agent, which offers EXPLAIN and switching
+  users only through the app's console. The app's console no longer answers it
+  itself, and connects to the agent first, so the agent has heard the hello.
 
 ### Fixed
 
