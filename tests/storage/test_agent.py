@@ -8,6 +8,7 @@ import json
 import platform
 import signal
 import socket
+import struct
 import subprocess
 import threading
 import time
@@ -21,12 +22,12 @@ from dirty_equals import IsList, IsPartialDict, IsPositiveInt, IsStr
 from django.contrib.auth.models import User
 from django.test import Client
 
-from tests.agentstore import AGENT_SCHEMAS, AgentStore
+from tests.agentstore import AGENT_SCHEMAS, AgentStore, newer
 from tracepanel.console import proxy
 from tracepanel.core import appinfo, conf, runtime
 from tracepanel.core.context import record_span, start_trace
 from tracepanel.core.model import Trace
-from tracepanel.storage import agent
+from tracepanel.storage import agent, transport
 from tracepanel.storage.transport import set_writer
 
 pytestmark = pytest.mark.django_db
@@ -303,11 +304,106 @@ def test_the_agent_serves_what_the_hello_said_of_the_app(store: AgentStore, djan
 
     answer = store.get("app", service="shop")
 
-    assert answer == {
-        "service": "shop",
-        "agent": IsStr(),
-        "connected": True,
-        "received": IsPositiveInt,
-        "settings": IsPartialDict({"DEBUG": "True", "SECRET_KEY": "********"}),
-        "versions": appinfo.describe(config)["versions"],
-    }
+    # No checks here (the tests add them where they test them): an agent that serves them has nulls.
+    assert answer == newer(
+        {
+            "service": "shop",
+            "agent": IsStr(),
+            "connected": True,
+            "received": IsPositiveInt,
+            "settings": IsPartialDict({"DEBUG": "True", "SECRET_KEY": "********"}),
+            "versions": appinfo.describe(config)["versions"],
+        },
+        answer,
+        {"checks": None, "migrations": None},
+    )
+
+
+FOUND: dict[str, object] = {
+    "checks": [
+        {
+            "id": "models.W042",
+            "level": "warning",
+            "message": "Auto-created primary key used",
+            "hint": None,
+            "object": "shop.Order",
+        }
+    ],
+    "migrations": {"unapplied": [{"app": "shop", "names": ["0002_order_note"]}], "changes": []},
+}
+
+
+def test_the_checks_run_off_the_connection_and_the_agent_connected_then_is_told(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Slow checks (a database that takes its time): the hello doesn't wait for them.
+    release = threading.Event()
+
+    def slow() -> dict[str, object]:
+        release.wait(5)
+        return FOUND
+
+    appinfo.add_checks(slow)
+    appinfo.add_checks(lambda: {"checks": 1 / 0})  # a check that fails says nothing
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    heard: list[object] = []
+
+    def agent_side() -> None:
+        connection, _ = listener.accept()
+        with connection:
+            reader = connection.makefile("rb")
+            heard.append(json.loads(reader.readline()))
+            connection.sendall(b'{"ok": true}\n')
+            release.set()
+            length = struct.unpack(">I", reader.read(4))[0]
+            heard.append(json.loads(reader.read(length)))
+
+    thread = threading.Thread(target=agent_side)
+    thread.start()
+    host, port = listener.getsockname()
+    writer = agent.AgentWriter(dataclasses.replace(conf.get_config(), agent=f"tcp:{host}:{port}", dir=str(tmp_path)))
+    monkeypatch.setattr(transport, "_writer", writer)
+
+    assert writer.connected()
+
+    thread.join(5)
+    listener.close()
+    hello, frame = heard
+
+    assert isinstance(hello, dict)
+    assert set(hello["app"]) == {"settings", "versions"}
+
+    assert frame == {"app": FOUND}
+
+    # A connection after it says them in its hello.
+    assert appinfo.describe(conf.get_config()) == IsPartialDict(FOUND)
+
+
+def test_the_agent_serves_what_the_checks_found(
+    store: AgentStore, django_app: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    schema = yaml.safe_load((AGENT_SCHEMAS / "openapi.yaml").read_text())["components"]["schemas"]["App"]
+    if "checks" not in schema["properties"]:
+        pytest.skip("the released agent doesn't keep an app's checks: a newer one does")
+    release = threading.Event()
+
+    def slow() -> dict[str, object]:
+        release.wait(5)
+        return FOUND
+
+    appinfo.add_checks(slow)
+    writer = agent.AgentWriter(dataclasses.replace(store.config(), service="shop"))
+    monkeypatch.setattr(transport, "_writer", writer)
+
+    assert writer.connected()
+
+    before = store.get("app", service="shop")
+    release.set()
+    deadline = time.monotonic() + 5
+    while (after := store.get("app", service="shop"))["checks"] is None and time.monotonic() < deadline:
+        time.sleep(0.02)
+
+    assert before == IsPartialDict({"checks": None, "migrations": None})
+    assert after == IsPartialDict({"connected": True, **FOUND})

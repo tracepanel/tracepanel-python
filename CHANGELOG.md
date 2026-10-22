@@ -53,6 +53,18 @@
   the servers, tracepanel itself, and for Django the packages its
   `INSTALLED_APPS` come from. FastAPI, Starlette and Falcon apps send the
   versions only. `capture_settings` turns the settings off.
+- What Django finds wrong with the app reaches the console's App tab too
+  (needs an agent that keeps an app's checks). Its system checks, as
+  `manage.py check` reports them, the deployment ones too when DEBUG is off:
+  each with its id, level, message, hint and object, the silenced ones and
+  those that query the database left out. The migrations not applied to the
+  default database yet, by app, as `runserver` warns of them. And the model
+  changes with no migration, as `makemigrations --check` finds them. They
+  are worked out once per server process, in a thread of their own, from the
+  first connection to the agent on: the hello carries them once known, and
+  the agent connected then is told in a frame. A database that doesn't
+  answer leaves the migrations applied unknown, and an in-memory one is left
+  alone. A management command other than a server doesn't run them.
 - A template span keeps the context the template got, as Django's template
   debug panels show it: its names in order, each value as an error's local
   variables show theirs (`repr()`, cut, under a sensitive name masked, the
