@@ -137,6 +137,39 @@ def test_a_cards_number_and_code_are_masked_in_a_setting_and_a_context() -> None
     }
 
 
+def test_a_cards_number_beside_its_other_fields_is_masked_in_a_setting_and_a_context() -> None:
+    source = {"number": "4242424242424242", "exp_month": 12, "exp_year": 2030, "cvc": "123"}
+
+    assert values.setting_repr("STRIPE_TEST_SOURCES", [source]) == (
+        '[{"cvc": ********, "exp_month": 12, "exp_year": 2030, "number": ********}]'
+    )
+
+    assert values.setting_repr("TEST_PAYMENT", {"number": "4242 4242 4242 4242", "amount": 100}) == (
+        '{"amount": 100, "number": ********}'
+    )
+
+    assert values.context_attrs(
+        {"source": source, "number": "1", "exp_year": 2030, "order": {"number": 17, "author": "ann"}}
+    ) == {
+        "template.context.names": ["source", "number", "exp_year", "order"],
+        "template.context.values": [
+            '{"cvc": ********, "exp_month": 12, "exp_year": 2030, "number": ********}',
+            MASK,
+            "2030",
+            '{"author": "ann", "number": 17}',
+        ],
+    }
+
+
+def test_an_authors_name_is_shown_in_a_context() -> None:
+    attrs = values.context_attrs({"author": "Ann", "authors": ["Ann", "Bob"], "book": {"author_id": 7}})
+
+    assert attrs == {
+        "template.context.names": ["author", "authors", "book"],
+        "template.context.values": ['"Ann"', '["Ann", "Bob"]', '{"author_id": 7}'],
+    }
+
+
 def test_a_context_keeps_its_names_in_order_with_the_locals_rules() -> None:
     attrs = values.context_attrs(
         {
