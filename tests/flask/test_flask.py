@@ -278,6 +278,11 @@ def test_a_form_the_view_read_is_recorded_masked(client: FlaskClient, traces: li
         trace.attrs["http.request.body"],
     ) == ("r-1", "next=/home", "email=ann@example.com&password=********")
 
+    assert {key: value for key, value in trace.attrs.items() if key.startswith("http.response.body")} == {
+        "http.response.body": '{"fields":2}',
+        "http.response.body.size": 18,
+    }
+
 
 def test_a_template_keeps_the_context_flask_gave_it(client: FlaskClient, traces: list[Trace]) -> None:
     client.get("/rendered")

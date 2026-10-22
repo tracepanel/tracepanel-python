@@ -273,21 +273,22 @@ class _BodyReader:
         self.chunks: list[bytes] = []
         self.size = 0
         self.complete = False
+        self.limit = details.max_body()
 
     async def receive(self) -> Message:
         message = await self.upstream()
         if message.get("type") == "http.request":
             chunk = message.get("body", b"")
             # Kept up to the limit (and a byte past it, to know it was cut), never the rest of an upload.
-            if self.size <= details.MAX_BODY:
-                self.chunks.append(chunk[: details.MAX_BODY + 1 - self.size])
+            if self.limit and self.size <= self.limit:
+                self.chunks.append(chunk[: self.limit + 1 - self.size])
             self.size += len(chunk)
             self.complete = not message.get("more_body")
         return message
 
     def attrs(self, content_type: str) -> dict[str, Any]:
         data = b"".join(self.chunks)
-        whole = self.complete and self.size <= details.MAX_BODY
+        whole = self.complete and self.size <= self.limit
         return details.body(content_type, data, complete=whole)
 
 
@@ -417,6 +418,12 @@ class _Responder:
         body = b"".join(self.body)
         self._htmx(body)
         trace, config = self.trace, self.config
+        if config.capture_request:
+            # The body as the app made it, before the widget's script goes in: a stream never gets here.
+            sent = _headers(start)
+            trace.attrs.update(
+                details.response_body(sent.get("content-type", ""), sent.get("content-encoding", ""), body)
+            )
         page = self._page(start)
         headers = [(key.decode("latin-1"), value.decode("latin-1")) for key, value in start.get("headers", [])]
         decorated = widget.decorate(trace, page, headers, body, config)

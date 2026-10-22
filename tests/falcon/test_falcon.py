@@ -95,6 +95,8 @@ def test_route_and_responder(client: falcon.testing.TestClient, traces: list[Tra
             "http.route": "/posts/{post_id:int}",
             "code.view": "tests.falcon.test_falcon.PostResource.on_get",
             "http.status_code": 200,
+            "http.response.body": '{"id":7}',
+            "http.response.body.size": 9,
         }
     )
 

@@ -17,6 +17,30 @@
   messages carry nothing extra, so the link to the enqueue waits in the
   instance's storage under `tracepanel:<task id>` until the task starts.
   `huey_enabled = false` turns it off.
+- Channels' background work is a task, `task.system` `channels`, on the
+  Tasks page and in its Live. A task is a message sent to a worker channel
+  (a channel name without `!`, the kind `runworker` listens on): the send is
+  a `task.enqueue` span, the worker's handling of it a `task` trace named
+  after the consumer's handler, with its module (`ThumbnailConsumer`'s
+  `thumbnails_generate` for type `thumbnails.generate`), and linked to the
+  send. The sender says `enqueued`, the worker `started` and `finished`, and a
+  `runworker` process sends heartbeats from its start, whatever the channel
+  layer. WebSocket and HTTP consumers serve requests, and group sends reach
+  them: neither is a task.
+- A response's body is recorded with its request's, as Django Silk shows
+  it: JSON and forms with their secrets masked as a request's are, and text,
+  in `http.response.body` with its size in bytes. Only a response sent whole
+  is read, never a stream (Django's StreamingHttpResponse, a streamed ASGI or
+  WSGI response). A page, its scripts and stylesheets, binary content and
+  compressed bodies are recorded by their size only. Both bodies are kept up
+  to `max_body_kb` (64 KiB, was 16 KiB for a request's), marked as cut past
+  it, and `capture_body = false` turns them off.
+- A payment card's number and security code are masked wherever secrets
+  are: names like `card_number`, `cardNumber`, `card[number]`, `card_no`,
+  `pan`, `cvc`, `cvv` and `cvn` in bodies, form fields, headers, settings, a
+  template's context and an error's local variables. In a body, a setting or
+  a template's context, `number` under a card (`card`, `creditCard`,
+  `payment_card`) is masked too.
 - A query a template made as it rendered (a lazy QuerySet its `{% for %}`
   reads, a related object it shows) has the template's line
   (`code.template_line`), Django's templates and Jinja's alike, and
@@ -24,6 +48,13 @@
   another names the base template for a query outside its own blocks. The
   console marks these queries and, with an agent that knows the line, an
   N+1 a template made names the template and its line in its hint.
+- Graphene: a request to graphene-django's GraphQLView is traced as its
+  GraphQL operation, as Strawberry's are. The trace is named after the
+  operation (`GraphQL query PostList`) and keeps its type, name, document and
+  error count. Its span holds `parse` and `validate`, and each of the
+  project's resolvers is a span of its own. Exceptions raised in resolvers are
+  the trace's errors. A batch view runs one operation span per entry. It needs
+  no GRAPHENE `MIDDLEWARE` entry, and `graphene_enabled = false` turns it off.
 - Task workflows link up across Celery, RQ, Dramatiq and Django Tasks. A
   run records the task it follows (`task.parent_id`), the first task of its
   workflow (`task.root_id`) and its group (`task.group_id`): Celery's chain,
@@ -166,6 +197,13 @@
   worker's main process writes it. A run cut short by a cold shutdown or
   `revoke(terminate=True)` reads REVOKED with Terminated, one whose pool
   process died fails with WorkerLostError. They read ok, or had no trace.
+- A Django project without `django.contrib.auth` or `contenttypes` in
+  INSTALLED_APPS no longer fails at startup. tracepanel imported auth's
+  models for user switching, and Django refused to load them. Without auth,
+  user switching is left out of the console and logouts are not recorded.
+  Requests are traced as usual.
+- A Channels Redis layer configured with `("host", port)` pairs names its
+  server on its spans. They said `localhost:6379`, whatever the host.
 
 ## 0.4.1 (2026-10-21)
 

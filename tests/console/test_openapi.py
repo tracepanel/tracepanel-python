@@ -51,8 +51,9 @@ def data(client: Client, users: list[User], store: AgentStore) -> Data:
     try:
         for path in ("/n-plus-one/", "/duplicates/", "/logs/", "/error/", "/welcome-email/", "/create-group/"):
             client.get(path)
-        if importlib.util.find_spec("strawberry"):
-            client.post("/graphql/", {"query": "query Team { users { username } }"}, content_type="application/json")
+        # Strawberry's view, or Graphene's in the environment that has Graphene instead.
+        graphql = "/graphql/" if importlib.util.find_spec("strawberry") else "/graphene/"
+        client.post(graphql, {"query": "query Team { users { username } }"}, content_type="application/json")
         writer.flush()
     finally:
         set_writer(None)

@@ -23,6 +23,8 @@ from tracepanel.core.frames import MASK
         "JWT_PRIVATE_PEM",
         "GOOGLE_CREDENTIALS",
         "password",
+        "TEST_CARD_NUMBER",
+        "STRIPE_TEST_CVC",
     ],
 )
 def test_a_setting_with_a_secret_name_is_masked_whole(name: str) -> None:
@@ -120,6 +122,19 @@ def test_settings_are_the_uppercase_names_sorted() -> None:
     shown = values.settings_reprs({"DEBUG": True, "lower": 1, "ALLOWED_HOSTS": ["*"], "SECRET_KEY": "s"})
 
     assert shown == {"ALLOWED_HOSTS": '["*"]', "DEBUG": "True", "SECRET_KEY": MASK}
+
+
+def test_a_cards_number_and_code_are_masked_in_a_setting_and_a_context() -> None:
+    card = {"number": "4242424242424242", "cvc": "123", "exp_year": 2030}
+
+    assert values.setting_repr("PAYMENT_DEFAULTS", {"card": card}) == (
+        '{"card": {"cvc": ********, "exp_year": 2030, "number": ********}}'
+    )
+
+    assert values.context_attrs({"card": card, "card_number": "4242"}) == {
+        "template.context.names": ["card", "card_number"],
+        "template.context.values": ['{"cvc": ********, "exp_year": 2030, "number": ********}', MASK],
+    }
 
 
 def test_a_context_keeps_its_names_in_order_with_the_locals_rules() -> None:

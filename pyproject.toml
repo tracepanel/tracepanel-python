@@ -132,6 +132,10 @@ drivers = [
 strawberry = [
     "strawberry-graphql>=0.332.0",
 ]
+# Graphene needs graphql-core < 3.3, Strawberry 3.3: each has an environment of its own (tool.uv's conflicts).
+graphene = [
+    "graphene-django>=3.2.3",
+]
 dramatiq = [
     "dramatiq>=2.2.1",
     "redis>=8.1.0",
@@ -181,6 +185,9 @@ faststream = [
 requires = ["uv_build>=0.12,<0.13"]
 build-backend = "uv_build"
 
+[tool.uv]
+conflicts = [[{ group = "strawberry" }, { group = "graphene" }]]
+
 [tool.uv.sources]
 # In development: built from the tracepanel repository checked out next to this one (Rust). `uv sync --no-sources` uses
 # the published agent instead.
@@ -208,7 +215,7 @@ ban-relative-imports = "all"
 
 [tool.ruff.lint.isort]
 # tracepanel.integrations.celery and friends are named after the libraries: those names stay third-party.
-known-third-party = ["celery", "channels", "faststream", "strawberry", "ninja", "rest_framework", "django", "fastapi", "flask", "falcon", "starlette", "sqlalchemy", "opentelemetry"]
+known-third-party = ["celery", "channels", "faststream", "strawberry", "graphene", "graphene_django", "ninja", "rest_framework", "django", "fastapi", "flask", "falcon", "starlette", "sqlalchemy", "opentelemetry"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -267,6 +274,8 @@ preset = "strict"
 python-version = "3.11"
 project-includes = ["src/tracepanel", "tests", "scripts"]
 search-path = ["src", "."]
+# Graphene can't share an environment with Strawberry (graphql-core < 3.3): the lint environment has Strawberry.
+ignore-missing-imports = ["graphene", "graphene.*", "graphene_django", "graphene_django.*"]
 
 # Django is the framework tracepanel is built for, but only tracepanel.django knows it: the core, the transport, the console
 # and the framework-free integrations stay neutral, so another framework could sit next to tracepanel.django.

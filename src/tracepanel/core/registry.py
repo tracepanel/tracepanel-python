@@ -113,6 +113,7 @@ INTEGRATIONS: tuple[Integration, ...] = (
     Integration("channels", "Channels", ("channels",), "tracepanel.django.channels", django_only=True),
     Integration("drf", "DRF", ("rest_framework",), "tracepanel.django.drf", django_only=True),
     Integration("ninja", "Django Ninja", ("ninja",), "tracepanel.django.ninja", django_only=True),
+    Integration("graphene", "Graphene", ("graphene_django",), "tracepanel.django.graphene", django_only=True),
 )
 BY_NAME = {integration.name: integration for integration in INTEGRATIONS}
 

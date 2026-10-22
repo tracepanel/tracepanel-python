@@ -69,6 +69,11 @@ class Config:
     # Keep a request's headers, query, body (what the app read), cookies and session (development only, masked; they
     # never leave this machine).
     capture_request: bool = True
+    # Keep the bodies of requests and of their responses with it: JSON and forms (masked) and text, a file upload by
+    # its name and size, never a stream; a response's pages, scripts and binary content by their size only.
+    capture_body: bool = True
+    # How much of a body is kept, in KiB: a longer one is cut there, marked as cut.
+    max_body_kb: int = 64
     # Send the app's settings (Django's, Flask's app.config) to the console, masked (development only; they never
     # leave this machine).
     capture_settings: bool = True
@@ -93,6 +98,8 @@ class Config:
     dramatiq_enabled: bool = True
     drf_enabled: bool = True
     faststream_enabled: bool = True
+    # graphene-django's GraphQLView.
+    graphene_enabled: bool = True
     # Outgoing HTTP calls: urllib3 (requests, boto3), httpx, aiohttp.
     http_clients_enabled: bool = True
     huey_enabled: bool = True
@@ -164,6 +171,8 @@ class Settings(TypedDict, total=False):
     user_switch: bool
     capture_task_args: bool
     capture_request: bool
+    capture_body: bool
+    max_body_kb: int
     capture_settings: bool
     capture_template_context: bool
     profile: bool
@@ -177,6 +186,7 @@ class Settings(TypedDict, total=False):
     dramatiq_enabled: bool
     drf_enabled: bool
     faststream_enabled: bool
+    graphene_enabled: bool
     http_clients_enabled: bool
     huey_enabled: bool
     jinja_enabled: bool
