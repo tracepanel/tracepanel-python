@@ -192,6 +192,12 @@
 
 ### Fixed
 
+- A SQL Server statement on `[dbo].[orders]` is named `SELECT dbo.orders`,
+  as the agent names one it gets over OpenTelemetry. It was `SELECT dbo`.
+  Every quoted name keeps its schema (`"SHOP"."ORDERS"` is `SHOP.ORDERS`), and
+  IN lists of `@P1`, `@name`, `:1`, `:name`, `?1` and `$1` placeholders
+  collapse like `%s`, `%(name)s` and `?`. EXPLAIN knows those placeholders and
+  reads none inside a `[name]`.
 - An app's processes that start the agent at the same moment, as django-q2's
   cluster does when it forks its workers, start one. Two could run on the
   store, and the processes on the first sent their traces and task events

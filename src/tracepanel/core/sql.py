@@ -25,10 +25,18 @@ T = TypeVar("T")
 Params = Sequence[object] | Mapping[str, object] | None
 
 _WHITESPACE = re.compile(r"\s+")
-# An IN list of placeholders: %s (Django, psycopg, PyMySQL), ? (sqlite3, pyodbc), %(name)s (SQLAlchemy on pymssql or
-# psycopg2, one name per value).
-_IN_LIST = re.compile(r"\bIN \((?:%s|\?|%\(\w+\)s)(?:, ?(?:%s|\?|%\(\w+\)s))*\)", re.IGNORECASE)
-_TABLE = re.compile(r'\b(?:FROM|INTO|UPDATE|JOIN)\s+[`"\[]?([\w.]+)', re.IGNORECASE)
+# A placeholder, as each driver writes it: %s and %(name)s (Django, psycopg, PyMySQL, SQLAlchemy on pymssql or
+# psycopg2), ? and ?1 (sqlite3, pyodbc, JDBC), $1 (PostgreSQL), @P1 and @name (SQL Server), :1 and :name (Oracle,
+# SQLAlchemy). The agent's rules, so a statement recorded here and one it maps from OpenTelemetry group alike.
+_PLACEHOLDER = r"(?:%s|%\([A-Za-z0-9_]+\)s|\?[0-9]*|\$[0-9]+|@[A-Za-z0-9_]+|:[A-Za-z0-9_]+)"
+_IN_LIST = re.compile(rf"\bIN \({_PLACEHOLDER}(?:, ?{_PLACEHOLDER})*\)", re.IGNORECASE)
+# The table a statement reads or writes, its schema too, each part bare or quoted: "standard SQL", `MySQL`,
+# [SQL Server] (`[dbo].[orders]`). The first part and the rest are apart, so a name of one part, the usual one, needs
+# no quotes dropped. The lookahead lets the search skip a word that can't start a keyword.
+_TABLE = re.compile(
+    r'\b(?=[FIJUfiju])(?:FROM|INTO|UPDATE|JOIN)\s+[`"\[]?(\w+)[`"\]]?((?:\.[`"\[]?\w+[`"\]]?)*)', re.IGNORECASE
+)
+_QUOTES = str.maketrans("", "", '`"[]')
 _COUNT = re.compile(r"^\s*SELECT\s+COUNT\(", re.IGNORECASE)
 
 
@@ -70,12 +78,16 @@ def _parsed(sql: str) -> tuple[str, str, str]:
 
 
 def span_name(sql: str) -> str:
+    """A statement's span name: its verb and its table, schema kept, quotes dropped (`SELECT dbo.orders`)."""
     words = sql.split(None, 1)
     verb = words[0].upper() if words else "SQL"
-    if _COUNT.match(sql):
+    if verb == "SELECT" and _COUNT.match(sql):
         verb = "SELECT COUNT"
     table = _TABLE.search(sql)
-    return f"{verb} {table.group(1)}" if table else verb
+    if table is None:
+        return verb
+    name, schema_and_rest = table.groups()
+    return f"{verb} {name}{schema_and_rest.translate(_QUOTES)}" if schema_and_rest else f"{verb} {name}"
 
 
 def params_hash(params: Params) -> str:
