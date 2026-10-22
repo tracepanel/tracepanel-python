@@ -13,7 +13,8 @@ send (with the enqueuing trace and span), `started` before it is processed, `fin
 Retries puts the message back, tracepanel sees the send in the thread still processing it and says `retried` (with the
 error) right then, before another thread can start the next attempt. A delayed message moved to its queue when due is
 not sent again. Each worker process says it is there when it boots and sends a `heartbeat` with the messages it
-processes, so a message whose process was killed leaves the console's Live list.
+processes, so a message whose process was killed leaves the console's Live list. A worker process that stops says
+so (`worker_stopped`) after its shutdown.
 
 A message's trace says the worker process that ran it (`task.worker`, the same name its events give), when a delayed
 message was due (`task.eta`) and its actor's priority. A message sent from inside another's run (the next step of a
@@ -345,6 +346,10 @@ class TracepanelHooks:
     def before_worker_shutdown(self, broker: Any, worker: Any) -> None:  # noqa: ANN401, ARG002
         """Write what is queued before the worker goes away."""
         get_writer().flush()
+
+    def after_worker_shutdown(self, broker: Any, worker: Any) -> None:  # noqa: ANN401, ARG002
+        """The worker process stopped, its messages processed or given back: the console drops it at once."""
+        _heart.stopped()
 
 
 def _identity(broker: Any, message: Any, name: str) -> Attrs:  # noqa: ANN401

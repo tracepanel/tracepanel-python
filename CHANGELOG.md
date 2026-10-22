@@ -195,6 +195,17 @@
 
 ### Fixed
 
+- A task worker that stops leaves the Tasks page's Now at once instead of
+  staying there as an idle worker. It says so in a `worker_stopped` event
+  as it stops cleanly: a Celery worker at `worker_shutdown`, an RQ worker as
+  it unregisters, a Dramatiq worker process after its shutdown, a Huey
+  process worker as it shuts down and thread workers as the consumer exits
+  (a SIGTERM'd `run_huey`), django-q2's cluster for a worker process it
+  replaced (recycled, stopped by its timeout, dead) and for each one as it
+  stops, Django Tasks' `db_worker` as it ends, and a Channels `runworker` at
+  Ctrl+C. A Celery worker's main process beats from its start, so an idle
+  worker stays listed, and `db_worker` says it is there as it starts. An
+  older agent keeps listing a stopped worker as before.
 - A Django Task run on the immediate backend inside a request or command
   records its spans under its own root. They had the request's enqueue span
   as their parent, a span of another trace. A run's trace ends inside the

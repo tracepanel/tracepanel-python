@@ -27,7 +27,8 @@ Arguments and results are kept for local debugging only (masked like locals) and
 A task's trace reaches the agent when its run ends. Until then task events say where it is: `enqueued` after the push
 (with the enqueuing trace and span), `started` and `finished` around the run. Each worker process says it is there as
 it spawns and sends a `heartbeat` with the task it runs, so a task whose worker was killed leaves the console's Live
-list.
+list. The cluster says when a worker process is gone (`worker_stopped`): one it replaced (recycled, stopped by its
+timeout, dead) and, as the cluster stops, each of its workers.
 """
 
 import functools
@@ -101,8 +102,9 @@ def _running() -> list[str]:
 _heart = Heartbeat(SYSTEM, _running)
 
 
-def _worker() -> str:
-    return f"django-q@{socket.gethostname()}:{os.getpid()}"
+def _worker(pid: int | None = None) -> str:
+    """A worker process, as its events name it: this one, or the cluster's worker of that pid."""
+    return f"django-q@{socket.gethostname()}:{pid or os.getpid()}"
 
 
 def _name(func: object) -> str:
@@ -504,6 +506,36 @@ def _call_hook(original: Any) -> Any:  # noqa: ANN401
     return call_hook
 
 
+# ---------- the cluster: workers that stop ----------
+
+
+def _wrap_reincarnate(original: Any) -> Any:  # noqa: ANN401
+    @functools.wraps(original)
+    def reincarnate(self: Any, process: Any) -> Any:  # noqa: ANN401 (django_q.cluster.Sentinel, a Process)
+        worker = process in self.pool
+        try:
+            return original(self, process)
+        finally:
+            # Replaced: recycled, stopped by its timeout, or dead. Its successor says it is there as it spawns.
+            if worker:
+                _heart.stopped(_worker(process.pid))
+
+    return reincarnate
+
+
+def _wrap_stop(original: Any) -> Any:  # noqa: ANN401
+    @functools.wraps(original)
+    def stop(self: Any) -> Any:  # noqa: ANN401 (django_q.cluster.Sentinel)
+        pids = [process.pid for process in self.pool]
+        try:
+            return original(self)
+        finally:
+            for pid in pids:
+                _heart.stopped(_worker(pid))
+
+    return stop
+
+
 # ---------- installing ----------
 
 
@@ -547,6 +579,14 @@ def _patch_timeout(module: Any) -> None:  # noqa: ANN401 (django_q.timeout)
         patch(handler, "__exit__", _wrap_timeout_exit(handler.__exit__))
 
 
+def _patch_cluster(module: Any) -> None:  # noqa: ANN401 (django_q.cluster)
+    sentinel = module.Sentinel
+    if patched(sentinel, "reincarnate"):
+        return
+    patch(sentinel, "reincarnate", _wrap_reincarnate(sentinel.reincarnate))
+    patch(sentinel, "stop", _wrap_stop(sentinel.stop))
+
+
 def install() -> None:
     """Instrument django-q2 as each of its modules is imported (most need Django's apps ready); a no-op without it."""
     when_imported("django_q.signals", _patch_signals)
@@ -554,6 +594,7 @@ def install() -> None:
     when_imported("django_q.monitor", _patch_monitor)
     when_imported("django_q.scheduler", _patch_scheduler)
     when_imported("django_q.timeout", _patch_timeout)
+    when_imported("django_q.cluster", _patch_cluster)
     # Its task events: the console's Live list of tasks.
     agent.sends("live_tasks")
     # Records of task code, through the registry: off with logging_enabled.

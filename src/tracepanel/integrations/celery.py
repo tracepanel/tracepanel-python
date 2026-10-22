@@ -11,7 +11,9 @@ Task arguments and results are kept for local debugging only (masked like locals
 A task's trace reaches the agent when the task ends. Until then task events say where it is: `enqueued` after
 publishing (with the enqueuing trace and span), `started` in `task_prerun`, `retried` in `task_retry`, `finished` in
 `task_postrun`; each worker process sends a `heartbeat` with the tasks it runs every HEARTBEAT_S, so a task whose
-process was killed leaves the console's Live list. Eager tasks send none: they run inside their caller.
+process was killed leaves the console's Live list, and the worker's main process one from `worker_ready` on, so an
+idle worker stays listed. A worker that stops (`worker_shutdown`) says so: `worker_stopped`, and the console drops it
+at once. Eager tasks send none: they run inside their caller.
 
 Canvas workflows link up by themselves: the next step of a chain, a chord's callback and a `link` callback are sent
 from inside the run before them, so their traces link to it (`enqueued_by`). Each run also records the ids Celery
@@ -656,10 +658,16 @@ def on_beat_init(**kwargs: object) -> None:
 
 
 def on_worker_ready(sender: object = None, **kwargs: object) -> None:
-    """The worker says it is there before it runs anything: the console lists it among the workers."""
+    """The worker says it is there before it runs anything, and while it waits: the console lists it."""
     del kwargs
-    _heart.worker = str(getattr(sender, "hostname", "") or "") or _heart.worker
+    _heart.start(str(getattr(sender, "hostname", "") or ""))
     _heart.beat()
+
+
+def on_worker_stopped(sender: object = None, **kwargs: object) -> None:
+    """The worker's main process stops, its pool processes gone: the console drops it at once."""
+    del kwargs
+    _heart.stopped(str(getattr(sender, "hostname", "") or ""))
 
 
 def on_worker_shutdown(**kwargs: object) -> None:
@@ -688,7 +696,7 @@ def install() -> None:
     # Records of task code, through the registry: off with logging_enabled.
     registry.get("logging").install()
     signals.worker_process_shutdown.connect(on_worker_shutdown, dispatch_uid="tracepanel.worker_shutdown", weak=False)
-    signals.worker_shutdown.connect(on_worker_shutdown, dispatch_uid="tracepanel.worker_shutdown_main", weak=False)
+    signals.worker_shutdown.connect(on_worker_stopped, dispatch_uid="tracepanel.worker_shutdown_main", weak=False)
     # No signal tells of the hard time limit: the request's handler does, in the worker's main process.
     from celery.worker.request import Request  # noqa: PLC0415
 

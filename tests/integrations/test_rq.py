@@ -22,7 +22,18 @@ from rq.job import Job  # noqa: E402
 from rq.scheduler import RQScheduler  # noqa: E402
 
 from tests.agentstore import AgentStore  # noqa: E402
-from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, without_heartbeats  # noqa: E402
+from tests.tasklive import (  # noqa: E402
+    GOODBYE,
+    Recorder,
+    heartbeats,
+    left,
+    live,
+    live_when,
+    named,
+    setenv,
+    stopped,
+    without_worker_events,
+)
 from tracepanel.core.context import start_trace  # noqa: E402
 from tracepanel.core.model import Link, Span, Trace  # noqa: E402
 from tracepanel.integrations import rq as integration  # noqa: E402
@@ -201,7 +212,7 @@ def test_a_queued_job_tells_the_agent_each_step(queue: Queue, recorder: Recorder
     worker = work(queue)
     (enqueue,) = [span for span in request.spans if span.kind == "task.enqueue"]
 
-    assert without_heartbeats(recorder.events) == [
+    assert without_worker_events(recorder.events) == [
         {
             "event": "enqueued",
             "system": "rq",
@@ -247,13 +258,19 @@ def test_a_queued_job_tells_the_agent_each_step(queue: Queue, recorder: Recorder
         "ids": [],
     }
 
+    # And that it stopped as it unregisters, after its jobs: its last word.
+    assert stopped(recorder.events, worker.name) == [
+        {"event": "worker_stopped", "system": "rq", "id": "", "time": IsPositiveInt, "worker": worker.name}
+    ]
+    assert [event["event"] for event in recorder.events if event.get("worker") == worker.name][-1] == "worker_stopped"
+
 
 def test_a_retry_waits_with_its_error_and_runs_again(queue: Queue, recorder: Recorder) -> None:
     job = queue.enqueue(sync_crm, retry=Retry(max=1))
     work(queue)
     steps = [
         (event["event"], event.get("retries"), event.get("error"), event.get("state"))
-        for event in without_heartbeats(recorder.events)
+        for event in without_worker_events(recorder.events)
     ]
 
     assert steps == [
@@ -276,7 +293,7 @@ def test_inline_and_ignored_jobs_send_no_events(
     queue.enqueue(housekeeping)
     work(queue)
 
-    assert without_heartbeats(recorder.events) == []
+    assert without_worker_events(recorder.events) == []
 
 
 def test_arguments_are_left_out_of_the_events_too(
@@ -287,7 +304,7 @@ def test_arguments_are_left_out_of_the_events_too(
     queue.enqueue(count_users, 7)
     work(queue)
 
-    assert [{"args", "kwargs"} & event.keys() for event in without_heartbeats(recorder.events)] == [set()] * 3
+    assert [{"args", "kwargs"} & event.keys() for event in without_worker_events(recorder.events)] == [set()] * 3
 
 
 def test_rq_says_in_the_hello_that_it_sends_task_events() -> None:
@@ -340,9 +357,10 @@ def test_the_agent_lists_a_job_queued_then_running_until_it_ends(queue: Queue, s
             {"name": worker.name, "system": "rq", "service": IsStr, "last_seen": IsPositiveInt, "in_flight": 1}
         ]
 
-        done = live_when(store, lambda answer: not answer["tasks"])
+        # The burst ends: the worker says it stopped, and leaves the list.
+        done = left(store, worker.name)
 
-        assert named(done, worker.name) == [IsPartialDict(name=worker.name, in_flight=0)]
+        assert named(done, worker.name) == ([] if GOODBYE else [IsPartialDict(name=worker.name, in_flight=0)])
     finally:
         set_writer(None)
 
@@ -353,7 +371,7 @@ def test_a_scheduled_job_says_when_it_was_due(queue: Queue, recorder: Recorder) 
         job = queue.enqueue_at(due, count_users, 3)
     (enqueue,) = enqueues(request)
     # Not in the queue yet: the scheduler moves it there when it is due.
-    queued = without_heartbeats(recorder.events)
+    queued = without_worker_events(recorder.events)
     schedule(queue)
     worker = work(queue)
     (task,) = tasks(recorder.traces)
@@ -441,7 +459,7 @@ def test_a_groups_jobs_share_its_id(queue: Queue, recorder: Recorder) -> None:
 
     assert [
         (event["event"], event["id"], event.get("span_id"))
-        for event in without_heartbeats(recorder.events)
+        for event in without_worker_events(recorder.events)
         if event["event"] == "enqueued"
     ] == [("enqueued", job.id, spans[job.id].id) for job in jobs]
 
@@ -486,7 +504,7 @@ def test_a_job_stopped_by_its_timeout_says_so(queue: Queue, recorder: Recorder) 
     assert task.attrs == IsPartialDict({"task.state": "FAILURE", "task.timeout": 1})
     assert [(error.type, error.handled) for error in task.errors] == [("rq.timeouts.JobTimeoutException", False)]
 
-    assert without_heartbeats(recorder.events)[-1] == {
+    assert without_worker_events(recorder.events)[-1] == {
         "event": "finished",
         "system": "rq",
         "id": job.id,

@@ -6,11 +6,14 @@ from typing import Any
 
 import pytest
 
-from tests.agentstore import AgentStore
+from tests.agentstore import AGENT_SCHEMAS, AgentStore
 from tracepanel.core import conf
 from tracepanel.core.model import Trace
 
 Event = dict[str, Any]
+# An agent that knows `worker_stopped` drops a worker that says it stopped at once; one before it (CI's, until the
+# agent next to this checkout has it) lists the worker, idle, for a while yet.
+GOODBYE = "worker_stopped" in (AGENT_SCHEMAS / "openapi.yaml").read_text()
 
 
 class Recorder:
@@ -36,9 +39,14 @@ def setenv(monkeypatch: pytest.MonkeyPatch, name: str, value: str) -> None:
     conf.reset()
 
 
-def without_heartbeats(events: list[Event]) -> list[Event]:
-    # A worker says it is there when it starts, however the test starts it.
-    return [event for event in events if event["event"] != "heartbeat"]
+def without_worker_events(events: list[Event]) -> list[Event]:
+    # A worker says it is there when it starts and that it stopped as it stops, however the test runs it.
+    return [event for event in events if event["event"] not in {"heartbeat", "worker_stopped"}]
+
+
+def stopped(events: list[Event], worker: str) -> list[Event]:
+    """That worker's goodbyes: an earlier test's workers say theirs into whichever writer is current."""
+    return [event for event in events if event["event"] == "worker_stopped" and event.get("worker") == worker]
 
 
 def heartbeats(events: list[Event], worker: str) -> list[Event]:
@@ -56,6 +64,16 @@ def live(store: AgentStore) -> dict[str, Any]:
     if answer is None:
         pytest.skip("the released agent lists no tasks in flight: a newer one does")
     return answer
+
+
+def left(store: AgentStore, worker: str) -> dict[str, Any]:
+    """The agent's list once the tasks ended and the worker, stopped, left it: at once, as it said it stopped.
+
+    An agent before `worker_stopped` lists it, idle.
+    """
+    if GOODBYE:
+        return live_when(store, lambda answer: not answer["tasks"] and not named(answer, worker))
+    return live_when(store, lambda answer: not answer["tasks"] and bool(named(answer, worker)))
 
 
 def live_when(store: AgentStore, ready: Callable[[dict[str, Any]], bool]) -> dict[str, Any]:

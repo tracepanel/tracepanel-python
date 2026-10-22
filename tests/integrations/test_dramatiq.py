@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from dirty_equals import IsInstance, IsInt, IsList, IsPartialDict, IsPositiveInt, IsStr
+from dirty_equals import IsInstance, IsInt, IsList, IsOneOf, IsPartialDict, IsPositiveInt, IsStr
 
 dramatiq = pytest.importorskip("dramatiq")
 
@@ -21,7 +21,18 @@ from dramatiq.results.backends import StubBackend as StubResults  # noqa: E402
 from dramatiq.worker import Worker  # noqa: E402
 
 from tests.agentstore import AgentStore  # noqa: E402
-from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, without_heartbeats  # noqa: E402
+from tests.tasklive import (  # noqa: E402
+    GOODBYE,
+    Recorder,
+    heartbeats,
+    left,
+    live,
+    live_when,
+    named,
+    setenv,
+    stopped,
+    without_worker_events,
+)
 from tracepanel._compat import override  # noqa: E402
 from tracepanel.core.context import current_trace, start_trace  # noqa: E402
 from tracepanel.core.model import Link, Span, Trace  # noqa: E402
@@ -166,7 +177,7 @@ def test_a_sent_message_tells_the_agent_each_step(broker: StubBroker, recorder: 
     run(broker)
     (enqueue,) = [span for span in request.spans if span.kind == "task.enqueue"]
 
-    assert without_heartbeats(recorder.events) == [
+    assert without_worker_events(recorder.events) == [
         {
             "event": "enqueued",
             "system": "dramatiq",
@@ -202,15 +213,22 @@ def test_a_sent_message_tells_the_agent_each_step(broker: StubBroker, recorder: 
         },
     ]
 
-    # The worker process says it is there as it boots, before it processes anything.
+    # The worker process says it is there as it boots. Its heartbeat thread may beat only once the worker has
+    # taken the message: then it is already running it.
     assert heartbeats(recorder.events, WORKER)[0] == {
         "event": "heartbeat",
         "system": "dramatiq",
         "id": "",
         "time": IsPositiveInt,
         "worker": WORKER,
-        "ids": [],
+        "ids": IsOneOf([], [message.message_id]),
     }
+
+    # And that it stopped after its shutdown: its last word.
+    assert stopped(recorder.events, WORKER) == [
+        {"event": "worker_stopped", "system": "dramatiq", "id": "", "time": IsPositiveInt, "worker": WORKER}
+    ]
+    assert [event["event"] for event in recorder.events if event.get("worker") == WORKER][-1] == "worker_stopped"
 
 
 def test_a_retry_waits_with_its_error_and_runs_again(broker: StubBroker, recorder: Recorder) -> None:
@@ -223,7 +241,7 @@ def test_a_retry_waits_with_its_error_and_runs_again(broker: StubBroker, recorde
     run(broker)
     steps = [
         (event["event"], event.get("retries"), event.get("error"), event.get("state"))
-        for event in without_heartbeats(recorder.events)
+        for event in without_worker_events(recorder.events)
     ]
 
     assert steps == [
@@ -251,7 +269,7 @@ def test_ignored_messages_send_no_events(
     housekeeping.send()
     run(broker)
 
-    assert without_heartbeats(recorder.events) == []
+    assert without_worker_events(recorder.events) == []
 
 
 def test_arguments_are_left_out_of_the_events_too(
@@ -266,7 +284,7 @@ def test_arguments_are_left_out_of_the_events_too(
     count_users.send(7)
     run(broker)
 
-    assert [{"args", "kwargs"} & event.keys() for event in without_heartbeats(recorder.events)] == [set()] * 3
+    assert [{"args", "kwargs"} & event.keys() for event in without_worker_events(recorder.events)] == [set()] * 3
 
 
 def test_dramatiq_says_in_the_hello_that_it_sends_task_events() -> None:
@@ -326,6 +344,12 @@ def test_the_agent_lists_a_message_queued_then_running_until_it_ends(broker: Stu
         done = live_when(store, lambda answer: not answer["tasks"])
 
         assert named(done, WORKER) == [IsPartialDict(name=WORKER, in_flight=0)]
+
+        # Stopped, the worker says so and leaves the list.
+        worker.stop()
+        gone = left(store, WORKER)
+
+        assert named(gone, WORKER) == ([] if GOODBYE else [IsPartialDict(name=WORKER, in_flight=0)])
     finally:
         release.set()
         worker.stop()
@@ -457,7 +481,7 @@ def test_a_message_stopped_by_its_time_limit_says_so(broker: StubBroker, recorde
         ("dramatiq.middleware.time_limit.TimeLimitExceeded", False)
     ]
 
-    assert without_heartbeats(recorder.events)[-1] == {
+    assert without_worker_events(recorder.events)[-1] == {
         "event": "finished",
         "system": "dramatiq",
         "id": sent.message_id,

@@ -1,7 +1,9 @@
 import importlib
 import logging
 import os
+import signal
 import socket
+import threading
 import time
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
@@ -20,7 +22,7 @@ from huey.exceptions import CancelExecution
 from pytest_django.fixtures import Settings
 
 from tests.agentstore import AgentStore
-from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, without_heartbeats
+from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, stopped, without_worker_events
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Link, Span, Trace
 from tracepanel.integrations import huey as integration
@@ -237,7 +239,7 @@ def test_a_queued_task_tells_the_agent_each_step(recorder: Recorder) -> None:
     work()
     (enqueue,) = enqueues(request)
 
-    assert without_heartbeats(recorder.events) == [
+    assert without_worker_events(recorder.events) == [
         {
             "event": "enqueued",
             "system": "huey",
@@ -289,7 +291,7 @@ def test_a_retry_waits_with_its_error_and_runs_again(recorder: Recorder) -> None
     work()
     steps = [
         (event["event"], event.get("retries"), event.get("error"), event.get("state"))
-        for event in without_heartbeats(recorder.events)
+        for event in without_worker_events(recorder.events)
     ]
 
     assert steps == [
@@ -318,7 +320,7 @@ def test_a_delayed_retry_is_moved_to_the_queue_without_a_second_enqueue(recorder
     ]
     assert attempts[1].attrs["task.eta"] == IsStr
 
-    assert [event["event"] for event in without_heartbeats(recorder.events)] == [
+    assert [event["event"] for event in without_worker_events(recorder.events)] == [
         "enqueued",
         "started",
         "retried",
@@ -334,7 +336,7 @@ def test_immediate_and_ignored_tasks_send_no_events(recorder: Recorder, monkeypa
     huey.immediate = True
     count_users(1)
 
-    assert without_heartbeats(recorder.events) == []
+    assert without_worker_events(recorder.events) == []
 
 
 def test_arguments_are_left_out_of_the_events_too(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -343,7 +345,7 @@ def test_arguments_are_left_out_of_the_events_too(recorder: Recorder, monkeypatc
     count_users(7)
     work()
 
-    assert [{"args", "kwargs"} & event.keys() for event in without_heartbeats(recorder.events)] == [set()] * 3
+    assert [{"args", "kwargs"} & event.keys() for event in without_worker_events(recorder.events)] == [set()] * 3
 
 
 def test_a_revoked_task_finishes_without_a_run(recorder: Recorder) -> None:
@@ -352,7 +354,7 @@ def test_a_revoked_task_finishes_without_a_run(recorder: Recorder) -> None:
     work()
 
     assert tasks(recorder.traces) == []
-    assert without_heartbeats(recorder.events)[-1] == {
+    assert without_worker_events(recorder.events)[-1] == {
         "event": "finished",
         "system": "huey",
         "id": result.id,
@@ -364,6 +366,38 @@ def test_a_revoked_task_finishes_without_a_run(recorder: Recorder) -> None:
 
 def test_huey_says_in_the_hello_that_it_sends_task_events() -> None:
     assert "live_tasks" in agent.SENDS
+
+
+def test_a_consumer_stopped_by_sigterm_says_its_workers_stopped(recorder: Recorder) -> None:
+    consumer = huey.create_consumer(workers=2, periodic=False, check_worker_health=False)
+    handlers = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+
+    def terminate() -> None:
+        # What `kill` does to run_huey, once the consumer handles the signal.
+        deadline = time.monotonic() + 10
+        while signal.getsignal(signal.SIGTERM) == handlers[signal.SIGTERM] and time.monotonic() < deadline:
+            time.sleep(0.01)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=terminate, daemon=True).start()
+    try:
+        consumer.run()
+    finally:
+        for number, handler in handlers.items():
+            signal.signal(number, handler)
+
+    # Its thread workers share the process: one goodbye for them, once the consumer is done.
+    assert stopped(recorder.events, WORKER) == [
+        {"event": "worker_stopped", "system": "huey", "id": "", "time": IsPositiveInt, "worker": WORKER}
+    ]
+    assert [event["event"] for event in recorder.events if event.get("worker") == WORKER][-1] == "worker_stopped"
+
+
+def test_a_worker_thread_that_shuts_down_leaves_its_process_listed(recorder: Recorder) -> None:
+    # A test's worker shuts down in its thread, as a thread worker recycled after max_tasks does: the consumer goes on.
+    work()
+
+    assert stopped(recorder.events, WORKER) == []
 
 
 # The store a running task reads the agent's list from, and what it read: the worker runs it in the test's thread.
@@ -451,7 +485,7 @@ def test_a_delayed_task_says_when_it_was_due_and_its_priority(recorder: Recorder
     assert task.links == [Link(kind="enqueued_by", trace_id=request.id, span_id=enqueue.id)]
 
     # Moved to the queue when due, it is not enqueued again.
-    assert [event["event"] for event in without_heartbeats(recorder.events)] == ["enqueued", "started", "finished"]
+    assert [event["event"] for event in without_worker_events(recorder.events)] == ["enqueued", "started", "finished"]
 
 
 def test_a_pipeline_links_each_step_to_the_one_before(traces: list[Trace]) -> None:
@@ -546,7 +580,7 @@ def test_a_task_stopped_by_its_timeout_says_so(recorder: Recorder) -> None:
     assert task.attrs == IsPartialDict({"task.state": "FAILURE", "task.timeout": 0.05})
     assert [(error.type, error.handled) for error in task.errors] == [("huey.exceptions.TaskTimeout", False)]
 
-    assert without_heartbeats(recorder.events)[-1] == {
+    assert without_worker_events(recorder.events)[-1] == {
         "event": "finished",
         "system": "huey",
         "id": result.id,

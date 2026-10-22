@@ -16,8 +16,9 @@ messages on, a group's included, are process-specific (`!`), never a worker's.
 A message's trace reaches the agent when it is handled. Until then task events say where it is, from each process
 alike, whatever the layer: `enqueued` from the process that sent it (with the enqueuing trace and span), `started`
 and `finished` from the worker. A worker says it is there as it starts and sends a `heartbeat` with the message it
-handles, so a message whose worker was killed leaves the console's Live list. Channels never sends a message again:
-no `retried`. A message sent by a process without tracepanel has no `enqueued`: its run gets an id of its own.
+handles, so a message whose worker was killed leaves the console's Live list, and says it stopped (`worker_stopped`)
+as it exits. Channels never sends a message again: no `retried`. A message sent by a process without tracepanel has
+no `enqueued`: its run gets an id of its own.
 """
 
 import functools
@@ -381,6 +382,18 @@ def _wrap_handle(original: Any) -> Any:  # noqa: ANN401
     return handle
 
 
+def _wrap_run(original: Any) -> Any:  # noqa: ANN401
+    @functools.wraps(original)
+    def run(self: Any) -> Any:  # noqa: ANN401 (channels.worker.Worker)
+        try:
+            return original(self)
+        finally:
+            # The worker exits (asgiref's server ends at Ctrl+C): the console drops it at once.
+            _heart.stopped()
+
+    return run
+
+
 def install() -> None:
     """Instrument Channels when it is installed; a no-op otherwise."""
     try:
@@ -417,5 +430,6 @@ def install() -> None:
     for alias, layer in list(layers.channel_layers.backends.items()):
         layers.channel_layers.backends[alias] = _instrument_layer(layer)
     patch(worker.Worker, "handle", _wrap_handle(worker.Worker.handle))
+    patch(worker.Worker, "run", _wrap_run(worker.Worker.run))
     # Its task events: the console's Live list of tasks (messages to worker channels).
     agent.sends("live_tasks")

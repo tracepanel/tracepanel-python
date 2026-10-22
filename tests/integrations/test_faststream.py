@@ -26,7 +26,7 @@ from faststream.rabbit.annotations import RabbitMessage
 from faststream.redis import RedisBroker, TestRedisBroker
 
 from tests.agentstore import AgentStore
-from tests.tasklive import Recorder, live, live_when, named, setenv, without_heartbeats
+from tests.tasklive import Recorder, live, live_when, named, setenv, without_worker_events
 from tracepanel.core import conf
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Link, Span, Trace
@@ -340,7 +340,7 @@ def test_a_nacked_message_waits_for_its_next_delivery(recorder: Recorder) -> Non
         [("builtins.ConnectionError", True)],
     ]
 
-    assert [(event["event"], event.get("retries")) for event in without_heartbeats(recorder.events)] == [
+    assert [(event["event"], event.get("retries")) for event in without_worker_events(recorder.events)] == [
         ("started", 0),
         ("retried", 1),
         ("started", 1),
@@ -373,7 +373,7 @@ def test_a_rejected_message_fails_without_an_error(recorder: Recorder) -> None:
 
     assert (task.attrs["task.state"], task.status, task.errors) == ("FAILURE", "error", [])
 
-    assert [(event["event"], event.get("state")) for event in without_heartbeats(recorder.events)] == [
+    assert [(event["event"], event.get("state")) for event in without_worker_events(recorder.events)] == [
         ("started", None),
         ("finished", "FAILURE"),
     ]
@@ -391,7 +391,7 @@ def test_ignored_handlers(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -
 
     assert tasks(recorder) == []
 
-    assert without_heartbeats(recorder.events) == []
+    assert without_worker_events(recorder.events) == []
 
 
 def test_a_handled_message_tells_the_agent_each_step(recorder: Recorder) -> None:
@@ -409,7 +409,7 @@ def test_a_handled_message_tells_the_agent_each_step(recorder: Recorder) -> None
     task_id = publish.attrs["task.id"]
 
     # The in-memory broker runs the handler inside the publish: the agent takes the enqueue that comes after.
-    assert without_heartbeats(recorder.events) == [
+    assert without_worker_events(recorder.events) == [
         {
             "event": "started",
             "system": "kafka",
@@ -481,7 +481,7 @@ def test_arguments_are_left_out_when_asked(recorder: Recorder, monkeypatch: pyte
 
     assert {"task.args", "task.kwargs", "task.result"} & task.attrs.keys() == set()
 
-    assert [{"args", "kwargs"} & event.keys() for event in without_heartbeats(recorder.events)] == [set()] * 3
+    assert [{"args", "kwargs"} & event.keys() for event in without_worker_events(recorder.events)] == [set()] * 3
 
 
 def test_faststream_says_in_the_hello_that_it_sends_task_events() -> None:
