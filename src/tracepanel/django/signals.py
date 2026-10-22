@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from asgiref.sync import iscoroutinefunction
+from django.apps import apps
 from django.core.signals import request_finished, request_started, setting_changed
 from django.db.backends.signals import connection_created
 from django.db.models.signals import post_migrate, pre_migrate
@@ -494,12 +495,16 @@ def install() -> None:
     patch(Signal, "asend_robust", _wrap_async(Signal.asend_robust, robust=True))
     # Django's own signals are known now: the ignored ones (pre_init and post_init, sent for every object a query
     # loads, and class_prepared) keep Django's send, and never pass through here at all.
-    from django.contrib.auth import signals as auth  # noqa: PLC0415
     from django.core import signals as core  # noqa: PLC0415
     from django.db.backends import signals as backends  # noqa: PLC0415
     from django.db.models import signals as models  # noqa: PLC0415
 
-    for module in (models, core, auth, backends):
+    modules: list[types.ModuleType] = [models, core, backends]
+    if apps.is_installed("django.contrib.auth"):
+        from django.contrib.auth import signals as auth  # noqa: PLC0415
+
+        modules.append(auth)
+    for module in modules:
         for attr, value in vars(module).items():
             if isinstance(value, Signal):
                 _paths[id(value)] = f"{module.__name__}.{attr}"
