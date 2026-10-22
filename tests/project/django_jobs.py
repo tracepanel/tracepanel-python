@@ -3,6 +3,7 @@
 from collections.abc import Callable
 
 from django.contrib.auth.models import User
+from django.db import transaction
 
 try:
     from django.tasks import task
@@ -46,3 +47,15 @@ def fan_out() -> str:
 def groups_per_user() -> int:
     # N+1 inside a task: the groups of every user are loaded one by one.
     return sum(len(list(user.groups.all())) for user in User.objects.order_by("id"))
+
+
+@task
+def counted_in_a_transaction() -> int:
+    with transaction.atomic():
+        return User.objects.count()
+
+
+@task(backend="database")
+def queued_in_a_transaction() -> int:
+    with transaction.atomic():
+        return User.objects.count()

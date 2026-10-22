@@ -195,6 +195,12 @@
 
 ### Fixed
 
+- A Django Task run on the immediate backend inside a request or command
+  records its spans under its own root. They had the request's enqueue span
+  as their parent, a span of another trace. A run's trace ends inside the
+  `task_finished` signal's span, and that span's end no longer makes the
+  run's root current again once the run is over. Any trace that begins or
+  ends inside a span of another trace leaves the right span current.
 - A SQL Server statement on `[dbo].[orders]` is named `SELECT dbo.orders`,
   as the agent names one it gets over OpenTelemetry. It was `SELECT dbo`.
   Every quoted name keeps its schema (`"SHOP"."ORDERS"` is `SHOP.ORDERS`), and
