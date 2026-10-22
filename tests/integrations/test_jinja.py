@@ -1,7 +1,9 @@
 import asyncio
 import sqlite3
+from pathlib import Path
 
 import pytest
+from dirty_equals import IsStr
 
 jinja2 = pytest.importorskip("jinja2")
 
@@ -59,6 +61,35 @@ def test_a_query_run_while_rendering_names_its_template() -> None:
     (query,) = [span for span in trace.spans if span.kind == "sql"]
     (template,) = [span for span in trace.spans if span.kind == "template"]
     assert (query.parent_id, query.attrs["code.template"]) == (template.id, "<string template>")
+
+
+def test_a_query_in_a_template_file_names_its_line_and_the_code_that_rendered_it(tmp_path: Path) -> None:
+    dbapi.install()
+    connection = sqlite3.connect(":memory:")
+    (tmp_path / "list.html").write_text(
+        "<ul>\n{% for row in rows %}\n<li>{{ query('SELECT 1') }}</li>\n{% endfor %}\n</ul>"
+    )
+    environment = jinja2.Environment(loader=jinja2.FileSystemLoader(tmp_path), autoescape=True)
+    # The driver's own method: no Python of the test's between the template and the query.
+    environment.globals["query"] = connection.execute
+
+    with start_trace("http", "GET /") as trace:
+        environment.get_template("list.html").render(rows=[1, 2])
+
+    queries = [
+        (span.attrs["code.template"], span.attrs["code.template_line"], span.attrs["code.origin"])
+        for span in trace.spans
+        if span.kind == "sql"
+    ]
+
+    # The template's own line, not its compiled code's; the place in code is where it was rendered from.
+    assert (
+        queries
+        == [
+            ("list.html", 3, IsStr(regex=r"tests/integrations/test_jinja\.py:\d+ in test_a_query_in_a_template_file.*"))
+        ]
+        * 2
+    )
 
 
 def test_a_render_keeps_the_context_it_got_masked() -> None:
