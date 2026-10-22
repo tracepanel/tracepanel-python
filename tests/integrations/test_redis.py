@@ -154,6 +154,37 @@ def test_an_rq_enqueue_has_its_commands_inside(port: int) -> None:
     assert {span.parent_id for span in commands(trace)} == {enqueue.id}
 
 
+@pytest.mark.parametrize("backend", ["core.RedisChannelLayer", "pubsub.RedisPubSubChannelLayer"])
+def test_a_channel_layer_s_commands_are_left_out(port: int, backend: str) -> None:
+    pytest.importorskip("channels_redis")
+    # fakeredis runs the Lua scripts channels-redis's receive sends with lupa.
+    pytest.importorskip("lupa")
+    import importlib  # noqa: PLC0415
+
+    module, name = backend.split(".")
+    layer = getattr(importlib.import_module(f"channels_redis.{module}"), name)(hosts=[f"redis://127.0.0.1:{port}/3"])
+    client = redis.asyncio.Redis(port=port, db=3)
+
+    async def work() -> dict[str, object]:
+        channel = await layer.new_channel()
+        await layer.group_add("room", channel)
+        await layer.group_send("room", {"type": "chat.message", "text": "hi"})
+        received = await layer.receive(channel)
+        await layer.group_discard("room", channel)
+        await client.get("room")
+        await client.aclose()
+        await layer.flush()
+        return received
+
+    with start_trace("http", "GET /") as trace:
+        received = asyncio.run(work())
+
+    assert received == {"type": "chat.message", "text": "hi"}
+
+    # The app's own command is there; the layer's sorted sets, publishes and blocking pops are not.
+    assert [span.name for span in commands(complete(trace))] == ["GET room"]
+
+
 def calling_from(module: str) -> Callable[[redis.Redis], Any]:
     namespace: dict[str, Any] = {"__name__": module}
     exec("def run(client):\n    return client.get('k')\n", namespace)  # noqa: S102

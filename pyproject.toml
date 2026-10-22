@@ -80,7 +80,10 @@ celery = [
 ]
 channels = [
     "channels>=4.3.2",
+    "channels-redis>=4.3.0",
     "daphne>=4.2.3",
+    # fakeredis runs channels-redis's Lua scripts with lupa, which has no wheel for Python 3.15 yet.
+    "lupa>=2.8 ; python_full_version < '3.15'",
 ]
 dev = [
     # The test project is a Django project (the other frameworks' tests use their own groups).
