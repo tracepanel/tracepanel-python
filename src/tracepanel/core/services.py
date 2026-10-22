@@ -16,6 +16,7 @@ DEFAULT_PORTS = {
     "postgresql": 5432,
     "mysql": 3306,
     "oracle": 1521,
+    "mssql": 1433,
     "redis": 6379,
     "memcached": 11211,
     "rabbitmq": 5672,
@@ -34,6 +35,9 @@ _BROKER_SYSTEMS = {
     "memory": "memory",
     "filesystem": "filesystem",
 }
+
+# Django's vendor names that aren't OpenTelemetry's `db.system` (mssql-django's "microsoft" is SQL Server).
+_SYSTEMS = {"microsoft": "mssql"}
 
 _HOST_PORT = re.compile(r"^\[?(?P<host>[^\]\s/]+?)\]?(?::(?P<port>\d+))?$")
 
@@ -67,9 +71,15 @@ def location(value: str, system: str) -> Attrs:
     return _endpoint(match["host"], match["port"], system) if match else {}
 
 
+def system(vendor: str) -> str:
+    """OpenTelemetry's `db.system` for a database layer's vendor name."""
+    return _SYSTEMS.get(vendor, vendor)
+
+
 @functools.cache
 def database(vendor: str, host: str, port: str, name: str) -> Attrs:
     """`db.system`, `db.namespace` and the server of one DATABASES entry (cached: settings do not change)."""
+    vendor = system(vendor)
     attrs: Attrs = {"db.system": vendor}
     if vendor == "sqlite":
         # The file is the database; ":memory:" and test databases have no file worth naming.

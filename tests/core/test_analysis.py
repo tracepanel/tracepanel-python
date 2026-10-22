@@ -15,6 +15,10 @@ def test_fingerprint_collapses_whitespace_and_in_lists() -> None:
     assert fingerprint('SELECT *\n  FROM "t"  WHERE id IN (%s, %s, %s)') == 'SELECT * FROM "t" WHERE id IN (...)'
     assert fingerprint("SELECT 1 WHERE id IN (%s)") == fingerprint("SELECT 1 WHERE id IN (%s,%s)")
 
+    # pyodbc's and sqlite3's ?, and the named placeholders SQLAlchemy gives each value on pymssql and psycopg2.
+    assert fingerprint("SELECT 1 WHERE id IN (?, ?)") == "SELECT 1 WHERE id IN (...)"
+    assert fingerprint("SELECT 1 WHERE id IN (%(id_1_1)s, %(id_1_2)s)") == "SELECT 1 WHERE id IN (...)"
+
 
 def test_issue_fingerprints_are_short_and_stable() -> None:
     statement = 'SELECT * FROM "t" WHERE "t"."id" = %s'

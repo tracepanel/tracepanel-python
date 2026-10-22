@@ -23,7 +23,7 @@ TEMPLATES = [
         "DIRS": [BASE_DIR / "tests" / "project" / "templates"],
     }
 ]
-DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}}
+DATABASES: dict[str, dict[str, object]] = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}}
 DATABASES["analytics"] = {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}
 if os.environ.get("TRACEPANEL_TEST_DB") == "postgres":
     DATABASES = {
@@ -36,6 +36,22 @@ if os.environ.get("TRACEPANEL_TEST_DB") == "postgres":
             "PORT": os.environ.get("PGPORT", "5432"),
         },
         "analytics": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"},
+    }
+# SQL Server through mssql-django, next to the default database (tests/django/test_mssql.py).
+if os.environ.get("TRACEPANEL_TEST_MSSQL") and importlib.util.find_spec("mssql"):
+    DATABASES["mssql"] = {
+        "ENGINE": "mssql",
+        "NAME": os.environ.get("MSSQL_DATABASE", "tracepanel"),
+        "USER": os.environ.get("MSSQL_USER", "sa"),
+        "PASSWORD": os.environ.get("MSSQL_PASSWORD", "Tracepanel-1"),
+        "HOST": os.environ.get("MSSQL_HOST", "127.0.0.1"),
+        "PORT": os.environ.get("MSSQL_PORT", "1433"),
+        "OPTIONS": {
+            "driver": os.environ.get("MSSQL_ODBC_DRIVER", "ODBC Driver 18 for SQL Server"),
+            "extra_params": "TrustServerCertificate=yes",
+        },
+        # Its test database alone, without the default one's.
+        "TEST": {"DEPENDENCIES": list[str]()},
     }
 CACHES = {
     "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},

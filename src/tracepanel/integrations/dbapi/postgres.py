@@ -41,10 +41,10 @@ def _rendered(query: object, owner: Any) -> object:  # noqa: ANN401 (a cursor)
 
 
 def _explainer(connect: Any, params: dict[str, Any]) -> _core.plans.Execute:  # noqa: ANN401 (a driver's connect)
-    def execute(sql_text: str, values: object) -> tuple[_core.plans.Rows, list[str]]:
+    def execute(sql_text: str, values: object, session: _core.plans.Session) -> tuple[_core.plans.Rows, list[str]]:
         connection = connect(**params)
         try:
-            return _core.cursor_rows(connection.cursor(), sql_text, values)
+            return _core.cursor_rows(connection.cursor(), sql_text, values, session)
         finally:
             connection.close()
 
@@ -203,7 +203,8 @@ _ASYNCPG: dict[str, _core.Reads] = {
 def _asyncpg_explainer(params: dict[str, Any]) -> _core.plans.Execute:
     import asyncpg  # noqa: PLC0415
 
-    def execute(sql_text: str, values: object) -> tuple[_core.plans.Rows, list[str]]:
+    # PostgreSQL's EXPLAIN takes no session around it.
+    def execute(sql_text: str, values: object, _session: _core.plans.Session) -> tuple[_core.plans.Rows, list[str]]:
         async def explain() -> tuple[_core.plans.Rows, list[str]]:
             connection = await asyncpg.connect(**params)
             try:
