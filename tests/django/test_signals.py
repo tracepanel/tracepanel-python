@@ -109,19 +109,16 @@ def test_delete_and_m2m_changed() -> None:
         user.groups.add(group)
         group.delete()
 
-    # pre_add and post_add, then post_delete; the ORM's savepoints around each.
-    assert by_kind(trace, "transaction", "signal", "function", "sql") == [
-        ("transaction", "savepoint default", "test"),
+    # pre_add and post_add, then post_delete, each inside the ORM's savepoint. How many savepoints the ORM nests
+    # differs by Django version (from 6.0, one fewer around the INSERT): transaction spans are left out of the order.
+    assert by_kind(trace, "signal", "function", "sql") == [
         ("sql", "SELECT auth_user_groups", "savepoint default"),
-        ("transaction", "savepoint default", "savepoint default"),
         ("signal", "m2m_changed", "savepoint default"),
         ("function", "tests.project.receivers.membership_changed", "m2m_changed"),
-        ("transaction", "savepoint default", "savepoint default"),
         ("sql", "INSERT auth_user_groups", "savepoint default"),
         ("signal", "m2m_changed", "savepoint default"),
         ("function", "tests.project.receivers.membership_changed", "m2m_changed"),
         ("sql", "SELECT COUNT auth_group", "tests.project.receivers.membership_changed"),
-        ("transaction", "savepoint default", "test"),
         ("sql", "DELETE auth_group_permissions", "savepoint default"),
         ("sql", "DELETE auth_user_groups", "savepoint default"),
         ("sql", "DELETE auth_group", "savepoint default"),
