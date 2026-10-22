@@ -181,6 +181,13 @@
 
 - A signal's span is named `post_save`, not `signal post_save`, and a model
   sender reads `auth.Group`, not `django.contrib.auth.models.Group`.
+- The Redis commands channels-redis sends for itself are no longer `redis`
+  spans: the sorted sets of a send or group send, their expiry and capacity
+  checks, the publishes of the pub/sub layer and a receive's blocking pop.
+  They are the channel layer's transport, recorded as its `channel.send` or
+  `task.enqueue` span. A WebSocket event's trace had them as `redis` spans
+  that made up most of its time, and a `redis` tag. Redis commands the app
+  sends itself are recorded as before.
 
 ### Fixed
 

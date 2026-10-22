@@ -4,8 +4,9 @@ Redis is a datastore here, not a cache: queues, counters, locks and sessions liv
 A cache on Redis is a `cache` span (with its hit or miss) whose Redis commands are its children.
 
 A pipeline is one span: its commands go to the server together. Commands a library sends for the app (a cache's, a task
-queue's, a channel layer's) are recorded too, under that library's span (cache.get, task.enqueue, channel.send): the
-agent finds issues on that span, and counts the commands as Redis's load.
+queue's) are recorded too, under that library's span (cache.get, task.enqueue): the agent finds issues on that span,
+and counts the commands as Redis's load. A channel layer's are not: channels-redis's channel.send is a message, and the
+sorted sets it keeps for it (expiry, capacity, the backup queue, a receive's blocking pop) are its transport's.
 """
 
 import functools
@@ -26,9 +27,9 @@ from tracepanel.core.services import location
 CALLERS = Callers(
     own=__name__,
     libraries=("redis", "valkey", "fakeredis"),
-    # Only tracepanel's own calls are left out. A cache's, a task queue's or a channel layer's commands are recorded
-    # under their cache.get / task.enqueue / channel.send span: Redis's load, with what asked for it.
-    layers=("tracepanel.", "opentelemetry."),
+    # A cache's or a task queue's commands are recorded under their cache.get / task.enqueue span: Redis's load, with
+    # what asked for it. A channel layer's are its transport, under channel.send or in a receive the app awaits.
+    layers=("tracepanel.", "opentelemetry.", "channels_redis."),
 )
 
 
