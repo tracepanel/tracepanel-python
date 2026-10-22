@@ -91,6 +91,7 @@ class Config:
     django_tasks_enabled: bool = True
     dramatiq_enabled: bool = True
     drf_enabled: bool = True
+    faststream_enabled: bool = True
     # Outgoing HTTP calls: urllib3 (requests, boto3), httpx, aiohttp.
     http_clients_enabled: bool = True
     jinja_enabled: bool = True
@@ -168,6 +169,7 @@ class Settings(TypedDict, total=False):
     django_tasks_enabled: bool
     dramatiq_enabled: bool
     drf_enabled: bool
+    faststream_enabled: bool
     http_clients_enabled: bool
     jinja_enabled: bool
     logging_enabled: bool

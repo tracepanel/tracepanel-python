@@ -44,6 +44,7 @@ classifiers = [
 django = ["django>=5.2"]
 celery = ["celery>=5.3"]
 dramatiq = ["dramatiq>=1.17"]
+faststream = ["faststream>=0.6"]
 rq = ["rq>=2.0"]
 channels = ["channels>=4.2"]
 strawberry = ["strawberry-graphql>=0.250"]
@@ -157,6 +158,16 @@ flask = [
 falcon = [
     "falcon>=4.2",
 ]
+# Its brokers' clients, tested in memory (TestKafkaBroker and the others), and FastAPI: FastStream's own routers and
+# faststream-fastapi, which replaces them. confluent-kafka has no wheel for Python 3.15 yet, and needs librdkafka to
+# build.
+faststream = [
+    "faststream[kafka,nats,rabbit,redis]>=0.7.7",
+    "faststream[confluent]>=0.7.7; python_full_version < '3.15'",
+    "faststream-fastapi>=1.4.0",
+    "fastapi>=0.142.4",
+    "httpx2>=2.13.1",
+]
 
 [build-system]
 requires = ["uv_build>=0.12,<0.13"]
@@ -189,7 +200,7 @@ ban-relative-imports = "all"
 
 [tool.ruff.lint.isort]
 # tracepanel.integrations.celery and friends are named after the libraries: those names stay third-party.
-known-third-party = ["celery", "channels", "strawberry", "ninja", "rest_framework", "django", "fastapi", "flask", "falcon", "starlette", "sqlalchemy", "opentelemetry"]
+known-third-party = ["celery", "channels", "faststream", "strawberry", "ninja", "rest_framework", "django", "fastapi", "flask", "falcon", "starlette", "sqlalchemy", "opentelemetry"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
