@@ -7,6 +7,7 @@ import re
 import reprlib
 import sys
 import sysconfig
+from collections.abc import Callable
 from contextvars import ContextVar
 from pathlib import Path
 from types import CodeType, FrameType, TracebackType
@@ -84,6 +85,10 @@ def library_path(filename: str) -> str:
 awaited_from: ContextVar[str | None] = ContextVar("tracepanel_awaited_from", default=None)
 
 
+# A Jinja template's compiled code keeps the template in its globals; it maps the code's lines to the template's.
+JINJA_TEMPLATE = "__jinja_template__"
+
+
 # Code object -> whether it is project code. A code object belongs to one module for good: one dict lookup per frame
 # instead of reading the frame's globals. Bounded: code made at runtime (exec, templates) would grow it forever.
 _IN_APP_BY_CODE: dict[CodeType, bool] = {}
@@ -96,8 +101,47 @@ def _code_in_app(frame: FrameType) -> bool:
     if known is None:
         if len(_IN_APP_BY_CODE) >= _IN_APP_BY_CODE_MAX:
             _IN_APP_BY_CODE.clear()
-        known = _IN_APP_BY_CODE[code] = is_in_app(code.co_filename, frame.f_globals.get("__name__", ""))
+        # A Jinja template's compiled code runs from the template's file: the template, not the project's Python.
+        known = _IN_APP_BY_CODE[code] = JINJA_TEMPLATE not in frame.f_globals and is_in_app(
+            code.co_filename, frame.f_globals.get("__name__", "")
+        )
     return known
+
+
+# The template and its line at a frame of a template engine's own, or None: (name or None, line).
+TemplatePlace = Callable[[FrameType], tuple[str | None, int] | None]
+# Engines that render in Python register the code object their nodes render in (Django's Node.render_annotated).
+_TEMPLATE_CODES: dict[CodeType, TemplatePlace] = {}
+
+
+def template_frames(code: CodeType, place: TemplatePlace) -> None:
+    """Frames running `code` are a template engine's rendering: `place` reads the template and its line off one."""
+    _TEMPLATE_CODES[code] = place
+
+
+def _jinja_place(template: object, frame: FrameType) -> tuple[str | None, int] | None:
+    lineno = getattr(template, "get_corresponding_lineno", None)
+    if lineno is None:
+        return None
+    name = getattr(template, "name", None)
+    return (str(name) if name else None), int(lineno(frame.f_lineno))
+
+
+def template_place(skip: int = 2) -> tuple[str | None, int] | None:
+    """The template and line rendering at the current point: the innermost Jinja template, or registered engine node.
+
+    The name is None where the template has none (one made from a string): its span's name stands for it.
+    """
+    frame: FrameType | None = sys._getframe(skip)  # noqa: SLF001
+    while frame is not None:
+        jinja = frame.f_globals.get(JINJA_TEMPLATE)
+        place = _jinja_place(jinja, frame) if jinja is not None else None
+        if place is None and (reader := _TEMPLATE_CODES.get(frame.f_code)) is not None:
+            place = reader(frame)
+        if place is not None:
+            return place
+        frame = frame.f_back
+    return None
 
 
 def origin(skip: int = 2) -> str | None:

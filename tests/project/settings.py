@@ -63,3 +63,8 @@ if importlib.util.find_spec("django_tasks_db"):
         "default": {"BACKEND": f"{TASKS_MODULE}.backends.immediate.ImmediateBackend"},
         "database": {"BACKEND": "django_tasks_db.DatabaseBackend"},
     }
+
+# django-q2 tests: the ORM broker on the test database, no Redis; the tests run the cluster's pieces in-process.
+if importlib.util.find_spec("django_q"):
+    INSTALLED_APPS += ["django_q"]
+    Q_CLUSTER = {"orm": "default", "timeout": 30, "retry": 60}

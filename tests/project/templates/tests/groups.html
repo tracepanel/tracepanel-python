@@ -1,0 +1,6 @@
+{% extends "tests/base.html" %}
+{% block body %}
+{% for user in users %}
+<p>{{ user.username }}: {% for group in user.groups.all %}{{ group.name }}{% endfor %}</p>
+{% endfor %}
+{% endblock %}

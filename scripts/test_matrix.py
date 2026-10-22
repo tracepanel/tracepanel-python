@@ -24,6 +24,7 @@ GROUPS = [
     "channels",
     "strawberry",
     "django-tasks",
+    "django-q2",
     "fastapi",
     "dramatiq",
     "rq",

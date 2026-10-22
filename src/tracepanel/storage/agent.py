@@ -9,9 +9,10 @@ The wire: a hello line, `{"protocol": 1, "max_traces": 2000, "thresholds": {...}
 [...], "console": [...], "app": {...}}` (what the app offers the console: the one place it says so; the agent alone
 answers the console's `api/capabilities` from it; `app` carries the console's App tab: the app's settings,
 masked, and the versions it runs on, `{"settings": {"DEBUG": "True", ...}, "versions": [{"name": "Python", "version":
-"3.13.1", "kind": "runtime"}, ...]}`, see tracepanel.core.appinfo), answered
-by `{"ok": true}` (or a refusal with its reason); then frames, a 4-byte big-endian length and a JSON array of
-`Trace.to_dict()`, or an object of task events, `{"tasks": [...]}` (an agent from before ignores it).
+"3.13.1", "kind": "runtime"}, ...]}`, and what its checks found once they ran, `"checks"` and `"migrations"`, see
+tracepanel.core.appinfo), answered by `{"ok": true}` (or a refusal with its reason); then frames, a 4-byte big-endian
+length and a JSON array of `Trace.to_dict()`, or an object: task events, `{"tasks": [...]}`, or what the checks found
+after the hello, `{"app": {"checks": [...], "migrations": {...}}}` (an agent from before ignores either).
 """
 
 import contextlib
@@ -31,6 +32,7 @@ from tracepanel._agent import AGENT, find_agent_bin
 from tracepanel._compat import override
 from tracepanel.core import appinfo, conf, forks
 from tracepanel.core.model import Trace
+from tracepanel.storage import transport
 from tracepanel.storage.transport import BatchWriter, Event
 
 PROTOCOL = 1
@@ -361,6 +363,12 @@ class AgentWriter(BatchWriter):
         with self._lock:
             self._frame({"tasks": events})
 
+    def tell(self, found: dict[str, object]) -> None:
+        """What the app's checks found, told to the agent connected now; one connected later hears it in the hello."""
+        with self._lock:
+            if self._sock is not None:
+                self._frame({"app": found})
+
     def _send(self, batch: list[Trace]) -> None:
         if self._frame([trace.to_dict() for trace in batch]):
             self.sent += len(batch)
@@ -387,3 +395,12 @@ class AgentWriter(BatchWriter):
             self._retry_at = time.monotonic() + RETRY_S
             return False
         return True
+
+
+def _checked(found: dict[str, object]) -> None:
+    tell = getattr(transport.get_writer(), "tell", None)
+    if callable(tell):
+        tell(found)
+
+
+appinfo.when_checked(_checked)
