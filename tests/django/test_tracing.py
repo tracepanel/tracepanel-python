@@ -3,7 +3,7 @@ import subprocess
 import sys
 
 import pytest
-from dirty_equals import IsPartialDict
+from dirty_equals import IsPartialDict, IsStr
 from django.contrib.auth.models import User
 from django.db import connection
 from django.test import Client
@@ -226,6 +226,41 @@ def test_view_and_template_spans_nest_sql(client: Client, traces: list[Trace], u
     issue = next(i for i in issues(trace) if i.kind == "n+1")
     assert issue.culprit is not None
     assert issue.culprit.startswith("tests/users.html (rendered from tests/project/views.py:")
+
+
+PREFETCH_RELATED = (
+    "Load the related rows in one extra query: add `prefetch_related()` for this reverse or many-to-many relation to "
+    "the queryset that produced these rows."
+)
+
+
+def test_queries_a_template_makes_name_it_and_their_line(
+    client: Client, traces: list[Trace], users: list[User]
+) -> None:
+    client.get("/groups-page/")
+    trace = only(traces)
+    queries = [
+        (span.name, span.attrs["code.template"], span.attrs.get("code.template_line"), span.attrs["code.origin"])
+        for span in trace.spans
+        if span.kind == "sql"
+    ]
+    rendered_from = IsStr(regex=r"tests/project/views\.py:\d+ in groups_page")
+
+    # The {% for %} reads the users (line 3); each user's groups, on line 4, are an N+1 the template makes.
+    assert queries == [
+        ("SELECT auth_user", "tests/groups.html", 3, rendered_from),
+        *[("SELECT auth_group", "tests/groups.html", 4, rendered_from)] * len(users),
+    ]
+
+    (issue,) = issues(trace)
+    lead = "The template `tests/groups.html` makes these queries as it renders (line 4), one per row it shows. "
+
+    assert (issue.kind, issue.culprit) == (
+        "n+1",
+        IsStr(regex=r"tests/groups\.html \(rendered from tests/project/views\.py:\d+ in groups_page\)"),
+    )
+    # The released agent's hint, or a newer one's that opens with the template and its line.
+    assert issue.hint in {PREFETCH_RELATED, lead + PREFETCH_RELATED}
 
 
 @pytest.mark.django_db
