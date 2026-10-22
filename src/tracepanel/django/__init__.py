@@ -52,6 +52,9 @@ def _serving() -> bool:
 
 
 def install() -> None:
+    # Imported here: the package's own `apps` submodule (the AppConfig) is an attribute of this module too.
+    from django.apps import apps  # noqa: PLC0415
+
     from tracepanel import _setup  # noqa: PLC0415
     from tracepanel.django import console  # noqa: PLC0415
 
@@ -82,7 +85,9 @@ def install() -> None:
     sql.install()
     transactions.install()
     cache.install()
-    auth.install()
+    # Logouts come from Django's auth app, which a project may leave out: nothing to record without it.
+    if apps.is_installed("django.contrib.auth"):
+        auth.install()
     errors.install()
     structure.install()
     mail.install()

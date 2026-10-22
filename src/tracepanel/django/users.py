@@ -4,6 +4,9 @@ Development only, like the rest of tracepanel, and further limited to requests f
 that come from the page itself: a same-origin fetch carrying the X-Tracepanel header, which another site can't send
 without CORS. tracepanel answers before Django's session and auth middleware run, so the session is loaded and
 saved here.
+
+Imported only when the project has django.contrib.auth and sessions (tracepanel.django.console): auth's models
+imported without the app installed stop Django at startup.
 """
 
 import json
@@ -19,8 +22,8 @@ from django.http import HttpRequest, JsonResponse
 from django.utils.http import url_has_allowed_host_and_scheme
 
 from tracepanel.core import conf
+from tracepanel.django.console import from_this_machine
 
-LOCAL = frozenset({"127.0.0.1", "::1"})
 LIMIT = 20
 SEARCH_FIELDS = ("email", "first_name", "last_name")
 
@@ -33,12 +36,6 @@ def available() -> bool:
         and apps.is_installed("django.contrib.auth")
         and apps.is_installed("django.contrib.sessions")
     )
-
-
-def from_this_machine(request: HttpRequest) -> bool:
-    """From this machine, or from an address the project lists as its own (INTERNAL_IPS)."""
-    address = request.META.get("REMOTE_ADDR", "")
-    return address in LOCAL or address in getattr(settings, "INTERNAL_IPS", ())
 
 
 def trusted(request: HttpRequest) -> bool:

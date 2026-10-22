@@ -131,6 +131,11 @@
   worker's main process writes it. A run cut short by a cold shutdown or
   `revoke(terminate=True)` reads REVOKED with Terminated, one whose pool
   process died fails with WorkerLostError. They read ok, or had no trace.
+- A Django project without `django.contrib.auth` or `contenttypes` in
+  INSTALLED_APPS no longer fails at startup. tracepanel imported auth's
+  models for user switching, and Django refused to load them. Without auth,
+  user switching is left out of the console and logouts are not recorded.
+  Requests are traced as usual.
 
 ## 0.4.1 (2026-10-21)
 

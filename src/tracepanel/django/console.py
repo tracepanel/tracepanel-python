@@ -6,14 +6,23 @@ Also registers what only Django can do: switching the user (sessions, auth) and 
 from collections.abc import Callable
 
 from django.apps import apps
+from django.conf import settings
 from django.core.exceptions import RequestDataTooBig
 from django.http import FileResponse, HttpRequest, HttpResponse
 from django.http.response import HttpResponseBase
 
 from tracepanel.console import app
 from tracepanel.console.messages import MAX_BODY
-from tracepanel.django import explain, users
+from tracepanel.django import explain
 from tracepanel.integrations import dbapi
+
+LOCAL = frozenset({"127.0.0.1", "::1"})
+
+
+def from_this_machine(request: HttpRequest) -> bool:
+    """From this machine, or from an address the project lists as its own (INTERNAL_IPS)."""
+    address = request.META.get("REMOTE_ADDR", "")
+    return address in LOCAL or address in getattr(settings, "INTERNAL_IPS", ())
 
 
 def _body(request: HttpRequest) -> tuple[bytes, bool]:
@@ -38,7 +47,7 @@ def dispatch(request: HttpRequest, path: str) -> HttpResponseBase:
             native=request,
             body=body,
             content_type=request.content_type or "" if body else "",
-            local=users.from_this_machine(request),
+            local=from_this_machine(request),
             too_large=too_large,
         )
     )
@@ -67,8 +76,11 @@ def _view(view: Callable[[HttpRequest], HttpResponseBase]) -> app.Handler:
 
 def install() -> None:
     app.register("explain", app.explain_handler(dbapi.explain_or(explain.explain)))
-    # Switching the user needs Django's auth and sessions: without them the API (and the widget's button) is absent.
+    # Switching the user needs Django's auth and sessions: without them the API (and the widget's button) is absent,
+    # and the module, which imports auth's models, is never imported.
     if apps.is_installed("django.contrib.auth") and apps.is_installed("django.contrib.sessions"):
+        from tracepanel.django import users  # noqa: PLC0415
+
         app.register("users", _view(users.search))
         app.register("users/me", _view(users.me))
         app.register("users/switch", _view(users.switch), write=True)
