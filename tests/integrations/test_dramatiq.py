@@ -7,7 +7,7 @@ from collections.abc import Generator
 from datetime import UTC, datetime
 
 import pytest
-from dirty_equals import IsInstance, IsInt, IsList, IsPartialDict, IsPositiveInt, IsStr
+from dirty_equals import IsInstance, IsInt, IsList, IsOneOf, IsPartialDict, IsPositiveInt, IsStr
 
 dramatiq = pytest.importorskip("dramatiq")
 
@@ -207,14 +207,15 @@ def test_a_sent_message_tells_the_agent_each_step(broker: StubBroker, recorder: 
         },
     ]
 
-    # The worker process says it is there as it boots, before it processes anything.
+    # The worker process says it is there as it boots. Its heartbeat thread may beat only once the worker has
+    # taken the message: then it is already running it.
     assert heartbeats(recorder.events, WORKER)[0] == {
         "event": "heartbeat",
         "system": "dramatiq",
         "id": "",
         "time": IsPositiveInt,
         "worker": WORKER,
-        "ids": [],
+        "ids": IsOneOf([], [message.message_id]),
     }
 
     # And that it stopped after its shutdown: its last word.
