@@ -16,7 +16,7 @@ from pytest_django.fixtures import Settings
 from tests.agentstore import AgentStore, issues
 from tests.project import django_jobs
 from tests.tasklive import Recorder, live, live_when, named, without_heartbeats
-from tracepanel.core.context import start_trace
+from tracepanel.core.context import current_span, current_trace, start_trace
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Link, Span, Trace
 from tracepanel.storage import agent, transport
@@ -325,6 +325,87 @@ def test_a_task_enqueued_inline_from_a_task_follows_it(traces: list[Trace], user
         "task.trigger": "task",
     }
     assert {"task.parent_id", "task.root_id"} & runs[str(outer.id)].attrs.keys() == set()
+
+
+def tree(trace: Trace) -> list[tuple[str, str | None]]:
+    """Each span's kind and its parent's, by the trace's own spans: "elsewhere" for a parent of another trace."""
+    kinds = {span.id: span.kind for span in trace.spans}
+    return [
+        (span.kind, None if span.parent_id is None else kinds.get(span.parent_id, "elsewhere")) for span in trace.spans
+    ]
+
+
+@pytest.mark.django_db
+def test_a_task_run_leaves_nothing_current(traces: list[Trace], users: list[User]) -> None:
+    django_jobs.counted_in_a_transaction.enqueue()
+    (run,) = by_kind(traces, "task")
+
+    # Its trace ends inside the task_finished send's span: that span's end does not make the run's root current.
+    assert (current_trace(), current_span()) == (None, None)
+
+    assert tree(run) == [
+        ("task.run", None),
+        ("transaction", "task.run"),
+        ("sql", "transaction"),
+        ("sql", "transaction"),
+        ("sql", "transaction"),
+        ("signal", "task.run"),
+        ("function", "signal"),
+    ]
+
+
+@pytest.mark.django_db
+def test_an_inline_run_records_under_its_own_root(traces: list[Trace], users: list[User]) -> None:
+    with start_trace("http", "POST /reports/") as request:
+        django_jobs.counted_in_a_transaction.enqueue()
+
+        assert (current_trace(), current_span()) == (request, request.spans[0])
+
+    (run,) = by_kind(traces, "task")
+
+    # Its trace begins inside the task_started send's span, a span of the request's.
+    assert tree(run) == [
+        ("task.run", None),
+        ("transaction", "task.run"),
+        ("sql", "transaction"),
+        ("sql", "transaction"),
+        ("sql", "transaction"),
+        ("signal", "task.run"),
+        ("function", "signal"),
+    ]
+
+    assert tree(request) == [
+        ("http", None),
+        ("task.enqueue", "http"),
+        ("signal", "task.enqueue"),
+        ("function", "signal"),
+        ("signal", "task.enqueue"),
+        ("function", "signal"),
+    ]
+
+    assert (current_trace(), current_span()) == (None, None)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_worker_run_leaves_nothing_current(traces: list[Trace], users: list[User]) -> None:
+    django_jobs.queued_in_a_transaction.enqueue()
+    work()
+    (run,) = by_kind(traces, "task")
+
+    assert (current_trace(), current_span()) == (None, None)
+
+    assert tree(run) == [
+        ("task.run", None),
+        ("transaction", "task.run"),
+        ("sql", "transaction"),
+        ("sql", "transaction"),
+        # The worker saves the result: pre_save, its UPDATE, then task_finished.
+        ("signal", "task.run"),
+        ("function", "signal"),
+        ("sql", "task.run"),
+        ("signal", "task.run"),
+        ("function", "signal"),
+    ]
 
 
 @pytest.mark.django_db
