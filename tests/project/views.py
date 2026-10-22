@@ -107,6 +107,11 @@ def users_page(request: HttpRequest) -> HttpResponse:
     return render(request, "tests/users.html", {"users": User.objects.order_by("id")})
 
 
+def groups_page(request: HttpRequest) -> HttpResponse:
+    # The users are read by the template's {% for %} (line 3), each one's groups on line 4: an N+1 in a template.
+    return render(request, "tests/groups.html", {"users": User.objects.order_by("id")})
+
+
 class Counted:
     """A value whose repr() runs a query: a template's context shows it without running it."""
 
