@@ -16,6 +16,7 @@ import pytest
 pytest.importorskip("pytest_codspeed")
 
 from django.contrib.auth.models import Group, User
+from django.dispatch import Signal
 from django.test import Client
 from pytest_codspeed import BenchmarkFixture
 
@@ -123,6 +124,32 @@ def test_sqlalchemy_iterates_rows(benchmark: BenchmarkFixture) -> None:
     trace = benchmark(traced(read))
 
     assert trace.spans[-1].attrs["db.response.returned_rows"] == ROWS
+
+
+# ---------- Django signals: sends nobody receives (counted), and sends with a receiver (spans) ----------
+
+quiet = Signal()
+heard = Signal()
+
+
+def _receiver(sender: object, **kwargs: object) -> None:
+    del sender, kwargs
+
+
+heard.connect(_receiver, weak=False)
+
+
+def test_signals_sent(benchmark: BenchmarkFixture) -> None:
+    def send() -> None:
+        for _ in range(100):
+            quiet.send(sender=Group)
+        for _ in range(10):
+            heard.send(sender=Group)
+
+    trace = benchmark(traced(send))
+
+    assert trace.attrs["signal.unreceived"] == ["tests.benchmarks.test_benchmarks.quiet auth.Group: 100"]
+    assert len([span for span in trace.spans if span.kind == "signal"]) == 10
 
 
 # ---------- the SDK's own work on a statement and a trace ----------

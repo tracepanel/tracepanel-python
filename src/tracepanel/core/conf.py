@@ -102,6 +102,8 @@ class Config:
     # Redis used directly (Django's cache and the task queues record their own calls).
     redis_enabled: bool = True
     rq_enabled: bool = True
+    # Django signals: each send with receivers is a span, each receiver a span inside it.
+    signals_enabled: bool = True
     sqlalchemy_enabled: bool = True
     strawberry_enabled: bool = True
     # Requests not traced at all: glob patterns on the path (health checks, static files).
@@ -110,6 +112,10 @@ class Config:
     ignore_tasks: tuple[str, ...] = ()
     # Loggers whose records are left out (with their children), on top of tracepanel's own and SQL echo.
     ignore_loggers: tuple[str, ...] = ()
+    # Django signals left out entirely, glob patterns on the name (post_save) or the dotted path
+    # (shop.signals.order_placed). pre_init and post_init fire for every object a query loads: by default even their
+    # count would cost more than it tells. Read at startup.
+    ignore_signals: tuple[str, ...] = ("pre_init", "post_init")
     # Management commands not traced: long-running and interactive ones by default (servers, shells, workers).
     ignore_commands: tuple[str, ...] = (
         "runserver",
@@ -172,11 +178,13 @@ class Settings(TypedDict, total=False):
     otel_enabled: bool
     redis_enabled: bool
     rq_enabled: bool
+    signals_enabled: bool
     sqlalchemy_enabled: bool
     strawberry_enabled: bool
     ignore_paths: list[str] | tuple[str, ...]
     ignore_tasks: list[str] | tuple[str, ...]
     ignore_loggers: list[str] | tuple[str, ...]
+    ignore_signals: list[str] | tuple[str, ...]
     ignore_commands: list[str] | tuple[str, ...]
 
 

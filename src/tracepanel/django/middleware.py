@@ -14,7 +14,7 @@ from django.utils.functional import SimpleLazyObject, empty
 
 from tracepanel.core import conf, errors, profile, w3c
 from tracepanel.core import request as details
-from tracepanel.django import console, widget
+from tracepanel.django import console, signals, widget
 from tracepanel.integrations import htmx
 
 if TYPE_CHECKING:
@@ -185,8 +185,10 @@ class TracepanelMiddleware:
         with start_trace(
             "http", f"{request.method} {request.path}", _attrs(request), profile=_profiled(request)
         ) as trace:
+            earlier = signals.adopt_request_started(trace)
             response = get_response(request)
             finish(trace, request, response)
+        trace.duration = trace.spans[0].duration = trace.duration + earlier
         complete(trace)
         widget.decorate(request, response, trace, config)
         return response
@@ -205,8 +207,10 @@ class TracepanelMiddleware:
         with start_trace(
             "http", f"{request.method} {request.path}", _attrs(request), profile=_profiled(request)
         ) as trace:
+            earlier = signals.adopt_request_started(trace)
             response = await get_response(request)
             finish(trace, request, response)
+        trace.duration = trace.spans[0].duration = trace.duration + earlier
         # Analysis is in-memory and the writer only enqueues: cheap enough for the event loop.
         complete(trace)
         widget.decorate(request, response, trace, config)

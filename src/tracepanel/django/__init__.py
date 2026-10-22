@@ -86,7 +86,8 @@ def install() -> None:
     errors.install()
     structure.install()
     mail.install()
-    signals.install()
+    if conf.get_config().signals_enabled:
+        signals.install()
     commands.install()
     # Libraries and Django apps (DRF, Ninja, Channels, Django Tasks): each on when installed and not turned off.
     _setup.started("Django", debug="DEBUG", django=True, announce=_serving())

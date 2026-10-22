@@ -80,6 +80,20 @@ def start_trace(
 
 
 @contextmanager
+def holding(trace: Trace) -> Generator[None, None, None]:
+    """Record into `trace`, outside any other: work done before the trace it belongs to begins (request_started).
+
+    Its spans have no parent: whoever adopts them later puts them under its root.
+    """
+    trace_token, span_token = _trace.set(trace), _span.set(None)
+    try:
+        yield
+    finally:
+        _span.reset(span_token)
+        _trace.reset(trace_token)
+
+
+@contextmanager
 def start_span(kind: str, name: str, attrs: Attrs | None = None) -> Generator[Span | None, None, None]:
     """Run the block as a child span of the current one; a no-op outside a trace."""
     trace = _trace.get()

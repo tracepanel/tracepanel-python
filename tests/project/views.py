@@ -3,7 +3,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
-from django.contrib.auth import logout
+from django.contrib.auth import login, logout
 from django.contrib.auth.models import Group, Permission, User
 from django.contrib.contenttypes.models import ContentType
 from django.core.cache import cache, caches
@@ -13,6 +13,8 @@ from django.db.models.signals import post_save
 from django.dispatch import Signal, receiver
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.shortcuts import redirect, render
+
+from tests.project import receivers  # noqa: F401 (connects the project's receivers)
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +142,12 @@ def group_saved(sender: type[Group], instance: Group, **kwargs: object) -> None:
 def create_group(request: HttpRequest) -> JsonResponse:
     group = Group.objects.create(name="editors")
     return JsonResponse({"id": group.pk})
+
+
+def log_in(request: HttpRequest) -> JsonResponse:
+    # user_logged_in: Django's own receiver (update_last_login) writes the user's last_login.
+    login(request, User.objects.get(username="user0"), backend="django.contrib.auth.backends.ModelBackend")
+    return JsonResponse({"user": request.user.get_username()})
 
 
 def home(request: HttpRequest) -> JsonResponse:
