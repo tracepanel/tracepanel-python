@@ -4,6 +4,16 @@
 
 ### Added
 
+- Channels' background work is a task, `task.system` `channels`, on the
+  Tasks page and in its Live. A task is a message sent to a worker channel
+  (a channel name without `!`, the kind `runworker` listens on): the send is
+  a `task.enqueue` span, the worker's handling of it a `task` trace named
+  after the consumer's handler, with its module (`ThumbnailConsumer`'s
+  `thumbnails_generate` for type `thumbnails.generate`), and linked to the
+  send. The sender says `enqueued`, the worker `started` and `finished`, and a
+  `runworker` process sends heartbeats from its start, whatever the channel
+  layer. WebSocket and HTTP consumers serve requests, and group sends reach
+  them: neither is a task.
 - Task workflows link up across Celery, RQ, Dramatiq and Django Tasks. A
   run records the task it follows (`task.parent_id`), the first task of its
   workflow (`task.root_id`) and its group (`task.group_id`): Celery's chain,
@@ -121,6 +131,9 @@
   worker's main process writes it. A run cut short by a cold shutdown or
   `revoke(terminate=True)` reads REVOKED with Terminated, one whose pool
   process died fails with WorkerLostError. They read ok, or had no trace.
+
+- A Channels Redis layer configured with `("host", port)` pairs names its
+  server on its spans. They said `localhost:6379`, whatever the host.
 
 ## 0.4.1 (2026-10-21)
 

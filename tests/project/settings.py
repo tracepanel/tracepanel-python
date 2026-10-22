@@ -52,6 +52,7 @@ LOGGING = {
 
 # Channels tests: an in-memory layer (group messages within the test process).
 CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
+ASGI_APPLICATION = "tests.project.sockets.application"
 
 # Django Tasks tests: the framework (django.tasks on Django 6+, the django_tasks backport before) with an immediate
 # default backend and the database backend from django-tasks-db.
