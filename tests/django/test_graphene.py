@@ -149,8 +149,32 @@ def test_invalid_document_is_not_an_exception(client: Client, traces: list[Trace
     assert graphql_spans(invalid) == [("graphql", "query Typo"), ("graphql", "parse"), ("graphql", "validate")]
     assert invalid.errors == []
 
-    assert (unparsed.name, unparsed.attrs["graphql.errors"], unparsed.errors) == ("GraphQL query anonymous", 1, [])
-    assert graphql_spans(unparsed) == [("graphql", "query anonymous"), ("graphql", "parse")]
+    # No operation at all: not a query, named apart from the anonymous ones.
+    assert (unparsed.name, unparsed.attrs["graphql.errors"], unparsed.errors) == ("GraphQL syntax error", 1, [])
+    assert unparsed.attrs == IsPartialDict(
+        {
+            "graphql.operation": "syntax error",
+            "graphql.operation.type": None,
+            "graphql.operation.name": None,
+            "graphql.document": "query {",
+        }
+    )
+    assert graphql_spans(unparsed) == [("graphql", "syntax error"), ("graphql", "parse")]
+
+
+@pytest.mark.django_db
+def test_syntax_error_is_not_an_anonymous_query(client: Client, traces: list[Trace], store: AgentStore) -> None:
+    post(client, "{ ...Team } fragment Team on Query { users { id } }")
+    post(client, "query Team {", "Team")
+    store.write(traces)
+
+    assert [trace.name for trace in traces] == ["GraphQL query anonymous", "GraphQL syntax error"]
+
+    assert store.list_graphql() == IsList(
+        IsPartialDict(operation="query anonymous", type="query", name=None, calls=1),
+        IsPartialDict(operation="syntax error", type=None, name=None, calls=1),
+        check_order=False,
+    )
 
 
 @pytest.mark.django_db
