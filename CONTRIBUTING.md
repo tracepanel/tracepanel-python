@@ -86,7 +86,7 @@ enforces that. Imports use full paths.
 | `src/tracepanel/wsgi/` | `tracepanel.wsgi.install(app)` and the WSGI middleware |
 | `src/tracepanel/flask/` | Flask on `tracepanel.wsgi`: the URL rule, the view, Jinja renders, errors, Werkzeug's debugger page |
 | `src/tracepanel/falcon/` | Falcon on `tracepanel.wsgi`: the URI template, the responder, errors |
-| `src/tracepanel/integrations/` | Libraries traced when installed: `logging`, `celery`, `dramatiq`, `rq`, `faststream`, `strawberry`, `sqlalchemy`, `htmx`, the database drivers (`dbapi`), OpenTelemetry |
+| `src/tracepanel/integrations/` | Libraries traced when installed: `logging`, `celery`, `dramatiq`, `rq`, `huey`, `faststream`, `strawberry`, `sqlalchemy`, `htmx`, the database drivers (`dbapi`), OpenTelemetry |
 | `src/tracepanel/_setup.py` | The steps every framework's install takes |
 | `src/tracepanel/_cli.py`, `_run.py`, `_agent.py` | The command line, `tracepanel run`, the agent's binary |
 

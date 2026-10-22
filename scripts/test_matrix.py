@@ -31,6 +31,7 @@ GROUPS = [
     "fastapi",
     "dramatiq",
     "rq",
+    "huey",
     "ninja",
     "drf",
     "flask",

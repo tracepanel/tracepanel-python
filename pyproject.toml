@@ -46,6 +46,7 @@ celery = ["celery>=5.3"]
 dramatiq = ["dramatiq>=1.17"]
 faststream = ["faststream>=0.6"]
 rq = ["rq>=2.0"]
+huey = ["huey>=2.5"]
 django-q2 = ["django-q2>=1.9"]
 channels = ["channels>=4.2"]
 strawberry = ["strawberry-graphql>=0.250"]
@@ -147,6 +148,9 @@ dramatiq = [
 rq = [
     "rq>=2.12.0",
     "fakeredis>=2.39.0",
+]
+huey = [
+    "huey>=3.4.0",
 ]
 fastapi = [
     "fastapi>=0.142.4",

@@ -1167,8 +1167,8 @@ name = "django-picklefield"
 version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/93/03/13114bccbd1ec8c026ac1ff33dae75ae6c6a5632e4769ee9cda283b9f57e/django_picklefield-3.4.0.tar.gz", hash = "sha256:3a1f740536c0e60d0dba43aa89ccdbe86760d4c3f8ec47799eae122baa741d0a", size = 12555, upload-time = "2025-11-27T03:11:53.13Z" }
 wheels = [
@@ -1180,8 +1180,8 @@ name = "django-q2"
 version = "1.11.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
     { name = "django-picklefield" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c8/6d/d5e103f31e64d61ad20da154200105d9f80a8e7b582afe80a377c70a1e3e/django_q2-1.11.1.tar.gz", hash = "sha256:640caf961f9098f26e00a22b743c4eb63da681a5390829b1ed951db677866e67", size = 100892, upload-time = "2026-08-26T02:47:43.592Z" }
@@ -1911,6 +1911,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/cd/c4/0e5636363151a2a1795e0a77617168b9ca438e1748ec05fc9b5687f93d64/httpx2_jsfetch-1.0.tar.gz", hash = "sha256:70a0e3eabfef7cce5ad9c629f7d01ca05e418f586646f4ddf14782e4c1454c60", size = 6872, upload-time = "2026-08-07T00:13:07.492Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9b/43/832f631d32e4f1211caa2ba368317739fe71f0b8530e4c9d15dc454bac2a/httpx2_jsfetch-1.0-py3-none-any.whl", hash = "sha256:cb916b707601e69a07721aabc8f3f6659be3a6893bc1ff5c6f9e02241df2da32", size = 6382, upload-time = "2026-08-07T00:13:06.567Z" },
+]
+
+[[package]]
+name = "huey"
+version = "3.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/57/25/1281d8f3febc30b5facbfc5e4163447241711591c094dac642d32c827eb0/huey-3.4.0.tar.gz", hash = "sha256:ac9b02e741f13da4092ea19bcaafc73669e97d3153914d2fed2868df144f6dfa", size = 630013, upload-time = "2026-09-04T02:04:34.521Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/31/cee585bd4d1e39947a426a6736f4e17d22b454952370fb9cf48eb3103085/huey-3.4.0-py3-none-any.whl", hash = "sha256:d0580762397744026f83baae5f2b97a62474a62b8565ac75bbafefe72f9c784f", size = 136493, upload-time = "2026-09-04T02:04:32.848Z" },
 ]
 
 [[package]]
@@ -3895,6 +3904,9 @@ faststream = [
 flask = [
     { name = "flask" },
 ]
+huey = [
+    { name = "huey" },
+]
 mongodb = [
     { name = "pymongo" },
 ]
@@ -4007,6 +4019,9 @@ flask = [
 graphene = [
     { name = "graphene-django" },
 ]
+huey = [
+    { name = "huey" },
+]
 ninja = [
     { name = "django-ninja" },
 ]
@@ -4037,6 +4052,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.142" },
     { name = "faststream", marker = "extra == 'faststream'", specifier = ">=0.6" },
     { name = "flask", marker = "extra == 'flask'", specifier = ">=3.0" },
+    { name = "huey", marker = "extra == 'huey'", specifier = ">=2.5" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.45" },
     { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.13" },
     { name = "rq", marker = "extra == 'rq'", specifier = ">=2.0" },
@@ -4045,7 +4061,7 @@ requires-dist = [
     { name = "strawberry-graphql", marker = "extra == 'strawberry'", specifier = ">=0.250" },
     { name = "tracepanel-agent", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'armv6l' and sys_platform == 'linux') or (platform_machine == 'armv7l' and sys_platform == 'linux') or (platform_machine == 'i686' and sys_platform == 'linux') or (platform_machine == 'ppc64le' and sys_platform == 'linux') or (platform_machine == 'riscv64' and sys_platform == 'linux') or (platform_machine == 's390x' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (platform_machine == 'ARM64' and sys_platform == 'win32') or (platform_machine == 'x86' and sys_platform == 'win32') or sys_platform == 'darwin'", directory = "../tracepanel" },
 ]
-provides-extras = ["django", "celery", "dramatiq", "faststream", "rq", "django-q2", "channels", "strawberry", "fastapi", "starlette", "flask", "falcon", "sqlalchemy", "mongodb", "ninja", "drf", "otel"]
+provides-extras = ["django", "celery", "dramatiq", "faststream", "rq", "huey", "django-q2", "channels", "strawberry", "fastapi", "starlette", "flask", "falcon", "sqlalchemy", "mongodb", "ninja", "drf", "otel"]
 
 [package.metadata.requires-dev]
 bench = [{ name = "pytest-codspeed", specifier = ">=5.0.3" }]
@@ -4123,6 +4139,7 @@ flask = [
     { name = "sqlalchemy", specifier = ">=2.1.4" },
 ]
 graphene = [{ name = "graphene-django", specifier = ">=3.2.3" }]
+huey = [{ name = "huey", specifier = ">=3.4.0" }]
 ninja = [{ name = "django-ninja", specifier = ">=1.7.1" }]
 otel = [{ name = "opentelemetry-sdk", specifier = ">=1.45.1" }]
 postgres = [{ name = "psycopg", extras = ["binary"], specifier = ">=3.2" }]

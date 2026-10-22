@@ -4,6 +4,19 @@
 
 ### Added
 
+- Huey is traced, plain or through `huey.contrib.djhuey`, like Celery, RQ and
+  Dramatiq (`task.system` is `huey`). Each task a consumer runs is a `task`
+  trace, linked to the `task.enqueue` span of the code that enqueued it, with
+  its arguments, result, retries, state, worker, queue wait, `eta`, priority
+  and the `timeout` that stopped it. A pipeline's steps, a chord's callback
+  and any task enqueued from a task's run record the run they follow
+  (`task.parent_id`, `task.root_id`), and a group's or chord's tasks share a
+  `task.group_id`. The Tasks page's Live lists them while they are queued,
+  running or waiting to be retried, and lists each consumer. Immediate mode
+  runs a task inside its caller: it gets a trace and no Live events. Huey's
+  messages carry nothing extra, so the link to the enqueue waits in the
+  instance's storage under `tracepanel:<task id>` until the task starts.
+  `huey_enabled = false` turns it off.
 - SQL Server: statements run through pyodbc and pymssql are traced like the
   other drivers' (`db.system` "mssql"), with N+1 and duplicate detection on
   `?`, `%s` and `%(name)s` placeholders. Under Django (mssql-django) and
