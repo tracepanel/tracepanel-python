@@ -586,7 +586,7 @@ def test_a_run_cut_short_outside_its_body_finishes_failed_with_what_cut_it(recor
         [("billiard.exceptions.SoftTimeLimitExceeded", False)],
     )
 
-    assert without_heartbeats(recorder.events)[-1] == {
+    assert without_worker_events(recorder.events)[-1] == {
         "event": "finished",
         "system": "celery",
         "id": result.id,
