@@ -247,6 +247,14 @@
   worker's main process writes it. A run cut short by a cold shutdown or
   `revoke(terminate=True)` reads REVOKED with Terminated, one whose pool
   process died fails with WorkerLostError. They read ok, or had no trace.
+- A Celery run whose soft time limit passes while tracepanel starts its trace
+  has its trace, and the next run in that worker process is not recorded
+  into it. Celery logs the exception and runs the task. The run had no
+  trace, or one that stayed current for the runs after it. Its trace now
+  says the limit (`task.timeout`) and keeps SoftTimeLimitExceeded as a
+  handled error. A run whose task_prerun never got to tracepanel is recorded
+  from its end. So is a Dramatiq message whose time limit lands in
+  tracepanel's own hooks.
 - A Django project without `django.contrib.auth` or `contenttypes` in
   INSTALLED_APPS no longer fails at startup. tracepanel imported auth's
   models for user switching, and Django refused to load them. Without auth,

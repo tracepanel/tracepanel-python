@@ -18,18 +18,22 @@ from pytest_django.fixtures import Settings
 
 from tests.agentstore import AgentStore, issues, newer
 from tests.tasklive import Recorder, live, live_when, named, without_worker_events
-from tracepanel.core.context import start_trace
+from tracepanel.core import profile
+from tracepanel.core.context import current_trace, start_trace
 from tracepanel.core.model import Link, Span, Trace
+from tracepanel.integrations import celery as celery_integration
+from tracepanel.integrations._tasks import TaskRun
 from tracepanel.storage import agent, transport
 from tracepanel.storage.transport import set_writer
 
 pytest.importorskip("celery")
 
 from billiard.einfo import ExceptionInfo
-from billiard.exceptions import WorkerLostError
+from billiard.exceptions import SoftTimeLimitExceeded, WorkerLostError
 from celery import Celery, chain, chord, group
 from celery.contrib.testing.mocks import TaskMessage
 from celery.contrib.testing.worker import start_worker
+from celery.signals import task_postrun
 from celery.worker.request import Request
 
 from tests.project import (
@@ -703,6 +707,185 @@ def test_a_failure_of_the_run_itself_is_left_to_its_own_trace(recorder: Recorder
     request.on_failure(einfo, return_ok=True)
 
     assert (recorder.traces, recorder.events) == ([], [])
+
+
+def cut_short_once(original: Callable[..., Any]) -> Callable[..., Any]:
+    """`original`, but its first call is stopped by a soft time limit, as billiard's signal handler stops it."""
+    calls = 0
+
+    def call(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise SoftTimeLimitExceeded
+        return original(*args, **kwargs)
+
+    return call
+
+
+class InterruptedAfterKeeping:
+    """The integration's lock, but leaving it once the run is kept raises SoftTimeLimitExceeded: prerun's last step."""
+
+    def __init__(self, lock: Any) -> None:  # noqa: ANN401
+        self.lock = lock
+        self.armed = True
+
+    def __enter__(self) -> None:
+        self.lock.__enter__()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.lock.__exit__(*exc_info)
+        if self.armed and celery_integration._runs:  # noqa: SLF001
+            self.armed = False
+            raise SoftTimeLimitExceeded
+
+
+@pytest.fixture
+def after_postrun() -> Generator[list[Trace | None], None, None]:
+    """The trace current once tracepanel's task_postrun is done, run by run: None each time, unless one leaked."""
+    seen: list[Trace | None] = []
+
+    def receiver(**kwargs: object) -> None:
+        del kwargs
+        seen.append(current_trace())
+
+    task_postrun.connect(receiver, weak=False, dispatch_uid="tests.after_postrun")
+    yield seen
+    task_postrun.disconnect(dispatch_uid="tests.after_postrun")
+
+
+def interrupt(where: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A soft time limit passing at that point of tracepanel's task_prerun, once."""
+    if where == "before its trace":
+        monkeypatch.setattr(celery_integration, "_scheduling", cut_short_once(celery_integration._scheduling))  # noqa: SLF001
+    elif where == "as its trace begins":
+        monkeypatch.setattr(profile, "wanted", cut_short_once(profile.wanted))
+    elif where == "once its trace began":
+        monkeypatch.setattr(celery_integration, "TaskRun", cut_short_once(TaskRun))
+    else:
+        monkeypatch.setattr(celery_integration, "_lock", InterruptedAfterKeeping(celery_integration._lock))  # noqa: SLF001
+
+
+@pytest.mark.parametrize("where", ["before its trace", "as its trace begins", "once its trace began", "once kept"])
+def test_a_soft_time_limit_in_prerun_leaves_nothing_behind_and_the_run_is_recorded(
+    where: str, traces: list[Trace], after_postrun: list[Trace | None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Celery's signal swallows the exception (it logs "Signal handler ... raised") and runs the task.
+    interrupt(where, monkeypatch)
+    first = jobs.hurried.apply(("first",))
+    second = jobs.hurried.apply(("second",))
+    cut, after = traces
+
+    assert (current_trace(), after_postrun, celery_integration._runs) == (None, [None, None], {})  # noqa: SLF001
+
+    # Prerun kept the run before the limit passed: its trace says all it knew. Otherwise one from what the task says.
+    kept = where == "once kept"
+    assert task_attrs(cut) == {
+        "task.system": "celery",
+        "task.name": "tests.project.jobs.hurried",
+        "task.id": first.id,
+        "task.queue": None,
+        "task.worker": IsStr | None,
+        "task.retries": 0,
+        "task.eager": True,
+        **({"task.trigger": "other", "task.args": "('first',)", "task.kwargs": "{}"} if kept else {}),
+        "task.state": "SUCCESS",
+        "task.result": "'first'",
+        "task.timeout": 0.005,
+    }
+    assert (cut.status, [(error.type, error.handled) for error in cut.errors]) == (
+        "ok",
+        [("billiard.exceptions.SoftTimeLimitExceeded", True)],
+    )
+
+    assert task_attrs(after) == IsPartialDict(
+        {"task.id": second.id, "task.state": "SUCCESS", "task.args": "('second',)"}
+    )
+    assert (after.status, after.errors, after.links) == ("ok", [], [])
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_soft_time_limit_in_a_workers_prerun_still_has_the_run_recorded(
+    recorder: Recorder, after_postrun: list[Trace | None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(celery_integration, "_started", cut_short_once(celery_integration._started))  # noqa: SLF001
+    first, second = jobs.hurried.delay("first"), jobs.hurried.delay("second")
+    run_all(first, second)
+    cut, after = by_kind(recorder.traces, "task")
+
+    assert after_postrun == [None, None]
+
+    assert task_attrs(cut) == {
+        "task.system": "celery",
+        "task.name": "tests.project.jobs.hurried",
+        "task.id": first.id,
+        "task.queue": "celery",
+        "task.worker": IsStr(min_length=1),
+        "task.retries": 0,
+        "task.eager": False,
+        "task.state": "SUCCESS",
+        "task.result": "'first'",
+        "task.timeout": 0.005,
+    }
+    assert [(error.type, error.handled) for error in cut.errors] == [
+        ("billiard.exceptions.SoftTimeLimitExceeded", True)
+    ]
+    assert task_attrs(after) == IsPartialDict({"task.id": second.id, "task.state": "SUCCESS", "task.queue_wait": IsInt})
+
+    assert [
+        (event["event"], event["id"])
+        for event in without_worker_events(recorder.events)
+        if event["event"] != "enqueued"
+    ] == [("finished", first.id), ("started", second.id), ("finished", second.id)]
+
+
+def test_a_soft_time_limit_in_postrun_still_writes_the_trace_and_leaves_nothing_behind(
+    traces: list[Trace], after_postrun: list[Trace | None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(celery_integration, "task_repr", cut_short_once(celery_integration.task_repr))
+    jobs.hurried.apply(("first",))
+    jobs.hurried.apply(("second",))
+    cut, after = traces
+
+    assert (current_trace(), after_postrun, celery_integration._runs) == (None, [None, None], {})  # noqa: SLF001
+
+    assert (cut.attrs["task.state"], "task.result" in cut.attrs, cut.duration > 0) == ("SUCCESS", False, True)
+    assert (after.attrs["task.state"], after.attrs["task.result"]) == ("SUCCESS", "'second'")
+
+
+def nothing(*args: object) -> None:
+    del args
+
+
+@pytest.mark.django_db
+def test_a_run_prerun_never_reached_is_recorded_from_its_end(
+    traces: list[Trace], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # As when the soft time limit stops Celery before it sends task_prerun.
+    monkeypatch.setattr(celery_integration, "_prerun", nothing)
+    broken = jobs.broken.apply()
+    hurried = jobs.hurried.apply(("late",))
+    failed, succeeded = traces
+
+    assert task_attrs(failed) == {
+        "task.system": "celery",
+        "task.name": "tests.project.jobs.broken",
+        "task.id": broken.id,
+        "task.queue": None,
+        "task.worker": IsStr | None,
+        "task.retries": 0,
+        "task.eager": True,
+        "task.state": "FAILURE",
+    }
+    assert (failed.status, [(error.type, error.handled) for error in failed.errors]) == (
+        "error",
+        [("builtins.ValueError", False)],
+    )
+
+    assert task_attrs(succeeded) == IsPartialDict(
+        {"task.id": hurried.id, "task.state": "SUCCESS", "task.result": "'late'"}
+    )
+    assert (succeeded.status, succeeded.errors, current_trace()) == ("ok", [], None)
 
 
 class PreforkWorker:

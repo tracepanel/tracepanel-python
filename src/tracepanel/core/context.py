@@ -64,39 +64,83 @@ def current_span() -> Span | None:
     return _span.get()
 
 
-@contextmanager
+class TraceBlock:
+    """A block run as a new trace (start_trace): current from __enter__ until __exit__.
+
+    An exception raised from outside can stop the code anywhere: a signal handler's (a time limit's) or another
+    thread's. Entering is all or nothing: stopped halfway, it puts the context back as it was. Exiting puts back what
+    entering found, so it can be done again when an exit was itself cut short; exiting a block that never entered, or
+    one exited already, does nothing.
+    """
+
+    def __init__(self, kind: str, name: str, attrs: Attrs | None, *, root_kind: str | None, profile: bool) -> None:
+        self.kind, self.name, self.attrs, self.root_kind, self.profile = kind, name, attrs, root_kind, profile
+        self.trace: Trace | None = None
+        self._started = 0
+        self._recording: profiling.Recording | None = None
+        self._saved: _Saved | None = None
+
+    def __enter__(self) -> Trace:
+        start = now_us()
+        self._started = time.perf_counter_ns()
+        trace = Trace(id=new_id(), kind=self.kind, name=self.name, start=start, attrs=dict(self.attrs or {}))
+        root = Span(id=new_id(), parent_id=None, kind=self.root_kind or self.kind, name=self.name, start=start)
+        trace.spans.append(root)
+        saved = _Saved(_trace.get(), _Outer(_span.get(), _outer.get()), profiling.current.get())
+        try:
+            _trace.set(trace)
+            _outer.set(saved.outer)
+            _span.set(root)
+            self._recording = profiling.SAMPLER.start() if profiling.wanted(asked=self.profile) else None
+            profiling.current.set(self._recording)
+        except BaseException:
+            saved.put_back()
+            if self._recording is not None:
+                profiling.SAMPLER.stop(self._recording)
+            raise
+        self.trace, self._saved = trace, saved
+        return trace
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        saved, trace = self._saved, self.trace
+        if saved is None or trace is None:
+            return
+        root = trace.spans[0]
+        if exc_type is not None:
+            trace.status = root.status = "error"
+        trace.duration = root.duration = (time.perf_counter_ns() - self._started) // 1000
+        recording, self._recording = self._recording, None
+        if recording is not None:
+            trace.profile = profiling.SAMPLER.stop(recording)
+        root.name = trace.name
+        saved.put_back()
+        self._saved = None
+
+
+@dataclass(slots=True, eq=False)
+class _Saved:
+    """What was current before a trace began: its end, or a beginning cut short, makes it current again."""
+
+    trace: Trace | None
+    outer: _Outer
+    recording: profiling.Recording | None
+
+    def put_back(self) -> None:
+        _trace.set(self.trace)
+        _outer.set(self.outer.previous)
+        # The span current where the trace began, or its parent when it ended meanwhile (_over).
+        _span.set(self.outer.span)
+        profiling.current.set(self.recording)
+
+
 def start_trace(
     kind: str, name: str, attrs: Attrs | None = None, *, root_kind: str | None = None, profile: bool = False
-) -> Generator[Trace, None, None]:
+) -> TraceBlock:
     """Run the block as a new trace whose root span has the same name (and kind, unless `root_kind` says).
 
     `profile`: the request asked to be profiled (the setting profiles every trace anyway).
     """
-    start = now_us()
-    started = time.perf_counter_ns()
-    trace = Trace(id=new_id(), kind=kind, name=name, start=start, attrs=dict(attrs or {}))
-    root = Span(id=new_id(), parent_id=None, kind=root_kind or kind, name=name, start=start)
-    trace.spans.append(root)
-    outer = _Outer(_span.get(), _outer.get())
-    trace_token, outer_token = _trace.set(trace), _outer.set(outer)
-    _span.set(root)
-    recording = profiling.SAMPLER.start() if profiling.wanted(asked=profile) else None
-    recording_token = profiling.current.set(recording)
-    try:
-        yield trace
-    except BaseException:
-        trace.status = root.status = "error"
-        raise
-    finally:
-        trace.duration = root.duration = (time.perf_counter_ns() - started) // 1000
-        profiling.current.reset(recording_token)
-        if recording is not None:
-            trace.profile = profiling.SAMPLER.stop(recording)
-        root.name = trace.name
-        _outer.reset(outer_token)
-        # The span current where the trace began, or its parent when it ended meanwhile (_over).
-        _span.set(outer.span)
-        _trace.reset(trace_token)
+    return TraceBlock(kind, name, attrs, root_kind=root_kind, profile=profile)
 
 
 @contextmanager

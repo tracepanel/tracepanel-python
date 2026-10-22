@@ -21,7 +21,9 @@ message was due (`task.eta`) and its actor's priority. A message sent from insid
 pipeline, a group's completion callback, an `on_success` or `on_failure` callback, any send in an actor) links to
 that run and records it as `task.parent_id`, with the first message of the line as `task.root_id`; the messages of a
 group share a `task.group_id`. A message stopped by its time limit (the TimeLimit middleware) fails with
-TimeLimitExceeded and says the limit (`task.timeout`, in seconds).
+TimeLimitExceeded and says the limit (`task.timeout`, in seconds). TimeLimit raises it from another thread, a moment
+late at times: landing in tracepanel's own hooks, it leaves no trace current for the next message, and the message is
+still recorded.
 """
 
 import functools
@@ -219,6 +221,18 @@ class TracepanelHooks:
         _heart.beat()
 
     def before_process_message(self, broker: Any, message: Any) -> None:  # noqa: ANN401
+        _leftover()
+        try:
+            self._begin(broker, message)
+        except BaseException:
+            # Stopped halfway (an exception another thread raised in this one: a time limit's, which Dramatiq can
+            # deliver a moment late): nothing begun is left current, and the message is recorded all the same, from
+            # what it says. Dramatiq fails it, and after_process_message tells how it ended.
+            if _run.get() is None:
+                _late(broker, message)
+            raise
+
+    def _begin(self, broker: Any, message: Any) -> None:  # noqa: ANN401
         name = _actor_path(broker, message.actor_name)
         if conf.matches(name, conf.get_config().ignore_tasks):
             return
@@ -226,18 +240,8 @@ class TracepanelHooks:
         started = now_us()
         # A worker that didn't boot here (one in a test) is still this process.
         _heart.start(_heart.worker or f"dramatiq@{socket.gethostname()}:{os.getpid()}")
-        attrs: Attrs = {
-            "task.system": SYSTEM,
-            "task.name": name,
-            "task.id": message.message_id,
-            "task.queue": message.queue_name,
-            "task.worker": _heart.worker or None,
-            "task.retries": int(options.get("retries") or 0),
-            "task.eager": False,
-            "task.trigger": str(options.get(TRIGGER) or "other"),
-            **_broker(broker),
-            **_priority(broker, message),
-        }
+        attrs: Attrs = {**_identity(broker, message, name), **_priority(broker, message)}
+        attrs["task.trigger"] = str(options.get(TRIGGER) or "other")
         due = options.get(ETA)
         if due:
             attrs["task.eta"] = due
@@ -248,12 +252,19 @@ class TracepanelHooks:
         if conf.get_config().capture_task_args:
             attrs.update(arguments(message.args, message.kwargs).attrs())
         context = start_trace("task", name, attrs, root_kind="task.run")
-        trace = context.__enter__()
-        parent = options.get(PARENT)
-        if isinstance(parent, str) and ":" in parent:
-            parent_trace, parent_span = parent.split(":", 1)
-            trace.links.append(Link(kind="enqueued_by", trace_id=parent_trace, span_id=parent_span))
-        _run.set(TaskRun(context=context, trace=trace))
+        run: TaskRun | None = None
+        try:
+            trace = context.__enter__()
+            parent = options.get(PARENT)
+            if isinstance(parent, str) and ":" in parent:
+                parent_trace, parent_span = parent.split(":", 1)
+                trace.links.append(Link(kind="enqueued_by", trace_id=parent_trace, span_id=parent_span))
+            run = TaskRun(context=context, trace=trace)
+            _run.set(run)
+        except BaseException:
+            if run is None or _run.get() is not run:
+                context.__exit__(None, None, None)
+            raise
         self._started(message, name, attrs)
 
     def _started(self, message: Any, name: str, attrs: Attrs) -> None:  # noqa: ANN401
@@ -279,9 +290,27 @@ class TracepanelHooks:
         exception: BaseException | None = None,
     ) -> None:
         run = _run.get()
-        _run.set(None)
         if run is None:
             return
+        try:
+            self._processed(broker, message, run, result=result, exception=exception)
+        except BaseException:
+            # Stopped halfway too: the trace is still written, and not left current for the next message.
+            run.context.__exit__(None, None, None)
+            if _run.get() is run:
+                complete(run.trace)
+                _run.set(None)
+            raise
+
+    def _processed(
+        self,
+        broker: Any,  # noqa: ANN401
+        message: Any,  # noqa: ANN401
+        run: TaskRun,
+        *,
+        result: object,
+        exception: BaseException | None,
+    ) -> None:
         trace = run.trace
         if exception is None:
             trace.attrs["task.state"] = "SUCCESS"
@@ -301,6 +330,7 @@ class TracepanelHooks:
             trace.status = "error" if failed else "ok"
         run.context.__exit__(None, None, None)
         complete(trace)
+        _run.set(None)
         _finished(message, str(trace.attrs["task.state"]))
 
     def after_skip_message(self, broker: Any, message: Any) -> None:  # noqa: ANN401, ARG002
@@ -320,6 +350,37 @@ class TracepanelHooks:
     def after_worker_shutdown(self, broker: Any, worker: Any) -> None:  # noqa: ANN401, ARG002
         """The worker process stopped, its messages processed or given back: the console drops it at once."""
         _heart.stopped()
+
+
+def _identity(broker: Any, message: Any, name: str) -> Attrs:  # noqa: ANN401
+    """What a message says of its run at once: enough for its trace when nothing more is known."""
+    return {
+        "task.system": SYSTEM,
+        "task.name": name,
+        "task.id": message.message_id,
+        "task.queue": message.queue_name,
+        "task.worker": _heart.worker or None,
+        "task.retries": int(message.options.get("retries") or 0),
+        "task.eager": False,
+        **_broker(broker),
+    }
+
+
+def _late(broker: Any, message: Any) -> None:  # noqa: ANN401
+    """A trace begun now for a message before_process_message didn't get to start, from what the message says."""
+    name = _actor_path(broker, message.actor_name)
+    if conf.matches(name, conf.get_config().ignore_tasks):
+        return
+    context = start_trace("task", name, _identity(broker, message, name), root_kind="task.run")
+    _run.set(TaskRun(context=context, trace=context.__enter__()))
+
+
+def _leftover() -> None:
+    """A run still open in this thread as the next message starts: its end was cut short. It ends now, not current."""
+    run = _run.get()
+    if run is not None:
+        _run.set(None)
+        run.context.__exit__(None, None, None)
 
 
 def _join(options: dict[str, Any], workflow: Workflow) -> None:

@@ -97,3 +97,12 @@ def cut_short() -> None:
 
 
 cut_short.backend = StartedFails(app, backend="memory")
+
+
+@app.task
+def hurried(text: str) -> str:
+    return text
+
+
+# A soft time limit of milliseconds: it can pass while Celery's task_prerun is still running.
+hurried.soft_time_limit = 0.005  # type: ignore[assignment]  # Celery takes a float, its stubs say int
