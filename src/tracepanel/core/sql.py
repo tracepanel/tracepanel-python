@@ -2,7 +2,7 @@
 
 The layer runs the statement through run() and says where it ran (`database`: alias, vendor, system, server);
 everything else is here: the span's name, the normalized statement and its fingerprint (what analysis groups by),
-the parameters kept for EXPLAIN, the place in project code, the template that issued it.
+the parameters kept for EXPLAIN, the place in project code, the template that issued it and its line.
 """
 
 import contextlib
@@ -18,7 +18,7 @@ from typing import TypeVar
 
 from tracepanel.core import conf
 from tracepanel.core.context import blocking_attrs, current_span, current_trace, now_us, record_span
-from tracepanel.core.frames import library_caller, origin
+from tracepanel.core.frames import library_caller, origin, template_place
 from tracepanel.core.model import Attrs, Scalar, Span
 
 T = TypeVar("T")
@@ -36,6 +36,21 @@ def _origin() -> dict[str, str | None]:
     """Where the project's code made the query; for a query only library code made, which library code (code.caller)."""
     made = origin(3)
     return {"code.origin": made} if made is not None else {"code.origin": None, "code.caller": library_caller(3)}
+
+
+def _template(parent: Span | None) -> Attrs:
+    """The template a query ran in, as it rendered (code.template), and its line there when the engine says it.
+
+    The template is the file of the tag or variable that made the query: a page that extends another names its own
+    file for a query in one of its blocks, the base template's for one in the rest.
+    """
+    if parent is None or parent.kind != "template":
+        return {"code.template": None}
+    name = parent.attrs.get("template.name")
+    place = template_place(3)
+    if place is None:
+        return {"code.template": name}
+    return {"code.template": place[0] or name, "code.template_line": place[1]}
 
 
 def fingerprint(sql: str) -> str:
@@ -224,7 +239,6 @@ def record(  # noqa: PLR0913 (the statement, where it ran, when, how it went)
     if current_trace() is None:
         return None
     parent = parent or current_span()
-    template = parent.attrs.get("template.name") if parent is not None and parent.kind == "template" else None
     name, statement, fingerprinted = _parsed(sql)
     return record_span(
         "sql",
@@ -238,7 +252,7 @@ def record(  # noqa: PLR0913 (the statement, where it ran, when, how it went)
             "db.params_hash": params_hash(params),
             "db.many": many,
             **_origin(),
-            "code.template": template,
+            **_template(parent),
             **({} if many else params_attrs(params)),
             **(extra or {}),
         },

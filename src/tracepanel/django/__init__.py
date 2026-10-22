@@ -64,6 +64,7 @@ def install() -> None:
         appinfo,
         auth,
         cache,
+        checks,
         commands,
         errors,
         mail,
@@ -79,6 +80,9 @@ def install() -> None:
         settings.MIDDLEWARE = [MIDDLEWARE, *settings.MIDDLEWARE]
     sync_to_async.install()
     appinfo.install()
+    # Django's system checks and migrations, for the App tab: in a server's process, not a management command's.
+    if _serving():
+        checks.install()
     sql.install()
     transactions.install()
     cache.install()

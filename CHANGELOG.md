@@ -10,6 +10,13 @@
   SQLAlchemy they are recorded once, by the ORM, and Django's atomic blocks
   are transactions. EXPLAIN shows SQL Server's estimated plan (SHOWPLAN_ALL),
   a full scan of a table marked, for the drivers, Django and SQLAlchemy.
+- A query a template made as it rendered (a lazy QuerySet its `{% for %}`
+  reads, a related object it shows) has the template's line
+  (`code.template_line`), Django's templates and Jinja's alike, and
+  `code.template` names the file that line is in: a page that extends
+  another names the base template for a query outside its own blocks. The
+  console marks these queries and, with an agent that knows the line, an
+  N+1 a template made names the template and its line in its hint.
 - Task workflows link up across Celery, RQ, Dramatiq and Django Tasks. A
   run records the task it follows (`task.parent_id`), the first task of its
   workflow (`task.root_id`) and its group (`task.group_id`): Celery's chain,
@@ -20,6 +27,16 @@
   by a job) links to that run, so the console lists the steps as related.
 - RQ's `on_success`, `on_failure` and `on_stopped` callbacks run as traces of
   their own, linked to their job's.
+- django-q2: every task a cluster runs is a `task` trace (`task.system` is
+  `django-q`), and `async_task` and `schedule` are `task.enqueue` spans the
+  run links to, as for Celery and RQ. A run says its cluster, its worker
+  process, how many runs of it came back before (`task.retries`), its group,
+  and the limit when its `timeout` stopped it. A chain's next step and a task
+  sent from inside a run follow that run (`task.parent_id`, `task.root_id`),
+  a `hook` runs as a trace of its own linked to its task's, and what the
+  scheduler enqueues is a scheduled run. `sync=True` runs inside the caller
+  like an eager Celery task. Task events and worker heartbeats feed the Tasks
+  page's Live. `django_q_enabled` turns it off.
 - A run stopped by its time limit says the limit in `task.timeout` (seconds):
   Celery's soft limit (SoftTimeLimitExceeded), RQ's `job_timeout`
   (JobTimeoutException) and Dramatiq's TimeLimit (TimeLimitExceeded). Celery's
@@ -49,6 +66,18 @@
   the servers, tracepanel itself, and for Django the packages its
   `INSTALLED_APPS` come from. FastAPI, Starlette and Falcon apps send the
   versions only. `capture_settings` turns the settings off.
+- What Django finds wrong with the app reaches the console's App tab too
+  (needs an agent that keeps an app's checks). Its system checks, as
+  `manage.py check` reports them, the deployment ones too when DEBUG is off:
+  each with its id, level, message, hint and object, the silenced ones and
+  those that query the database left out. The migrations not applied to the
+  default database yet, by app, as `runserver` warns of them. And the model
+  changes with no migration, as `makemigrations --check` finds them. They
+  are worked out once per server process, in a thread of their own, from the
+  first connection to the agent on: the hello carries them once known, and
+  the agent connected then is told in a frame. A database that doesn't
+  answer leaves the migrations applied unknown, and an in-memory one is left
+  alone. A management command other than a server doesn't run them.
 - A template span keeps the context the template got, as Django's template
   debug panels show it: its names in order, each value as an error's local
   variables show theirs (`repr()`, cut, under a sensitive name masked, the
@@ -111,6 +140,9 @@
 
 ### Fixed
 
+- A query a Jinja template made, in a template file inside the project, has
+  the line of project code that rendered it as its `code.origin`. It had the
+  template's file with a line of Jinja's compiled code.
 - RQ jobs scheduled with `enqueue_at` or `enqueue_in`, or enqueued in a batch
   with `enqueue_many` (and Groups), have their enqueue span, their link to it
   and their `enqueued` event. Only `enqueue` had them.

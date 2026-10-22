@@ -12,14 +12,15 @@ import functools
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import AbstractContextManager
 from inspect import iscoroutinefunction
+from types import FrameType
 from typing import TYPE_CHECKING, Any
 
 from django.core.handlers.base import BaseHandler
-from django.template.base import Template
+from django.template.base import Node, Template
 from django.template.context import Context, RequestContext
 from django.template.loader_tags import BlockNode
 
-from tracepanel.core import values
+from tracepanel.core import frames, values
 from tracepanel.core.context import current_span, current_trace, start_span
 from tracepanel.core.patching import patch, patched
 
@@ -99,7 +100,20 @@ def record_context(context: Any) -> None:  # noqa: ANN401 (Django's Context)
         span.attrs.update(values.context_attrs(context_items(context)))
 
 
+def _node_place(frame: FrameType) -> tuple[str | None, int] | None:
+    """The template and line of the node a frame of Node.render_annotated renders: a {% for %}, a {{ variable }}."""
+    node = frame.f_locals.get("self")
+    lineno = getattr(getattr(node, "token", None), "lineno", None)
+    if not isinstance(lineno, int):
+        return None
+    name = getattr(getattr(node, "origin", None), "template_name", None)
+    return (str(name) if name else None), lineno
+
+
 def install() -> None:
+    # Every node renders through render_annotated(): a query made under one is that node's, at its line.
+    frames.template_frames(Node.render_annotated.__code__, _node_place)
+
     # Django calls make_view_atomic() on the resolved view right before calling it.
     if not patched(BaseHandler, "make_view_atomic"):
         original_atomic = BaseHandler.make_view_atomic

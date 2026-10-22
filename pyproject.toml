@@ -46,6 +46,7 @@ celery = ["celery>=5.3"]
 dramatiq = ["dramatiq>=1.17"]
 faststream = ["faststream>=0.6"]
 rq = ["rq>=2.0"]
+django-q2 = ["django-q2>=1.9"]
 channels = ["channels>=4.2"]
 strawberry = ["strawberry-graphql>=0.250"]
 fastapi = ["fastapi>=0.142"]
@@ -100,6 +101,9 @@ dev = [
 django-tasks = [
     "django-tasks>=0.12.0",
     "django-tasks-db>=0.13.0",
+]
+django-q2 = [
+    "django-q2>=1.11.1",
 ]
 postgres = ["psycopg[binary]>=3.2"]
 # The HTTP clients and Redis clients tracepanel wraps (httpx2 comes with the fastapi group, fakeredis with rq).

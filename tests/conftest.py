@@ -84,10 +84,15 @@ def fresh_config(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]
 
 @pytest.fixture(autouse=True)
 def fresh_app_info() -> Generator[None, None, None]:
-    """What a hello says of the app is worked out anew in each test, from the sources the test leaves in place."""
-    settings, packages = appinfo._settings, list(appinfo._packages)  # noqa: SLF001
+    """What a hello says of the app is worked out anew in each test, from the sources the test leaves in place.
+
+    No checks unless a test adds them: Django's would read the test database from a thread of their own.
+    """
+    settings, packages, checks = appinfo._settings, list(appinfo._packages), list(appinfo._checks)  # noqa: SLF001
+    appinfo._checks.clear()  # noqa: SLF001
     appinfo.reset()
     yield
     appinfo._settings = settings  # noqa: SLF001
     appinfo._packages[:] = packages  # noqa: SLF001
+    appinfo._checks[:] = checks  # noqa: SLF001
     appinfo.reset()
