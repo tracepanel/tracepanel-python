@@ -57,6 +57,8 @@ PACKAGES = (
     "djangorestframework",
     "django-ninja",
     "strawberry-graphql",
+    "graphene",
+    "graphene-django",
     "pydantic",
     "django-tasks",
     "django-q2",

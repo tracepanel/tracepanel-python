@@ -11,6 +11,10 @@ resolution-markers = [
     "python_full_version < '3.12' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
     "(python_full_version < '3.12' and platform_python_implementation != 'PyPy') or (python_full_version < '3.12' and sys_platform != 'win32')",
 ]
+conflicts = [[
+    { package = "tracepanel", group = "graphene" },
+    { package = "tracepanel", group = "strawberry" },
+]]
 
 [[package]]
 name = "aio-pika"
@@ -45,7 +49,7 @@ dependencies = [
     { name = "frozenlist" },
     { name = "multidict" },
     { name = "propcache" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
     { name = "yarl" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6c/4c/bdccd81e9ee225b69c60e7766c9a5b05364f118f4d383713b89a682d772d/aiohttp-3.14.5.tar.gz", hash = "sha256:5558a7f5a05af9ecf744af91e5baefc436f93c9333e656c27ec253f9a6bbe178", size = 8078052, upload-time = "2026-10-11T01:05:12.408Z" }
@@ -262,7 +266,7 @@ version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "frozenlist" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/61/62/06741b579156360248d1ec624842ad0edf697050bbaf7c3e46394e106ad1/aiosignal-1.4.0.tar.gz", hash = "sha256:f47eecd9468083c2029cc99945502cb7708b082c232f9aca65da147157b251c7", size = 25007, upload-time = "2025-07-03T22:54:43.528Z" }
 wheels = [
@@ -314,7 +318,7 @@ version = "4.15.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "idna" },
-    { name = "typing-extensions", marker = "python_full_version < '3.15'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.15' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a9/d2/f4d173e22df740bc37b1db102b386ba719b66e95b0f0d751f556b387e6d2/anyio-4.15.1.tar.gz", hash = "sha256:9f28306018cbd6d329e64a36d58256edff76dd996fe423bc957326e578b82a94", size = 276966, upload-time = "2026-09-05T10:42:39.44Z" }
 wheels = [
@@ -484,9 +488,9 @@ dependencies = [
     { name = "cffi" },
     { name = "cryptography" },
     { name = "hyperlink" },
-    { name = "msgpack", marker = "platform_python_implementation == 'CPython'" },
+    { name = "msgpack", marker = "platform_python_implementation == 'CPython' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
     { name = "txaio" },
-    { name = "u-msgpack-python", marker = "platform_python_implementation != 'CPython'" },
+    { name = "u-msgpack-python", marker = "platform_python_implementation != 'CPython' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
     { name = "ujson" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/de/73/f109f563c27e048e45d135d81af19e6ca391e24905550b06bd1c9d674c57/autobahn-26.7.1.tar.gz", hash = "sha256:c6949a2c6eb95fb1c218837dbda0a59abbbebafb8b11098551c01a7061dfd245", size = 14056542, upload-time = "2026-07-15T19:14:01.246Z" }
@@ -631,7 +635,7 @@ name = "cffi"
 version = "2.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy'" },
+    { name = "pycparser", marker = "implementation_name != 'PyPy' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz", hash = "sha256:dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be", size = 530807, upload-time = "2026-08-03T21:21:18.939Z" }
 wheels = [
@@ -730,8 +734,8 @@ version = "4.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asgiref" },
-    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/74/92/b18d4bb54d14986a8b35215a1c9e6a7f9f4d57ca63ac9aee8290ebb4957d/channels-4.3.2.tar.gz", hash = "sha256:f2bb6bfb73ad7fb4705041d07613c7b4e69528f01ef8cb9fb6c21d9295f15667", size = 27023, upload-time = "2025-11-20T15:13:05.102Z" }
 wheels = [
@@ -1017,7 +1021,7 @@ name = "cryptography"
 version = "50.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "platform_python_implementation != 'PyPy'" },
+    { name = "cffi", marker = "platform_python_implementation != 'PyPy' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9d/af/182eb91b0df3fe75c4d9f26fe70684569566745f6ba7e5c9c73a862c5252/cryptography-50.0.2.tar.gz", hash = "sha256:7b46165bb56eb4704e2eaaf86f3c940d19154535d9b0ca7d6d590b04060e00d5", size = 880623, upload-time = "2026-09-30T15:30:04.884Z" }
 wheels = [
@@ -1113,9 +1117,9 @@ resolution-markers = [
     "(python_full_version < '3.12' and platform_python_implementation != 'PyPy') or (python_full_version < '3.12' and sys_platform != 'win32')",
 ]
 dependencies = [
-    { name = "asgiref" },
-    { name = "sqlparse" },
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "asgiref", marker = "python_full_version < '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "sqlparse", marker = "python_full_version < '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "tzdata", marker = "(python_full_version < '3.12' and sys_platform == 'win32') or (python_full_version >= '3.12' and extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry') or (sys_platform != 'win32' and extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/85/fe/79e692b430c7721bf4b812c328bfe687e73e3f28f56611a6a18a97e887cc/django-5.2.18.tar.gz", hash = "sha256:461c5dd06d2ea16bd5ca37d3f46e4def1d6b0fe7588c6f4e2119517bb0af8b2d", size = 10910238, upload-time = "2026-10-06T13:01:09.371Z" }
 wheels = [
@@ -1135,9 +1139,9 @@ resolution-markers = [
     "(python_full_version == '3.12.*' and platform_python_implementation != 'PyPy') or (python_full_version == '3.12.*' and sys_platform != 'win32')",
 ]
 dependencies = [
-    { name = "asgiref" },
-    { name = "sqlparse" },
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "asgiref", marker = "python_full_version >= '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "sqlparse", marker = "python_full_version >= '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "tzdata", marker = "(python_full_version >= '3.12' and sys_platform == 'win32') or (python_full_version < '3.12' and extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry') or (sys_platform != 'win32' and extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/89/24/20d187a22ac821288b53c53b8f696019dcb0c7b4f973f052ade19392c74d/django-6.1.2.tar.gz", hash = "sha256:a1e92451ccb8b514e91bbb3b6d186d20b4030558f116b5d9de6535455ff210b7", size = 11251425, upload-time = "2026-10-06T12:53:29.622Z" }
 wheels = [
@@ -1149,8 +1153,8 @@ name = "django-ninja"
 version = "1.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
     { name = "pydantic" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/55/0f/5c6811706676be4c5faf5a3fd0d3ad56293db7ce8f0cc62c3e2f8e23b26d/django_ninja-1.7.1.tar.gz", hash = "sha256:2183ee5426a8c95bfabae1b7f60c471a56c48022296eaaf1cc54b00010b07ee6", size = 2341814, upload-time = "2026-09-19T05:35:56.437Z" }
@@ -1190,8 +1194,8 @@ name = "django-stubs"
 version = "6.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
     { name = "django-stubs-ext" },
     { name = "types-pyyaml" },
     { name = "typing-extensions" },
@@ -1206,8 +1210,8 @@ name = "django-stubs-ext"
 version = "6.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
     { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d9/62/de532d58736d671b9ac0c0467909a9429758ae579d636e868ce74519566b/django_stubs_ext-6.1.2.tar.gz", hash = "sha256:2142da7fffbbe897ccecf9b4c97e09ea1a2e9291760b0a824b4c402b375ce6f9", size = 7221, upload-time = "2026-10-05T06:46:43.717Z" }
@@ -1220,8 +1224,8 @@ name = "django-tasks"
 version = "0.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
     { name = "django-stubs-ext" },
     { name = "typing-extensions" },
 ]
@@ -1235,8 +1239,8 @@ name = "django-tasks-db"
 version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
     { name = "django-stubs-ext" },
     { name = "typing-extensions" },
 ]
@@ -1250,8 +1254,8 @@ name = "djangorestframework"
 version = "3.18.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8d/b2/1cee76b188301f7d03169ca77fab2b3d3ec5d01b3469189f944af2d7f11a/djangorestframework-3.18.3.tar.gz", hash = "sha256:446a9b352e7eff630421ab3f2328bd2401b109a9470afa4a31189994911ed030", size = 923563, upload-time = "2026-10-06T21:33:51.521Z" }
 wheels = [
@@ -1392,7 +1396,7 @@ wheels = [
 
 [package.optional-dependencies]
 confluent = [
-    { name = "confluent-kafka" },
+    { name = "confluent-kafka", marker = "python_full_version < '3.15' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 kafka = [
     { name = "aiokafka" },
@@ -1569,12 +1573,86 @@ wheels = [
 ]
 
 [[package]]
+name = "graphene"
+version = "3.4.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "graphql-core", version = "3.2.13", source = { registry = "https://pypi.org/simple" } },
+    { name = "graphql-relay" },
+    { name = "python-dateutil" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cc/f6/bf62ff950c317ed03e77f3f6ddd7e34aaa98fe89d79ebd660c55343d8054/graphene-3.4.3.tar.gz", hash = "sha256:2a3786948ce75fe7e078443d37f609cbe5bb36ad8d6b828740ad3b95ed1a0aaa", size = 44739, upload-time = "2024-11-09T20:44:25.757Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/66/e0/61d8e98007182e6b2aca7cf65904721fb2e4bce0192272ab9cb6f69d8812/graphene-3.4.3-py2.py3-none-any.whl", hash = "sha256:820db6289754c181007a150db1f7fff544b94142b556d12e3ebc777a7bf36c71", size = 114894, upload-time = "2024-11-09T20:44:23.851Z" },
+]
+
+[[package]]
+name = "graphene-django"
+version = "3.2.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'group-10-tracepanel-graphene') or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and extra == 'group-10-tracepanel-graphene') or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "graphene" },
+    { name = "graphql-core", version = "3.2.13", source = { registry = "https://pypi.org/simple" } },
+    { name = "graphql-relay" },
+    { name = "promise" },
+    { name = "text-unidecode" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6f/7a/8aef131349329dcd167578720f6364412f1728bfda14bba22c1e7b5d8365/graphene-django-3.2.3.tar.gz", hash = "sha256:d831bfe8e9a6e77e477b7854faef4addb318f386119a69ee4c57b74560f3e07d", size = 88393, upload-time = "2025-03-13T08:33:03.949Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/18/35/ab9c668222f6271a0b71efb147c46816229dbb9fa5d15ee6b025eb08d4b2/graphene_django-3.2.3-py2.py3-none-any.whl", hash = "sha256:0c673a4dad315b26b4d18eb379ad0c7027fd6a36d23a1848b7c7c09a14a9271e", size = 114959, upload-time = "2025-03-13T08:33:02.453Z" },
+]
+
+[[package]]
+name = "graphql-core"
+version = "3.2.13"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.15' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version >= '3.15' and platform_python_implementation != 'PyPy') or (python_full_version >= '3.15' and sys_platform != 'win32')",
+    "python_full_version >= '3.13' and python_full_version < '3.15' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version >= '3.13' and python_full_version < '3.15' and platform_python_implementation != 'PyPy') or (python_full_version >= '3.13' and python_full_version < '3.15' and sys_platform != 'win32')",
+    "python_full_version == '3.12.*' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version == '3.12.*' and platform_python_implementation != 'PyPy') or (python_full_version == '3.12.*' and sys_platform != 'win32')",
+    "python_full_version < '3.12' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version < '3.12' and platform_python_implementation != 'PyPy') or (python_full_version < '3.12' and sys_platform != 'win32')",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4e/5e/aa0d4e701b50db0bab71b125dd19ddb0f98c638d008d6f7e3d8ce9cbc92e/graphql_core-3.2.13.tar.gz", hash = "sha256:bb81dd266d4ab7b591bd976f1b23639d97776cb9ac1a896b4a93c271e11ed618", size = 577471, upload-time = "2026-09-27T12:22:57.136Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1f/b4/b52a324b0b297ddc49b8ea31a51d39fae63132f694a267b9381d94e2e0af/graphql_core-3.2.13-py3-none-any.whl", hash = "sha256:b0eb04f2c31556b2310a77c8fb53c74e8b56570f8fea594d89c6ef7827dbb497", size = 268191, upload-time = "2026-09-27T12:22:55.661Z" },
+]
+
+[[package]]
 name = "graphql-core"
 version = "3.3.0"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.15' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version >= '3.15' and platform_python_implementation != 'PyPy') or (python_full_version >= '3.15' and sys_platform != 'win32')",
+    "python_full_version >= '3.13' and python_full_version < '3.15' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version >= '3.13' and python_full_version < '3.15' and platform_python_implementation != 'PyPy') or (python_full_version >= '3.13' and python_full_version < '3.15' and sys_platform != 'win32')",
+    "python_full_version == '3.12.*' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version == '3.12.*' and platform_python_implementation != 'PyPy') or (python_full_version == '3.12.*' and sys_platform != 'win32')",
+    "python_full_version < '3.12' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version < '3.12' and platform_python_implementation != 'PyPy') or (python_full_version < '3.12' and sys_platform != 'win32')",
+]
 sdist = { url = "https://files.pythonhosted.org/packages/fa/90/dfade6d16a55abb45e41b215fcdc940e4f119a6ac7d87430d45d020b659f/graphql_core-3.3.0.tar.gz", hash = "sha256:fd3424e88af3f3211931c6ff96350f1cd9069cf0f1a31b9972899e35d39136b5", size = 726439, upload-time = "2026-09-27T14:50:14.57Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0c/13/03fb01b3581134cc30d7dd3fb8a9c429267574ace881a9e72c2f57896ee9/graphql_core-3.3.0-py3-none-any.whl", hash = "sha256:d37fac6ef4dfc3eaa5daa59dcb498d7cbb118439d240993c68fddc4cb1bade44", size = 347906, upload-time = "2026-09-27T14:50:12.905Z" },
+]
+
+[[package]]
+name = "graphql-relay"
+version = "3.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "graphql-core", version = "3.2.13", source = { registry = "https://pypi.org/simple" } },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d1/13/98fbf8d67552f102488ffc16c6f559ce71ea15f6294728d33928ab5ff14d/graphql-relay-3.2.0.tar.gz", hash = "sha256:1ff1c51298356e481a0be009ccdff249832ce53f30559c1338f22a0e0d17250c", size = 50027, upload-time = "2022-04-16T11:03:45.447Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/74/16/a4cf06adbc711bd364a73ce043b0b08d8fa5aae3df11b6ee4248bcdad2e0/graphql_relay-3.2.0-py3-none-any.whl", hash = "sha256:c9b22bd28b170ba1fe674c74384a8ff30a76c8e26f88ac3aa1584dd3179953e5", size = 16940, upload-time = "2022-04-16T11:03:43.895Z" },
 ]
 
 [[package]]
@@ -1814,12 +1892,12 @@ name = "httpx2"
 version = "2.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio", marker = "sys_platform != 'emscripten'" },
-    { name = "httpcore2", marker = "sys_platform != 'emscripten'" },
-    { name = "httpx2-jsfetch", marker = "python_full_version >= '3.12' and sys_platform == 'emscripten'" },
+    { name = "anyio", marker = "sys_platform != 'emscripten' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "httpcore2", marker = "sys_platform != 'emscripten' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "httpx2-jsfetch", marker = "(python_full_version >= '3.12' and sys_platform == 'emscripten') or (python_full_version < '3.12' and extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry') or (sys_platform != 'emscripten' and extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
     { name = "idna" },
-    { name = "truststore", marker = "sys_platform != 'emscripten'" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "truststore", marker = "sys_platform != 'emscripten' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d5/44/474bef2a0e9d90f1715d32cb98b0738695ca17ba324095fb2497ed7fbd59/httpx2-2.13.1.tar.gz", hash = "sha256:e48744a19e3af5ee48313d0ce5fe941d5422fae5705ea922a4aabf94d7800dfa", size = 100405, upload-time = "2026-09-23T07:47:23.052Z" }
 wheels = [
@@ -2550,6 +2628,15 @@ wheels = [
 ]
 
 [[package]]
+name = "promise"
+version = "2.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cf/9c/fb5d48abfe5d791cd496e4242ebcf87a4bb2e0c3dcd6e0ae68c11426a528/promise-2.3.tar.gz", hash = "sha256:dfd18337c523ba4b6a58801c164c1904a9d4d1b1747c7d5dbf45b693a49d93d0", size = 19534, upload-time = "2019-12-18T07:31:43.07Z" }
+
+[[package]]
 name = "prompt-toolkit"
 version = "3.0.53"
 source = { registry = "https://pypi.org/simple" }
@@ -2694,8 +2781,8 @@ name = "psycopg"
 version = "3.3.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "tzdata", marker = "sys_platform == 'win32' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/76/26/3ea4ca5eaea1c0debcdf7ee7c1613fbe721dc27a03c461c0817ffd8a0601/psycopg-3.3.6.tar.gz", hash = "sha256:c081f2250df751a943036e42db6df4571c66cd0aabe8291a7a506512b12007d2", size = 168171, upload-time = "2026-09-18T13:22:55.152Z" }
 wheels = [
@@ -2704,7 +2791,7 @@ wheels = [
 
 [package.optional-dependencies]
 binary = [
-    { name = "psycopg-binary", marker = "implementation_name != 'pypy'" },
+    { name = "psycopg-binary", marker = "implementation_name != 'pypy' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 
 [[package]]
@@ -3043,7 +3130,7 @@ version = "26.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3f/e8/7325d258199b159eb2c03fe32107533e2832e70e63f4fb88a6aa00023201/pyopenssl-26.4.0.tar.gz", hash = "sha256:28dfcce0162b9211413e26dfbfdf1d24317fbeba18fc93c12400a1856b2a0bc7", size = 182046, upload-time = "2026-08-01T19:50:50.512Z" }
 wheels = [
@@ -3074,7 +3161,7 @@ name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
     { name = "iniconfig" },
     { name = "packaging" },
     { name = "pluggy" },
@@ -3203,7 +3290,7 @@ name = "redis"
 version = "8.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "async-timeout", marker = "python_full_version < '3.11.3'" },
+    { name = "async-timeout", marker = "python_full_version < '3.11.3' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a8/99/604f0b666d4c616d891cf77ebb9db6bb21601344c051aebf1b72b9ff915f/redis-8.1.0.tar.gz", hash = "sha256:6e1a19beef9225c83efd689c7e6b7da2d5215b1f42cd13b7fc3714d0a09c7b25", size = 5254356, upload-time = "2026-07-30T08:51:00.269Z" }
 wheels = [
@@ -3217,7 +3304,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
     { name = "rpds-py" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/22/f5/df4e9027acead3ecc63e50fe1e36aca1523e1719559c499951bb4b53188f/referencing-0.37.0.tar.gz", hash = "sha256:44aefc3142c5b842538163acb373e24cce6632bd54bdb01b21ad5863489f50d8", size = 78036, upload-time = "2025-10-13T15:30:48.871Z" }
 wheels = [
@@ -3559,7 +3646,7 @@ version = "1.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7b/2b/3850dc6bf7ef71b088962eba31dafc6cffd2f96e577ebb0bb316df96da3e/starlette-1.7.0.tar.gz", hash = "sha256:c79f74ea63cff761804fbbfb182f1e0b440c2d07b164d24700c5a1bab5d6ff5d", size = 2736246, upload-time = "2026-09-23T07:30:26.35Z" }
 wheels = [
@@ -3568,14 +3655,50 @@ wheels = [
 
 [[package]]
 name = "strawberry-graphql"
+version = "0.327.7"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.15' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version >= '3.15' and platform_python_implementation != 'PyPy') or (python_full_version >= '3.15' and sys_platform != 'win32')",
+    "python_full_version >= '3.13' and python_full_version < '3.15' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version >= '3.13' and python_full_version < '3.15' and platform_python_implementation != 'PyPy') or (python_full_version >= '3.13' and python_full_version < '3.15' and sys_platform != 'win32')",
+    "python_full_version == '3.12.*' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version == '3.12.*' and platform_python_implementation != 'PyPy') or (python_full_version == '3.12.*' and sys_platform != 'win32')",
+    "python_full_version < '3.12' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version < '3.12' and platform_python_implementation != 'PyPy') or (python_full_version < '3.12' and sys_platform != 'win32')",
+]
+dependencies = [
+    { name = "cross-web", marker = "extra == 'group-10-tracepanel-graphene'" },
+    { name = "graphql-core", version = "3.2.13", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-10-tracepanel-graphene'" },
+    { name = "packaging", marker = "extra == 'group-10-tracepanel-graphene'" },
+    { name = "python-dateutil", marker = "extra == 'group-10-tracepanel-graphene'" },
+    { name = "typing-extensions", marker = "extra == 'group-10-tracepanel-graphene'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/03/dd/928852c07ceb4881281bd1d9472f11d2bbe1ccb5b400f1aba2529a754f53/strawberry_graphql-0.327.7.tar.gz", hash = "sha256:b84f968f8753037508c8f370b8c64da408e3bf759553d6e814a5a4dc88152fb2", size = 243869, upload-time = "2026-09-07T19:36:24.934Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0d/09/e0deac5d4f466f6ecae1b91a91d1a291aad1890960a5d891bb80bda3425c/strawberry_graphql-0.327.7-py3-none-any.whl", hash = "sha256:0c653f16fe2a35b5a672fb5492cee5243a2f44f209247a946eddc1a6399b2284", size = 347817, upload-time = "2026-09-07T19:36:22.775Z" },
+]
+
+[[package]]
+name = "strawberry-graphql"
 version = "0.332.0"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.15' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version >= '3.15' and platform_python_implementation != 'PyPy') or (python_full_version >= '3.15' and sys_platform != 'win32')",
+    "python_full_version >= '3.13' and python_full_version < '3.15' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version >= '3.13' and python_full_version < '3.15' and platform_python_implementation != 'PyPy') or (python_full_version >= '3.13' and python_full_version < '3.15' and sys_platform != 'win32')",
+    "python_full_version == '3.12.*' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version == '3.12.*' and platform_python_implementation != 'PyPy') or (python_full_version == '3.12.*' and sys_platform != 'win32')",
+    "python_full_version < '3.12' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
+    "(python_full_version < '3.12' and platform_python_implementation != 'PyPy') or (python_full_version < '3.12' and sys_platform != 'win32')",
+]
 dependencies = [
-    { name = "cross-web" },
-    { name = "graphql-core" },
-    { name = "packaging" },
-    { name = "python-dateutil" },
-    { name = "typing-extensions" },
+    { name = "cross-web", marker = "extra == 'group-10-tracepanel-strawberry' or extra != 'group-10-tracepanel-graphene'" },
+    { name = "graphql-core", version = "3.3.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-10-tracepanel-strawberry' or extra != 'group-10-tracepanel-graphene'" },
+    { name = "packaging", marker = "extra == 'group-10-tracepanel-strawberry' or extra != 'group-10-tracepanel-graphene'" },
+    { name = "python-dateutil", marker = "extra == 'group-10-tracepanel-strawberry' or extra != 'group-10-tracepanel-graphene'" },
+    { name = "typing-extensions", marker = "extra == 'group-10-tracepanel-strawberry' or extra != 'group-10-tracepanel-graphene'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b6/b4/61a2535754776d331a37752d9a2c7b6e0a5493c3d90cd5193fe10f223ea2/strawberry_graphql-0.332.0.tar.gz", hash = "sha256:73126346571b6338d8b6b0d04879002b63076f04eb735795ce9464aa6d304ef2", size = 252724, upload-time = "2026-10-06T18:29:49.921Z" }
 wheels = [
@@ -3583,11 +3706,20 @@ wheels = [
 ]
 
 [[package]]
+name = "text-unidecode"
+version = "1.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ab/e2/e9a00f0ccb71718418230718b3d900e71a5d16e701a3dae079a21e9cd8f8/text-unidecode-1.3.tar.gz", hash = "sha256:bad6603bb14d279193107714b288be206cac565dfa49aa5b105294dd5c4aab93", size = 76885, upload-time = "2019-08-30T21:36:45.405Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a6/a5/c0b6468d3824fe3fde30dbb5e1f687b291608f9473681bbf7dabbf5a87d7/text_unidecode-1.3-py2.py3-none-any.whl", hash = "sha256:1311f10e8b895935241623731c2ba64f4c455287888b18189350b67134a822e8", size = 78154, upload-time = "2019-08-30T21:37:03.543Z" },
+]
+
+[[package]]
 name = "tracepanel"
 version = "0.4.1"
 source = { editable = "." }
 dependencies = [
-    { name = "tracepanel-agent", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'armv6l' and sys_platform == 'linux') or (platform_machine == 'armv7l' and sys_platform == 'linux') or (platform_machine == 'i686' and sys_platform == 'linux') or (platform_machine == 'ppc64le' and sys_platform == 'linux') or (platform_machine == 'riscv64' and sys_platform == 'linux') or (platform_machine == 's390x' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (platform_machine == 'ARM64' and sys_platform == 'win32') or (platform_machine == 'x86' and sys_platform == 'win32') or sys_platform == 'darwin'" },
+    { name = "tracepanel-agent", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'armv6l' and sys_platform == 'linux') or (platform_machine == 'armv7l' and sys_platform == 'linux') or (platform_machine == 'i686' and sys_platform == 'linux') or (platform_machine == 'ppc64le' and sys_platform == 'linux') or (platform_machine == 'riscv64' and sys_platform == 'linux') or (platform_machine == 's390x' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (platform_machine == 'ARM64' and sys_platform == 'win32') or (platform_machine == 'x86' and sys_platform == 'win32') or sys_platform == 'darwin' or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry') or (sys_platform == 'linux' and extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry') or (sys_platform == 'win32' and extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 
 [package.optional-dependencies]
@@ -3598,8 +3730,8 @@ channels = [
     { name = "channels" },
 ]
 django = [
-    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 django-q2 = [
     { name = "django-q2" },
@@ -3641,7 +3773,8 @@ starlette = [
     { name = "starlette" },
 ]
 strawberry = [
-    { name = "strawberry-graphql" },
+    { name = "strawberry-graphql", version = "0.327.7", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-10-tracepanel-graphene'" },
+    { name = "strawberry-graphql", version = "0.332.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-10-tracepanel-strawberry' or extra != 'group-10-tracepanel-graphene'" },
 ]
 
 [package.dev-dependencies]
@@ -3665,8 +3798,8 @@ clients = [
 dev = [
     { name = "celery-types" },
     { name = "dirty-equals" },
-    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "django", version = "5.2.18", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
+    { name = "django", version = "6.1.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
     { name = "django-stubs" },
     { name = "import-linter" },
     { name = "jsonschema" },
@@ -3716,7 +3849,7 @@ fastapi = [
 ]
 faststream = [
     { name = "fastapi" },
-    { name = "faststream", extra = ["confluent"], marker = "python_full_version < '3.15'" },
+    { name = "faststream", extra = ["confluent"], marker = "python_full_version < '3.15' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
     { name = "faststream", extra = ["kafka", "nats", "rabbit", "redis"] },
     { name = "faststream-fastapi" },
     { name = "httpx2" },
@@ -3726,6 +3859,9 @@ flask = [
     { name = "flask-login" },
     { name = "flask-sqlalchemy" },
     { name = "sqlalchemy" },
+]
+graphene = [
+    { name = "graphene-django" },
 ]
 ninja = [
     { name = "django-ninja" },
@@ -3741,7 +3877,7 @@ rq = [
     { name = "rq" },
 ]
 strawberry = [
-    { name = "strawberry-graphql" },
+    { name = "strawberry-graphql", version = "0.332.0", source = { registry = "https://pypi.org/simple" } },
 ]
 
 [package.metadata]
@@ -3839,6 +3975,7 @@ flask = [
     { name = "flask-sqlalchemy", specifier = ">=3.1.1" },
     { name = "sqlalchemy", specifier = ">=2.1.4" },
 ]
+graphene = [{ name = "graphene-django", specifier = ">=3.2.3" }]
 ninja = [{ name = "django-ninja", specifier = ">=1.7.1" }]
 otel = [{ name = "opentelemetry-sdk", specifier = ">=1.45.1" }]
 postgres = [{ name = "psycopg", extras = ["binary"], specifier = ">=3.2" }]
@@ -3952,7 +4089,7 @@ name = "tzlocal"
 version = "5.4.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "tzdata", marker = "sys_platform == 'win32' or (extra == 'group-10-tracepanel-graphene' and extra == 'group-10-tracepanel-strawberry')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/81/5b/879b2f932adfa7a053c360d50bc896c977fa6426109185f7c12ebdd0cb9d/tzlocal-5.4.4.tar.gz", hash = "sha256:8dbb8660838688a7b6ba4fed31d18dedf842afb4d47ca050d6d891c2c15f3be4", size = 31170, upload-time = "2026-06-29T08:03:40.026Z" }
 wheels = [

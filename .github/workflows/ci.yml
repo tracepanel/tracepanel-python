@@ -144,6 +144,45 @@ jobs:
         env:
           TRACEPANEL_AGENT_BIN: ${{ github.workspace }}/tracepanel-python/.venv/bin/tracepanel-agent
 
+  graphene:
+    # Graphene needs graphql-core < 3.3, Strawberry 3.3: the same groups with graphene in strawberry's place.
+    needs: agent
+    name: graphene (python ${{ matrix.python }}, django ${{ matrix.django }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { python: "3.11", django: "5.2" }
+          - { python: "3.14", django: "6.1" }
+    defaults:
+      run:
+        working-directory: tracepanel-python
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: tracepanel-python
+      - uses: actions/checkout@v7
+        with:
+          repository: tracepanel/tracepanel
+          ref: ${{ needs.agent.outputs.sha }}
+          path: tracepanel
+      - uses: actions/download-artifact@v8
+        with:
+          name: tracepanel-agent
+          path: agent
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: ${{ matrix.python }}
+          working-directory: tracepanel-python
+      - run: uv sync --locked ${GROUPS/--group strawberry/--group graphene} --no-install-package tracepanel-agent
+      - run: uv pip install --no-deps ../agent/*.whl
+      - name: Pin Django ${{ matrix.django }}
+        run: uv pip install "django~=${{ matrix.django }}.0"
+      - run: uv run --no-sync pytest
+        env:
+          TRACEPANEL_AGENT_BIN: ${{ github.workspace }}/tracepanel-python/.venv/bin/tracepanel-agent
+
   drivers:
     # The database drivers on their servers, with Django and SQLAlchemy on the same drivers: each statement once; and
     # MongoDB's commands.

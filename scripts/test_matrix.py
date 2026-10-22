@@ -3,6 +3,7 @@
     uv run poe test-matrix                     # all pairs
     uv run poe test-matrix 3.12/6.1 3.11/5.2   # some of them
     uv run poe test-matrix -- -x -k mail       # extra pytest arguments after --
+    uv run poe test-matrix graphene            # Graphene's runs only (graphene in strawberry's place)
 
 Environments live in .venv-matrix/ (reused between runs); SQLite only (CI adds Postgres).
 """
@@ -19,6 +20,8 @@ PAIRS = [
     *((python, django) for python in ("3.12", "3.13", "3.14") for django in ("5.2", "6.0", "6.1")),
     ("3.15", "6.1"),
 ]
+# Graphene needs graphql-core < 3.3, Strawberry 3.3: these pairs run again with graphene in strawberry's place.
+GRAPHENE_PAIRS = [("3.11", "5.2"), ("3.14", "6.1")]
 GROUPS = [
     "celery",
     "channels",
@@ -37,17 +40,18 @@ GROUPS = [
 ]
 
 
-def run(pair: tuple[str, str], pytest_args: list[str]) -> bool:
+def run(pair: tuple[str, str], pytest_args: list[str], *, graphql: str = "strawberry") -> bool:
     python, django = pair
-    env = {**os.environ, "UV_PROJECT_ENVIRONMENT": str(ROOT / ".venv-matrix" / f"py{python}-django{django}")}
+    suffix = "" if graphql == "strawberry" else f"-{graphql}"
+    env = {**os.environ, "UV_PROJECT_ENVIRONMENT": str(ROOT / ".venv-matrix" / f"py{python}-django{django}{suffix}")}
     env.pop("VIRTUAL_ENV", None)
-    groups = [arg for group in GROUPS for arg in ("--group", group)]
+    groups = [arg for group in GROUPS for arg in ("--group", graphql if group == "strawberry" else group)]
     steps = [
         ["uv", "sync", "--quiet", "--locked", "--python", python, *groups],
         ["uv", "pip", "install", "--quiet", "--python", env["UV_PROJECT_ENVIRONMENT"], f"django~={django}.0"],
         ["uv", "run", "--no-sync", "--python", python, "pytest", "-q", "-p", "no:cacheprovider", *pytest_args],
     ]
-    print(f"== python {python}, django {django}", flush=True)
+    print(f"== python {python}, django {django}{f', {graphql}' if suffix else ''}", flush=True)
     # Stops at the first failing step.
     return all(subprocess.run(step, cwd=ROOT, env=env, check=False).returncode == 0 for step in steps)  # noqa: S603
 
@@ -55,10 +59,21 @@ def run(pair: tuple[str, str], pytest_args: list[str]) -> bool:
 def main() -> None:
     args = sys.argv[1:]
     pytest_args: list[str] = args[args.index("--") + 1 :] if "--" in args else []
-    wanted = {tuple(arg.split("/", 1)) for arg in (args[: args.index("--")] if "--" in args else args)}
-    pairs = [pair for pair in PAIRS if not wanted or pair in wanted]
-    failed = [f"{python}/{django}" for python, django in pairs if not run((python, django), pytest_args)]
-    print(f"\n{len(pairs) - len(failed)} of {len(pairs)} passed" + (f"; failed: {', '.join(failed)}" if failed else ""))
+    selected = args[: args.index("--")] if "--" in args else args
+    only_graphene = "graphene" in selected
+    wanted = {tuple(arg.split("/", 1)) for arg in selected if arg != "graphene"}
+    runs = [(pair, "strawberry") for pair in PAIRS] + [(pair, "graphene") for pair in GRAPHENE_PAIRS]
+    runs = [
+        (pair, graphql)
+        for pair, graphql in runs
+        if (not wanted or pair in wanted) and (not only_graphene or graphql == "graphene")
+    ]
+    failed = [
+        f"{python}/{django}" + ("" if graphql == "strawberry" else f" ({graphql})")
+        for (python, django), graphql in runs
+        if not run((python, django), pytest_args, graphql=graphql)
+    ]
+    print(f"\n{len(runs) - len(failed)} of {len(runs)} passed" + (f"; failed: {', '.join(failed)}" if failed else ""))
     sys.exit(1 if failed else 0)
 
 

@@ -11,6 +11,13 @@
   another names the base template for a query outside its own blocks. The
   console marks these queries and, with an agent that knows the line, an
   N+1 a template made names the template and its line in its hint.
+- Graphene: a request to graphene-django's GraphQLView is traced as its
+  GraphQL operation, as Strawberry's are. The trace is named after the
+  operation (`GraphQL query PostList`) and keeps its type, name, document and
+  error count. Its span holds `parse` and `validate`, and each of the
+  project's resolvers is a span of its own. Exceptions raised in resolvers are
+  the trace's errors. A batch view runs one operation span per entry. It needs
+  no GRAPHENE `MIDDLEWARE` entry, and `graphene_enabled = false` turns it off.
 - Task workflows link up across Celery, RQ, Dramatiq and Django Tasks. A
   run records the task it follows (`task.parent_id`), the first task of its
   workflow (`task.root_id`) and its group (`task.group_id`): Celery's chain,
