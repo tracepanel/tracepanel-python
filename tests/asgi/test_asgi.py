@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Generator
 from typing import Any
 
 import pytest
-from dirty_equals import IsInt, IsPartialDict
+from dirty_equals import IsInt, IsPartialDict, IsStr
 
 starlette = pytest.importorskip("starlette")
 
@@ -295,6 +295,65 @@ def test_nothing_is_recorded_with_capture_request_off(
     (trace,) = traces
     assert carried(trace) == {}
     assert not [key for key in trace.attrs if key.startswith("http.response.header.")]
+
+
+async def rows(request: Request) -> JSONResponse:
+    del request
+    return JSONResponse({"access_token": "t", "rows": [{"id": i, "name": "x" * 50} for i in range(2000)]})
+
+
+async def numbers(request: Request) -> StreamingResponse:
+    del request
+
+    async def lines() -> AsyncIterator[bytes]:
+        for i in range(3):
+            yield f"{i}\n".encode()
+
+    return StreamingResponse(lines(), media_type="text/plain")
+
+
+def response_body(trace: Trace) -> dict[str, object]:
+    return {key: value for key, value in trace.attrs.items() if key.startswith("http.response.body")}
+
+
+def test_a_response_sent_whole_records_its_body_masked_and_cut_a_stream_nothing(
+    traces: list[Trace], restore: None
+) -> None:
+    app = Starlette(
+        debug=True, routes=[Route("/items/{item_id:int}", item), Route("/rows", rows), Route("/numbers", numbers)]
+    )
+    tracepanel.asgi.install(app)
+    client = TestClient(app)
+
+    client.get("/items/7")
+    large = client.get("/rows")
+    streamed = client.get("/numbers")
+    small, cut, stream = traces
+
+    assert response_body(small) == {"http.response.body": '{"id":7}', "http.response.body.size": 8}
+
+    assert response_body(cut) == {
+        "http.response.body": IsStr(regex=r'\{"access_token":"\*{8}","rows":\[\{"id":0,.*'),
+        "http.response.body.truncated": True,
+        "http.response.body.size": len(large.content),
+    }
+    assert len(str(cut.attrs["http.response.body"])) == 64 * 1024
+
+    assert streamed.text == "0\n1\n2\n"
+    assert response_body(stream) == {}
+
+
+def test_no_bodies_with_capture_body_off(
+    bodies: TestClient, traces: list[Trace], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRACEPANEL_CAPTURE_BODY", "0")
+    conf.reset()
+
+    bodies.post("/echo", content=b'{"a": 1}', headers={"Content-Type": "application/json", "X-Request-Id": "r"})
+
+    (trace,) = traces
+    assert carried(trace) == {"http.request.header.x_request_id": "r"}
+    assert response_body(trace) == {}
 
 
 async def busy(request: Request) -> JSONResponse:

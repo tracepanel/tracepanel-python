@@ -68,6 +68,8 @@ urlpatterns = [
     path("sign-out/", views.sign_out),
     path("echo-json/", views.echo_json),
     path("upload/", views.upload),
+    path("catalog/", views.catalog),
+    path("export/", views.export),
     path("remember/", views.remember),
     path("", views.home),
     *graphql,
