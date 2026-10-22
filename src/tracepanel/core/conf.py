@@ -98,6 +98,8 @@ class Config:
     dramatiq_enabled: bool = True
     drf_enabled: bool = True
     faststream_enabled: bool = True
+    # graphene-django's GraphQLView.
+    graphene_enabled: bool = True
     # Outgoing HTTP calls: urllib3 (requests, boto3), httpx, aiohttp.
     http_clients_enabled: bool = True
     jinja_enabled: bool = True
@@ -182,6 +184,7 @@ class Settings(TypedDict, total=False):
     dramatiq_enabled: bool
     drf_enabled: bool
     faststream_enabled: bool
+    graphene_enabled: bool
     http_clients_enabled: bool
     jinja_enabled: bool
     logging_enabled: bool

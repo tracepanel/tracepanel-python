@@ -12,6 +12,18 @@ except ImportError:  # the strawberry test group is optional
     graphql: list[URLPattern] = []
 
 try:
+    from graphene_django.views import GraphQLView as GrapheneView
+
+    from tests.project.graphene_schema import schema as graphene_schema
+
+    graphene = [
+        path("graphene/", GrapheneView.as_view(schema=graphene_schema)),
+        path("graphene/batch/", GrapheneView.as_view(schema=graphene_schema, batch=True)),
+    ]
+except ImportError:  # the graphene test group is optional (and can't share an environment with strawberry's)
+    graphene: list[URLPattern] = []
+
+try:
     from tests.project.ninja import api
 
     ninja = [path("ninja/", api.urls)]
@@ -73,6 +85,7 @@ urlpatterns = [
     path("remember/", views.remember),
     path("", views.home),
     *graphql,
+    *graphene,
     *ninja,
     *rest,
 ]
