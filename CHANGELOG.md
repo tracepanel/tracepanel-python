@@ -4,6 +4,13 @@
 
 ### Added
 
+- A query a template made as it rendered (a lazy QuerySet its `{% for %}`
+  reads, a related object it shows) has the template's line
+  (`code.template_line`), Django's templates and Jinja's alike, and
+  `code.template` names the file that line is in: a page that extends
+  another names the base template for a query outside its own blocks. The
+  console marks these queries and, with an agent that knows the line, an
+  N+1 a template made names the template and its line in its hint.
 - Task workflows link up across Celery, RQ, Dramatiq and Django Tasks. A
   run records the task it follows (`task.parent_id`), the first task of its
   workflow (`task.root_id`) and its group (`task.group_id`): Celery's chain,
@@ -105,6 +112,9 @@
 
 ### Fixed
 
+- A query a Jinja template made, in a template file inside the project, has
+  the line of project code that rendered it as its `code.origin`. It had the
+  template's file with a line of Jinja's compiled code.
 - RQ jobs scheduled with `enqueue_at` or `enqueue_in`, or enqueued in a batch
   with `enqueue_many` (and Groups), have their enqueue span, their link to it
   and their `enqueued` event. Only `enqueue` had them.
