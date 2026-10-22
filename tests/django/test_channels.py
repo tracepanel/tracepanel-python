@@ -4,7 +4,8 @@ import os
 import socket
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import pytest
 
@@ -488,3 +489,46 @@ def test_a_redis_layer_names_its_server() -> None:
         "server.port": 6380,
         "messaging.system": "redis",
     }
+
+
+@pytest.fixture
+def redis_layer(settings: Any) -> Iterator[None]:  # noqa: ANN401 (pytest-django's settings)
+    """CHANNEL_LAYERS on channels-redis, its Redis a fakeredis server in this process."""
+    pytest.importorskip("channels_redis")
+    # fakeredis runs the Lua scripts channels-redis's receive sends with lupa.
+    pytest.importorskip("lupa")
+    fakeredis = pytest.importorskip("fakeredis")
+    server = fakeredis.TcpFakeServer(("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    hosts = [f"redis://127.0.0.1:{server.server_address[1]}"]
+    settings.CHANNEL_LAYERS = {
+        "default": {"BACKEND": "channels_redis.core.RedisChannelLayer", "CONFIG": {"hosts": hosts}}
+    }
+    yield
+    server.shutdown()
+    server.server_close()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("redis_layer")
+def test_a_redis_layer_s_own_commands_are_not_redis_spans(traces: list[Trace], users: list[User]) -> None:
+    async def post() -> None:
+        client = WebsocketCommunicator(APP, "/ws/chat/lobby/")
+        await client.connect()
+        await client.send_json_to({"text": "hi"})
+        replies = [await client.receive_json_from(5), await client.receive_json_from(5)]
+        assert replies == [{"members": len(users)}, {"text": "hi"}]
+        await client.disconnect()
+
+    async_to_sync(post)()
+    receive = next(trace for trace in traces if trace.name == "WS receive /ws/chat/lobby/")
+
+    assert [(span.kind, span.name) for span in receive.spans[1:]] == [
+        ("sql", "SELECT COUNT auth_user"),
+        ("channel.send", "group_send lobby"),
+        ("websocket.send", "send"),
+    ]
+
+    # Its sorted sets, their expiry and capacity checks, and each receive's blocking pop are the transport's.
+    assert [span.name for trace in traces for span in trace.spans if span.kind == "redis"] == []
