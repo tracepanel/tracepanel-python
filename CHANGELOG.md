@@ -27,6 +27,16 @@
   by a job) links to that run, so the console lists the steps as related.
 - RQ's `on_success`, `on_failure` and `on_stopped` callbacks run as traces of
   their own, linked to their job's.
+- django-q2: every task a cluster runs is a `task` trace (`task.system` is
+  `django-q`), and `async_task` and `schedule` are `task.enqueue` spans the
+  run links to, as for Celery and RQ. A run says its cluster, its worker
+  process, how many runs of it came back before (`task.retries`), its group,
+  and the limit when its `timeout` stopped it. A chain's next step and a task
+  sent from inside a run follow that run (`task.parent_id`, `task.root_id`),
+  a `hook` runs as a trace of its own linked to its task's, and what the
+  scheduler enqueues is a scheduled run. `sync=True` runs inside the caller
+  like an eager Celery task. Task events and worker heartbeats feed the Tasks
+  page's Live. `django_q_enabled` turns it off.
 - A run stopped by its time limit says the limit in `task.timeout` (seconds):
   Celery's soft limit (SoftTimeLimitExceeded), RQ's `job_timeout`
   (JobTimeoutException) and Dramatiq's TimeLimit (TimeLimitExceeded). Celery's

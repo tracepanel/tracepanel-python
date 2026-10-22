@@ -11,7 +11,7 @@ permissions:
 # The same groups as CI's lint job (ci.yml): pyrefly checks the integrations against every library they wrap.
 env:
   GROUPS: >-
-    --group celery --group channels --group strawberry --group django-tasks --group fastapi --group dramatiq
+    --group celery --group channels --group strawberry --group django-tasks --group django-q2 --group fastapi --group dramatiq
     --group rq --group huey --group ninja --group drf --group flask --group falcon --group otel --group clients
     --group faststream --group postgres --group drivers --group bench
 

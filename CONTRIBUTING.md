@@ -69,7 +69,7 @@ enforces that. Imports use full paths.
 | `src/tracepanel/core/` | Trace model, context, configuration, frames, errors, SQL spans and their fingerprints, EXPLAIN plans, service attributes; `registry` (every integration) and `patching` (every monkeypatch: once, remembered, undoable) |
 | `src/tracepanel/storage/` | The background writer and the agent: finding it, starting it, sending to it |
 | `src/tracepanel/console/` | The console under the prefix (forwarded to the agent), the widget's markup, the terminal line after tasks and commands |
-| `src/tracepanel/django/` | The Django app, middleware, collectors (ORM, cache, mail, signals, views and templates, transactions, commands, auth), user switching, EXPLAIN, Channels, Django Tasks, Django Ninja, Django REST framework |
+| `src/tracepanel/django/` | The Django app, middleware, collectors (ORM, cache, mail, signals, views and templates, transactions, commands, auth), user switching, EXPLAIN, Channels, Django Tasks, django-q2, Django Ninja, Django REST framework |
 | `src/tracepanel/asgi/` | `tracepanel.asgi.install(app)` and the ASGI middleware. Starlette and FastAPI add the route and the endpoint |
 | `src/tracepanel/fastapi/` | `tracepanel.fastapi.install(app)`: `tracepanel.asgi` under the name FastAPI users look for |
 | `src/tracepanel/wsgi/` | `tracepanel.wsgi.install(app)` and the WSGI middleware |

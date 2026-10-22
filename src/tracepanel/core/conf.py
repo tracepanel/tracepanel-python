@@ -88,6 +88,7 @@ class Config:
     channels_enabled: bool = True
     # Database drivers used directly, without an ORM (statements an ORM runs are the ORM's).
     dbapi_enabled: bool = True
+    django_q_enabled: bool = True
     django_tasks_enabled: bool = True
     dramatiq_enabled: bool = True
     drf_enabled: bool = True
@@ -133,6 +134,8 @@ class Config:
         "rqscheduler",
         "rundramatiq",
         "run_huey",
+        "qcluster",
+        "qmonitor",
         "runworker",
     )
 
@@ -169,6 +172,7 @@ class Settings(TypedDict, total=False):
     celery_enabled: bool
     channels_enabled: bool
     dbapi_enabled: bool
+    django_q_enabled: bool
     django_tasks_enabled: bool
     dramatiq_enabled: bool
     drf_enabled: bool

@@ -54,6 +54,7 @@ PACKAGES = (
     "strawberry-graphql",
     "pydantic",
     "django-tasks",
+    "django-q2",
     "opentelemetry-sdk",
     "httpx",
     "requests",
