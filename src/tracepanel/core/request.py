@@ -14,8 +14,9 @@ from email.parser import BytesParser
 from email.policy import HTTP
 from urllib.parse import parse_qsl, quote, urlencode
 
-from tracepanel.core import conf
-from tracepanel.core.frames import MASK, SENSITIVE, card_number, safe_repr
+from tracepanel.core import conf, masking
+from tracepanel.core.frames import safe_repr
+from tracepanel.core.masking import MASK, card_fields, card_number
 from tracepanel.core.model import Attrs
 
 # A response's JSON larger than this isn't parsed to mask its secrets, so isn't kept: its size is.
@@ -34,8 +35,8 @@ _SESSION_MASKED = frozenset({"_id"})
 
 
 _UNKEYED = re.compile(r"[^a-z0-9_]")
-# A name's separators as the rule reads them: x-api-key, card[number] and card.cvc as x_api_key, card_number_, card_cvc.
-_SEPARATORS = re.compile(r"[^a-zA-Z0-9]")
+# A form field's object and its own name: card[number] is card's number, card.cvc card's cvc.
+_FIELD = re.compile(r"(?P<parent>.+)(?:\[(?P<bracketed>[^\[\]]+)\]|\.(?P<dotted>[^.\[\]]+))")
 
 
 def key(name: str) -> str:
@@ -45,7 +46,7 @@ def key(name: str) -> str:
 
 def sensitive(name: str) -> bool:
     """Whether a secret goes under the name: x-api-key, csrftoken, sessionid, password, card[number], cvc."""
-    return SENSITIVE.search(_SEPARATORS.sub("_", name)) is not None
+    return masking.sensitive(name)
 
 
 def request_headers(headers: Iterable[tuple[str, str]]) -> Attrs:
@@ -193,9 +194,24 @@ def form(fields: Iterable[tuple[str, str]], files: Iterable[tuple[str, str, int]
 
 
 def _form_text(fields: Iterable[tuple[str, str]], files: Iterable[tuple[str, str, int]]) -> str:
-    pairs = [(key, MASK if sensitive(key) else value) for key, value in fields]
+    fields = list(fields)
+    named = [_field(name) for name, _ in fields]
+    # The objects that hold a card's other fields: source[number] beside source[cvc] is the card's number.
+    cards = {parent for parent, own in named if card_fields([own])}
+    pairs = [
+        (name, MASK if sensitive(name) or card_number(own, value, parent, beside_card=parent in cards) else value)
+        for (name, value), (parent, own) in zip(fields, named, strict=True)
+    ]
     pairs += [(field, _file(name, size)) for field, name, size in files]
     return urlencode(pairs, safe=_READABLE, quote_via=quote)
+
+
+def _field(name: str) -> tuple[str, str]:
+    """A form field's object and its own name: card[number] -> (card, number), a top-level field's object ""."""
+    found = _FIELD.fullmatch(name)
+    if found is None:
+        return "", name
+    return found["parent"], found["bracketed"] or found["dotted"]
 
 
 def _file(name: str, size: int) -> str:
@@ -217,10 +233,13 @@ def _json(data: bytes) -> str | None:
 
 
 def _masked(value: object, parent: str | None = None) -> object:
-    """A JSON value with the values under sensitive keys masked, at any depth; a card's number under its card."""
+    """A JSON value with the values under sensitive keys masked, at any depth; a card's number in its card."""
     if isinstance(value, dict):
+        beside_card = card_fields(value)
         return {
-            key: MASK if sensitive(str(key)) or card_number(parent, key) else _masked(item, str(key))
+            key: MASK
+            if sensitive(str(key)) or card_number(key, item, parent, beside_card=beside_card)
+            else _masked(item, str(key))
             for key, item in value.items()
         }
     if isinstance(value, list):

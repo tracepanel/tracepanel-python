@@ -24,9 +24,10 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from tracepanel.core import w3c
 from tracepanel.core.callers import Callers
 from tracepanel.core.context import blocking_attrs, current_trace, now_us, record_span
-from tracepanel.core.frames import MASK, SENSITIVE, origin
+from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.imports import when_imported
+from tracepanel.core.masking import MASK, sensitive
 from tracepanel.core.model import Attrs
 from tracepanel.core.patching import patch
 
@@ -48,7 +49,7 @@ def safe_url(url: str) -> str:
     query = parts.query
     if query:
         pairs = parse_qsl(query, keep_blank_values=True)
-        query = urlencode([(key, MASK if SENSITIVE.search(key) else value) for key, value in pairs], safe="*")
+        query = urlencode([(key, MASK if sensitive(key) else value) for key, value in pairs], safe="*")
     return urlunsplit((parts.scheme, netloc, parts.path, query, ""))
 
 
