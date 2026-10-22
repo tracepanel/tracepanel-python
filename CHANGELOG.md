@@ -4,6 +4,9 @@
 
 ### Added
 
+- A GraphQL request records its server library, `graphql.library`
+  (`strawberry` or `graphene`), on the trace and the operation's span. The
+  agent names that library's DataLoader in an N+1's hint.
 - Huey is traced, plain or through `huey.contrib.djhuey`, like Celery, RQ and
   Dramatiq (`task.system` is `huey`). Each task a consumer runs is a `task`
   trace, linked to the `task.enqueue` span of the code that enqueued it, with

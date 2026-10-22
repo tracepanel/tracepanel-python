@@ -116,7 +116,14 @@ def _wrap_execute(original: Callable[..., Any]) -> Callable[..., Any]:
                     kind, name = _operation(document, operation_name)
                     failures = result.errors or []
                     finish_operation(
-                        trace, span, kind=kind, name=name, query=query, document=document, failures=failures
+                        trace,
+                        span,
+                        library="graphene",
+                        kind=kind,
+                        name=name,
+                        query=query,
+                        document=document,
+                        failures=failures,
                     )
                 return result
         finally:
