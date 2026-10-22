@@ -49,6 +49,7 @@ def test_operation_names_the_request(
             "graphql.operation.name": "Team",
             "graphql.document": "query Team { users { username groups } }",
             "graphql.errors": 0,
+            "graphql.library": "graphene",
         }
     )
 
@@ -99,6 +100,7 @@ def test_mutation(client: Client, traces: list[Trace]) -> None:
             "graphql.operation.name": "Add",
             "graphql.document": query,
             "graphql.errors": 0,
+            "graphql.library": "graphene",
         }
     )
     (resolver,) = [span for span in trace.spans if "graphql.field" in span.attrs]
