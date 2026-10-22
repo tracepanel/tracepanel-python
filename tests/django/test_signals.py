@@ -4,6 +4,7 @@ import types
 from collections.abc import Callable, Generator
 from unittest.mock import patch
 
+import django
 import pytest
 from asgiref.sync import async_to_sync
 from dirty_equals import IsInstance, IsPositiveInt, IsStr
@@ -490,6 +491,12 @@ def test_a_project_receiver_on_post_migrate_gets_its_span(traces: list[Trace], a
     (trace,) = traces
     (signal,) = of_kind(trace, "signal")
     name = "tests.django.test_signals.auth_migrated.<locals>.migrated"
+    # Django's own, in the order its apps connect them (6.1 added the rename).
+    django_s_own = [
+        *(["django.contrib.auth.management.rename_permissions_after_model_rename"] if django.VERSION >= (6, 1) else []),
+        "django.contrib.auth.management.create_permissions",
+        "django.contrib.contenttypes.management.create_contenttypes",
+    ]
 
     assert auth_migrated == ["auth"]
 
@@ -497,18 +504,10 @@ def test_a_project_receiver_on_post_migrate_gets_its_span(traces: list[Trace], a
     assert signal.attrs == {
         "signal.name": "django.db.models.signals.post_migrate",
         "signal.sender": "django.contrib.auth.apps.AuthConfig",
-        "signal.receivers": [
-            "django.contrib.auth.management.create_permissions",
-            "django.contrib.contenttypes.management.create_contenttypes",
-            name,
-        ],
+        "signal.receivers": [*django_s_own, name],
         "code.origin": IsStr(regex=r"tests/django/test_signals\.py:\d+ in test_a_project_receiver_on_post_migrate.*"),
     }
-    assert [span.name for span in trace.spans if span.parent_id == signal.id] == [
-        "django.contrib.auth.management.create_permissions",
-        "django.contrib.contenttypes.management.create_contenttypes",
-        name,
-    ]
+    assert [span.name for span in trace.spans if span.parent_id == signal.id] == [*django_s_own, name]
     assert [(kind, span) for kind, span, parent in by_kind(trace, "function", "sql") if parent == name] == [
         ("sql", "SELECT COUNT auth_group"),
     ]
