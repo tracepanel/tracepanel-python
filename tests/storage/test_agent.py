@@ -168,6 +168,52 @@ def test_an_agent_that_died_is_started_again(
             process.wait(timeout=10)
 
 
+def test_processes_starting_the_agent_together_start_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An app's workers, forked together, each start the store's agent: one does, the others find it answering.
+    directory = tmp_path / ".tracepanel"
+    config = dataclasses.replace(conf.get_config(), agent="auto", dir=str(directory))
+    spawned: list[subprocess.Popen[bytes] | None] = []
+    spawn = agent._spawn  # noqa: SLF001 (what start() does once no agent answers)
+
+    def recorded(executable: str, directory: Path, config: conf.Config) -> subprocess.Popen[bytes] | None:
+        spawned.append(process := spawn(executable, directory, config))
+        return process
+
+    monkeypatch.setattr(agent, "_spawn", recorded)
+    workers = 8
+    barrier = threading.Barrier(workers)
+    started: list[subprocess.Popen[bytes] | None] = []
+
+    def worker() -> None:
+        barrier.wait()
+        started.append(agent.start(config))
+
+    threads = [threading.Thread(target=worker) for _ in range(workers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    try:
+        (process,) = spawned
+        assert [process for process in started if process is not None] == [process]
+        assert process is not None
+        assert process.poll() is None
+
+        assert (agent.answers(agent.address(config)), agent.console_url(config)) == (
+            True,
+            IsStr(regex=r"http://127\.0\.0\.1:\d+/"),
+        )
+
+        assert capsys.readouterr().err == f"tracepanel ▸ agent started for {directory}\n"
+    finally:
+        for process in spawned:
+            if process is not None:
+                process.terminate()
+                process.wait(timeout=10)
+
+
 def test_the_first_trace_after_the_agent_restarted_reaches_the_new_one(tmp_path: Path) -> None:
     directory = tmp_path / ".tracepanel"
     first = AgentStore.start(directory)

@@ -198,6 +198,11 @@
   IN lists of `@P1`, `@name`, `:1`, `:name`, `?1` and `$1` placeholders
   collapse like `%s`, `%(name)s` and `?`. EXPLAIN knows those placeholders and
   reads none inside a `[name]`.
+- An app's processes that start the agent at the same moment, as django-q2's
+  cluster does when it forks its workers, start one. Two could run on the
+  store, and the processes on the first sent their traces and task events
+  where the console didn't look. They now start it in turn, and one whose
+  agent finds the store served sends to the agent that serves it.
 - A GraphQL document that doesn't parse is named `GraphQL syntax error`,
   with no operation type or name, for Strawberry and Graphene. It was
   `GraphQL query anonymous`, so the GraphQL page grouped it with the
@@ -236,12 +241,15 @@
   `Authorization`, `x-auth`, `csrftoken`, `sessionid`, cookies and card fields
   are masked as before, `PHPSESSID` too. A name about a secret
   (`password_length`, `token_type`, `cookie_name`) or a yes or no (`is_private`,
-  `has_password`) is shown. A card's `number` (or `num`) is masked beside the
-  card's other fields (`cvc`, `cvv`, `exp_month`, `exp_year`, `expiry`) whatever
-  its object is called, as in Stripe's `{"source": {"number": ...}}`, in a JSON
-  or form body, an error's locals, a setting and a template's context. It was
-  masked only under a `card`. A `number`, `num` or `account` holding a card's
-  digits (13 to 19, passing the Luhn check) is masked wherever it is.
+  `has_password`) is shown. Plural credentials are masked (`refresh_tokens`,
+  `api_keys`, `client_secrets`), and so is `tokens` alone unless it holds a
+  model's counts (`{"tokens": 1024}`). A card's `number` (or `num`) is masked
+  beside the card's other fields (`cvc`, `cvv`, `exp_month`, `exp_year`,
+  `expiry`) whatever its object is called, as in Stripe's `{"source": {"number":
+  ...}}`, in a JSON or form body, an error's locals, a setting and a template's
+  context. It was masked only under a `card`. A `number`, `num` or `account`
+  holding a card's digits (13 to 19, passing the Luhn check) is masked wherever
+  it is.
 
 ## 0.4.1 (2026-10-21)
 

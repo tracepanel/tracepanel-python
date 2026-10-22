@@ -3,6 +3,8 @@
 import sysconfig
 from pathlib import Path
 
+import pytest
+
 from tracepanel.core import frames
 
 
@@ -47,3 +49,14 @@ def test_a_locals_card_number_is_masked_beside_its_other_fields_or_by_its_digits
         {"number": frames.MASK, "exp_month": "12", "cvc": frames.MASK, "author": "'ann'"},
         {"number": frames.MASK, "order_number": "'17'"},
     ]
+
+
+def test_a_locals_tokens_are_masked_unless_they_are_a_models_counts() -> None:
+    def complete(tokens: list[int], refresh_tokens: list[int], max_tokens: int) -> None:
+        raise ValueError(tokens, refresh_tokens, max_tokens)
+
+    with pytest.raises(ValueError, match="1024") as raised:
+        complete([12, 7], [1], 1024)
+    shown = frames.from_traceback(raised.value.__traceback__, with_locals=True)[-1].locals
+
+    assert shown == {"tokens": "[12, 7]", "refresh_tokens": frames.MASK, "max_tokens": "1024"}
