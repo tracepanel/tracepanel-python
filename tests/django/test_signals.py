@@ -1,15 +1,19 @@
 import sys
 import threading
 import types
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from unittest.mock import patch
 
 import pytest
 from asgiref.sync import async_to_sync
 from dirty_equals import IsInstance, IsPositiveInt, IsStr
+from django.apps import apps
 from django.contrib.auth.models import Group, User
-from django.core.signals import request_finished, request_started
-from django.db.models.signals import post_init, post_save, pre_init
+from django.core.management import call_command
+from django.core.signals import request_finished, request_started, setting_changed
+from django.db import connection
+from django.db.backends.signals import connection_created
+from django.db.models.signals import class_prepared, post_init, post_migrate, post_save, pre_init
 from django.dispatch import Signal
 from django.test import AsyncClient, Client
 from jsonschema import Draft202012Validator
@@ -17,6 +21,7 @@ from pytest_django.fixtures import Settings
 
 from tests.project import receivers, views
 from tests.project.signals import cart_viewed, stock_changed
+from tracepanel.core import patching
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Span, Trace
 from tracepanel.django import signals
@@ -439,3 +444,116 @@ def test_asend_robust_keeps_an_async_receiver_s_error() -> None:
         ("tests.project.receivers.reserve_stock", "ok", None),
     ]
     assert trace.status == "ok"
+
+
+@pytest.mark.django_db
+def test_migrate_records_none_of_django_s_own_startup_signals(traces: list[Trace]) -> None:
+    call_command("migrate", verbosity=0)
+    (trace,) = traces
+
+    # pre_migrate and post_migrate go to Django's own receivers alone (contenttypes, auth): every migrate has them.
+    assert by_kind(trace, "signal", "function") == []
+
+    # Nor is anything counted: no class_prepared for each historical model, no pre_migrate for each app.
+    assert trace.attrs == {
+        "command.name": "migrate",
+        "command.argv": None,
+        "command.options": "{'database': 'default', 'interactive': True, 'skip_checks': True}",
+        "service.name": IsStr(min_length=1),
+        "service.role": "command",
+        "telemetry.sdk.language": "python",
+        "process.runtime.name": "cpython",
+        "process.runtime.version": IsStr(min_length=1),
+        "tracepanel.framework": IsStr(regex=r"Django \d.*"),
+    }
+
+    # Not even wrapped: Django's own send, for every model class built.
+    assert class_prepared.send.__func__ is signals.original(Signal, "send")
+
+
+@pytest.fixture
+def auth_migrated() -> Generator[list[str], None, None]:
+    calls: list[str] = []
+
+    def migrated(sender: object, **kwargs: object) -> None:
+        calls.append(sender.label)  # type: ignore[attr-defined]
+        Group.objects.count()
+
+    post_migrate.connect(migrated, sender=apps.get_app_config("auth"), dispatch_uid="tests.migrated")
+    yield calls
+    post_migrate.disconnect(sender=apps.get_app_config("auth"), dispatch_uid="tests.migrated")
+
+
+@pytest.mark.django_db
+def test_a_project_receiver_on_post_migrate_gets_its_span(traces: list[Trace], auth_migrated: list[str]) -> None:
+    call_command("migrate", verbosity=0)
+    (trace,) = traces
+    (signal,) = of_kind(trace, "signal")
+    name = "tests.django.test_signals.auth_migrated.<locals>.migrated"
+
+    assert auth_migrated == ["auth"]
+
+    # With a receiver of the project's, Django's own show too; the other apps' post_migrate stay out.
+    assert signal.attrs == {
+        "signal.name": "django.db.models.signals.post_migrate",
+        "signal.sender": "django.contrib.auth.apps.AuthConfig",
+        "signal.receivers": [
+            "django.contrib.auth.management.create_permissions",
+            "django.contrib.contenttypes.management.create_contenttypes",
+            name,
+        ],
+        "code.origin": IsStr(regex=r"tests/django/test_signals\.py:\d+ in test_a_project_receiver_on_post_migrate.*"),
+    }
+    assert [span.name for span in trace.spans if span.parent_id == signal.id] == [
+        "django.contrib.auth.management.create_permissions",
+        "django.contrib.contenttypes.management.create_contenttypes",
+        name,
+    ]
+    assert [(kind, span) for kind, span, parent in by_kind(trace, "function", "sql") if parent == name] == [
+        ("sql", "SELECT COUNT auth_group"),
+    ]
+
+    assert signals.UNRECEIVED not in trace.attrs
+
+
+def test_lifecycle_signals_nobody_receives_are_not_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Receivers of setting_changed come with the installed apps: here nobody listens.
+    monkeypatch.setattr(setting_changed, "receivers", [])
+
+    with start_trace("command", "test") as trace:
+        setting_changed.send(sender=Settings, setting="TRACEPANEL_TEST", value=1, enter=True)
+        connection_created.send(sender=type(connection), connection=connection)
+        connection_created.send(sender=type(connection), connection=connection)
+
+    assert (trace.spans[1:], trace.attrs) == ([], {})
+
+
+@pytest.fixture
+def unmarked() -> Generator[Callable[[Signal], None], None, None]:
+    """Forget how a signal was named, as if seen for the first time: that is when `ignore_signals` is read."""
+    seen: list[Signal] = []
+
+    def forget(signal: Signal) -> None:
+        vars(signal).pop(signals.MARKER, None)
+        for name in signals.SENDS:
+            if patching._applied.pop((id(signal), name), None) is not None:  # noqa: SLF001
+                delattr(signal, name)
+
+    def unmark(signal: Signal) -> None:
+        forget(signal)
+        seen.append(signal)
+
+    yield unmark
+    # Named again with the default `ignore_signals` when next sent.
+    for signal in seen:
+        forget(signal)
+
+
+def test_ignore_signals_replaces_the_defaults(settings: Settings, unmarked: Callable[[Signal], None]) -> None:
+    settings.TRACEPANEL = {"ignore_signals": ["pre_init", "post_init"]}
+    unmarked(class_prepared)
+
+    with start_trace("command", "test") as trace:
+        class_prepared.send(sender=Group)
+
+    assert trace.attrs == {signals.UNRECEIVED: ["class_prepared auth.Group: 1"]}
