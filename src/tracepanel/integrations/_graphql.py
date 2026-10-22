@@ -2,7 +2,8 @@
 
 The operation's span and the request are named after it (`query PostList`, `query { posts, users }` when unnamed),
 its document is kept, whitespace collapsed, and the exceptions resolvers raised are the trace's errors: the client
-got them as `errors` with a 200.
+got them as `errors` with a 200. A document that didn't parse is no operation: `syntax error`, with no type or name,
+so it doesn't group with the queries. One that parsed and failed validation keeps its operation's name.
 """
 
 import re
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
 
 MAX_DOCUMENT = 2000
 MAX_ROOT_FIELDS = 3
+# What a document that didn't parse is named: it has no operation, so it groups apart from the anonymous queries.
+SYNTAX_ERROR = "syntax error"
 _WHITESPACE = re.compile(r"\s+")
 
 
@@ -50,7 +53,7 @@ def finish_operation(  # noqa: PLR0913 (what an operation is)
     trace: "Trace",
     span: "Span | None",
     *,
-    kind: str,
+    kind: str | None,
     name: str | None,
     query: str | None,
     document: Any,  # noqa: ANN401 (graphql-core's DocumentNode, or None when it didn't parse)
@@ -58,7 +61,12 @@ def finish_operation(  # noqa: PLR0913 (what an operation is)
 ) -> None:
     """Name the operation's span and the request after it, and record resolver exceptions as errors."""
     failures = list(failures)
-    label = f"{kind} {name or root_fields(document) or 'anonymous'}"
+    if document is None:
+        # Not an operation of any type: the operationName the client sent names none either.
+        kind = name = None
+        label = SYNTAX_ERROR
+    else:
+        label = f"{kind} {name or root_fields(document) or 'anonymous'}"
     attrs: Attrs = {
         "graphql.operation.type": kind,
         "graphql.operation.name": name,
