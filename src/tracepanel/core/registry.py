@@ -108,6 +108,7 @@ INTEGRATIONS: tuple[Integration, ...] = (
     Integration(
         "django_tasks", "Django Tasks", ("django.tasks", "django_tasks"), "tracepanel.django.tasks", django_only=True
     ),
+    Integration("django_q", "django-q2", ("django_q",), "tracepanel.django.djangoq", django_only=True),
     Integration("channels", "Channels", ("channels",), "tracepanel.django.channels", django_only=True),
     Integration("drf", "DRF", ("rest_framework",), "tracepanel.django.drf", django_only=True),
     Integration("ninja", "Django Ninja", ("ninja",), "tracepanel.django.ninja", django_only=True),
