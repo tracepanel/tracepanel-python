@@ -192,6 +192,12 @@
 
 ### Fixed
 
+- A SQL Server statement on `[dbo].[orders]` is named `SELECT dbo.orders`,
+  as the agent names one it gets over OpenTelemetry. It was `SELECT dbo`.
+  Every quoted name keeps its schema (`"SHOP"."ORDERS"` is `SHOP.ORDERS`), and
+  IN lists of `@P1`, `@name`, `:1`, `:name`, `?1` and `$1` placeholders
+  collapse like `%s`, `%(name)s` and `?`. EXPLAIN knows those placeholders and
+  reads none inside a `[name]`.
 - A query a Jinja template made, in a template file inside the project, has
   the line of project code that rendered it as its `code.origin`. It had the
   template's file with a line of Jinja's compiled code.

@@ -19,10 +19,11 @@ from tracepanel.core.model import Scalar
 from tracepanel.core.services import system
 
 _SELECT = re.compile(r"^\s*SELECT\b", re.IGNORECASE)
-# What a placeholder can't be inside: quoted strings and names, and comments.
-_QUOTED = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|`[^`]*`|--[^\n]*|/\*.*?\*/", re.DOTALL)
-# %s, %(name)s, ?, ?1, :name (not a :: cast), $1.
-_PLACEHOLDER = re.compile(r"%s|%\(\w+\)s|\?|(?<!:):(?!:)[A-Za-z_]\w*|\$\d+")
+# What a placeholder can't be inside: quoted strings and names (SQL Server's [names] too, not an ARRAY[%s]), and
+# comments.
+_QUOTED = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|`[^`]*`|\[[^\W\d][^\]]*\]|--[^\n]*|/\*.*?\*/", re.DOTALL)
+# %s, %(name)s, ?, ?1, :name or :1 (not a :: cast), $1, @P1 or @name (not SQL Server's @@ functions).
+_PLACEHOLDER = re.compile(r"%s|%\(\w+\)s|\?|(?<!:):[A-Za-z0-9_]|\$\d+|(?<!@)@[A-Za-z0-9_]")
 _SQLITE_SCAN = re.compile(r"^SCAN (?:TABLE )?(\w+)(?!.*\bUSING\b)")
 _PG_SEQ_SCAN = re.compile(r"Seq Scan on (\w+)")
 # An operator of SHOWPLAN_ALL as it reads: "   |    |--Clustered Index Scan(OBJECT:([shop].[dbo].[orders].[PK])".
