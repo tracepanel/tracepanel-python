@@ -1,6 +1,13 @@
+import json
+import os
+import signal
+import subprocess
+import sys
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
 
 import pytest
 from dirty_equals import IsInstance, IsInt, IsList, IsPartialDict, IsPositiveInt, IsStr
@@ -18,13 +25,16 @@ from tracepanel.storage.transport import set_writer
 
 pytest.importorskip("celery")
 
-from celery import chain, chord, group
+from billiard.einfo import ExceptionInfo
+from billiard.exceptions import WorkerLostError
+from celery import Celery, chain, chord, group
 from celery.contrib.testing.mocks import TaskMessage
 from celery.contrib.testing.worker import start_worker
 from celery.worker.request import Request
 
 from tests.project import (
     jobs,
+    prefork,
     views,  # noqa: F401 (connects views.group_saved to post_save of Group)
 )
 
@@ -610,6 +620,151 @@ def test_a_task_killed_by_its_hard_time_limit_still_has_its_trace(recorder: Reco
             "state": "FAILURE",
         }
     ]
+
+
+def test_a_pool_process_that_died_leaves_its_runs_trace_to_the_main_process(recorder: Recorder) -> None:
+    message = TaskMessage(jobs.waits.name, args=(), kwargs={}, argsrepr="()", kwargsrepr="{}")
+    message.delivery_info = {"exchange": "", "routing_key": "celery", "priority": 0, "redelivered": False}
+    request = Request(message, app=jobs.app, task=jobs.waits, hostname="celery@test")
+    lost = "Worker exited prematurely: signal 9 (SIGKILL) Job: 0."
+    try:
+        raise WorkerLostError(lost)  # noqa: TRY301
+    except WorkerLostError:
+        # As billiard hands it over when the pool process is gone: wrapped, with the traceback as text.
+        einfo = ExceptionInfo()
+
+    request.on_failure(einfo, return_ok=True)
+    (task,) = recorder.traces
+
+    assert task_attrs(task) == IsPartialDict({"task.id": request.id, "task.state": "FAILURE"})
+    assert "task.timeout" not in task.attrs
+    assert (task.status, [(error.type, error.handled) for error in task.errors]) == (
+        "error",
+        [("billiard.exceptions.WorkerLostError", False)],
+    )
+
+    assert recorder.events == [
+        {
+            "event": "finished",
+            "system": "celery",
+            "id": request.id,
+            "time": IsPositiveInt,
+            "worker": "celery@test",
+            "state": "FAILURE",
+        }
+    ]
+
+
+def test_a_failure_of_the_run_itself_is_left_to_its_own_trace(recorder: Recorder) -> None:
+    message = TaskMessage(jobs.broken.name, args=(), kwargs={})
+    request = Request(message, app=jobs.app, task=jobs.broken, hostname="celery@test")
+    boom = "boom"
+    try:
+        raise ValueError(boom)  # noqa: TRY301
+    except ValueError:
+        einfo = ExceptionInfo()
+
+    request.on_failure(einfo, return_ok=True)
+
+    assert (recorder.traces, recorder.events) == ([], [])
+
+
+class PreforkWorker:
+    """A real Celery worker with a prefork pool, in a process of its own (tests.project.prefork), and what it wrote."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.folder = tmp_path / "broker"
+        self.folder.mkdir()
+        self.out = tmp_path / "written.jsonl"
+        env = {key: value for key, value in os.environ.items() if key != "DJANGO_SETTINGS_MODULE"}
+        # Where billiard spawns its pool processes (macOS) rather than forking them, Celery's fast path needs this.
+        env.update(PREFORK_DIR=str(self.folder), PREFORK_OUT=str(self.out), FORKED_BY_MULTIPROCESSING="1")
+        command = [sys.executable, "-m", "celery", "-A", "tests.project.prefork", "worker", "--pool=prefork"]
+        options = ["--concurrency=1", "--without-heartbeat", "--without-mingle", "--without-gossip", "-l", "warning"]
+        self.process = subprocess.Popen(  # noqa: S603 (this interpreter)
+            [*command, *options], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        )
+        self.sender = Celery("prefork", broker="filesystem://", set_as_current=False)
+        self.sender.conf.broker_transport_options = prefork.transport(self.folder)
+        # The worker says it is there (its first heartbeat) once its pool runs.
+        self.wait_for(lambda line: line.get("event") == "heartbeat")
+
+    def send(self, name: str) -> str:
+        return self.sender.send_task(f"tests.project.prefork.{name}").id
+
+    def lines(self) -> list[dict[str, Any]]:
+        if not self.out.exists():
+            return []
+        return [json.loads(line) for line in self.out.read_text().splitlines()]
+
+    def wait_for(self, found: Callable[[dict[str, Any]], bool]) -> None:
+        deadline = time.monotonic() + 30
+        while not any(found(line) for line in self.lines()):
+            if self.process.poll() is not None or time.monotonic() > deadline:
+                self.process.kill()
+                pytest.fail(f"the worker did not get there: {self.process.communicate()[0].decode(errors='replace')}")
+            time.sleep(0.05)
+
+    def stop(self, sig: signal.Signals = signal.SIGTERM) -> None:
+        """A warm shutdown (SIGTERM) or a cold one (SIGQUIT): the worker's processes have all ended after it."""
+        if self.process.poll() is None:
+            self.process.send_signal(sig)
+        self.process.communicate(timeout=30)
+
+    def of(self, task_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """The traces of the task and the events that say it finished, each without the process that wrote it."""
+        mine = [{k: v for k, v in line.items() if k != "pid"} for line in self.lines() if task_id in line.values()]
+        finished = [{k: v for k, v in line.items() if k != "time"} for line in mine if line.get("event") == "finished"]
+        return [line for line in mine if "trace" in line], finished
+
+
+@pytest.fixture
+def worker(tmp_path: Path, recorder: Recorder) -> Generator[PreforkWorker, None, None]:
+    del recorder  # What the test sends goes to it, not to an agent.
+    running = PreforkWorker(tmp_path)
+    yield running
+    if running.process.poll() is None:
+        running.process.kill()
+        running.process.communicate()
+
+
+def test_a_run_killed_by_its_hard_time_limit_has_one_trace_failed(worker: PreforkWorker) -> None:
+    task_id = worker.send("overstays")
+    worker.wait_for(lambda line: line.get("event") == "finished" and line.get("id") == task_id)
+    # The pool process is gone and a new one runs: the old one, sent SIGTERM, had its chance to write.
+    worker.stop()
+    traces, finished = worker.of(task_id)
+
+    assert traces == [
+        {
+            "trace": task_id,
+            "status": "error",
+            "state": "FAILURE",
+            "timeout": 1.0,
+            "errors": ["billiard.exceptions.TimeLimitExceeded"],
+        }
+    ]
+
+    assert finished == [{"event": "finished", "system": "celery", "id": task_id, "worker": IsStr, "state": "FAILURE"}]
+
+
+def test_a_run_cut_short_by_a_cold_shutdown_has_one_trace_revoked(worker: PreforkWorker) -> None:
+    task_id = worker.send("sleeps")
+    worker.wait_for(lambda line: line.get("event") == "started" and line.get("id") == task_id)
+    worker.stop(signal.SIGQUIT)
+    traces, finished = worker.of(task_id)
+
+    assert traces == [
+        {
+            "trace": task_id,
+            "status": "error",
+            "state": "REVOKED",
+            "timeout": None,
+            "errors": ["billiard.exceptions.Terminated"],
+        }
+    ]
+
+    assert finished == [{"event": "finished", "system": "celery", "id": task_id, "worker": IsStr, "state": "REVOKED"}]
 
 
 @pytest.mark.django_db(transaction=True)
