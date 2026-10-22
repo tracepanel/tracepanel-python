@@ -1,6 +1,9 @@
 import json
 
-from tracepanel.core import request
+import pytest
+from dirty_equals import IsStr
+
+from tracepanel.core import conf, request
 
 
 def test_request_headers_are_keyed_joined_and_masked_and_cookies_left_out() -> None:
@@ -133,14 +136,79 @@ def test_a_form_a_framework_parsed_is_shown_the_same_way() -> None:
 
 
 def test_text_is_kept_up_to_the_limit_and_says_when_it_was_cut() -> None:
-    long = b"x" * (request.MAX_BODY + 10)
+    long = b"x" * (64 * 1024 + 10)
 
     assert request.body("text/plain", b"hello") == {"http.request.body": "hello"}
 
     assert request.body("text/plain", long, complete=False) == {
-        "http.request.body": "x" * request.MAX_BODY,
+        "http.request.body": "x" * 64 * 1024,
         "http.request.body.truncated": True,
     }
+
+
+def test_the_limit_is_a_setting_and_bodies_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRACEPANEL_MAX_BODY_KB", "1")
+    conf.reset()
+
+    assert request.body("text/plain", b"x" * 1100, complete=False) == {
+        "http.request.body": "x" * 1024,
+        "http.request.body.truncated": True,
+    }
+
+    assert request.response_body("text/plain", "", b"y" * 1100) == {
+        "http.response.body": "y" * 1024,
+        "http.response.body.truncated": True,
+        "http.response.body.size": 1100,
+    }
+
+    monkeypatch.setenv("TRACEPANEL_CAPTURE_BODY", "0")
+    conf.reset()
+
+    assert request.body("application/json", b'{"a": 1}') == {}
+    assert request.form([("title", "Q3")], []) == {}
+    assert request.response_body("application/json", "", b'{"a": 1}') == {}
+
+
+def test_a_response_body_is_read_as_a_request_body_with_its_size() -> None:
+    data = json.dumps({"id": 7, "api_key": "k", "items": [{"refresh_token": "t", "sku": "A1"}]}).encode()
+
+    assert request.response_body("application/json", "", data) == {
+        "http.response.body": '{"id":7,"api_key":"********","items":[{"refresh_token":"********","sku":"A1"}]}',
+        "http.response.body.size": len(data),
+    }
+
+    assert request.response_body("application/problem+json", "identity", b'{"title": "Gone"}') == {
+        "http.response.body": '{"title":"Gone"}',
+        "http.response.body.size": 17,
+    }
+
+    assert request.response_body("text/plain; charset=utf-8", "", "héllo".encode()) == {
+        "http.response.body": "héllo",
+        "http.response.body.size": 6,
+    }
+
+
+def test_a_response_body_cut_at_the_limit_is_masked_first() -> None:
+    data = json.dumps({"password": "p", "rows": ["x" * 100] * 1000}).encode()
+
+    found = request.response_body("application/json", "", data)
+
+    assert found == {
+        "http.response.body": IsStr(regex=r'\{"password":"\*{8}","rows":\["x+.*'),
+        "http.response.body.truncated": True,
+        "http.response.body.size": len(data),
+    }
+    assert len(str(found["http.response.body"])) == 64 * 1024
+
+
+def test_a_response_body_kept_by_its_size_only() -> None:
+    assert request.response_body("image/png", "", b"\x89PNG") == {"http.response.body.size": 4}
+    assert request.response_body("application/json", "gzip", b"\x1f\x8b") == {"http.response.body.size": 2}
+    assert request.response_body("text/html; charset=utf-8", "", b"<html></html>") == {"http.response.body.size": 13}
+    assert request.response_body("application/json", "", b"") == {"http.response.body.size": 0}
+
+    huge = b'{"a": "' + b"x" * request.MAX_PARSED + b'"}'
+    assert request.response_body("application/json", "", huge) == {"http.response.body.size": len(huge)}
 
 
 def test_a_binary_body_or_a_part_of_a_form_is_not_kept() -> None:

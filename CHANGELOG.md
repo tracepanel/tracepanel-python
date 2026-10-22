@@ -4,6 +4,14 @@
 
 ### Added
 
+- A response's body is recorded with its request's, as Django Silk shows
+  it: JSON and forms with their secrets masked as a request's are, and text,
+  in `http.response.body` with its size in bytes. Only a response sent whole
+  is read, never a stream (Django's StreamingHttpResponse, a streamed ASGI or
+  WSGI response). A page, its scripts and stylesheets, binary content and
+  compressed bodies are recorded by their size only. Both bodies are kept up
+  to `max_body_kb` (64 KiB, was 16 KiB for a request's), marked as cut past
+  it, and `capture_body = false` turns them off.
 - Task workflows link up across Celery, RQ, Dramatiq and Django Tasks. A
   run records the task it follows (`task.parent_id`), the first task of its
   workflow (`task.root_id`) and its group (`task.group_id`): Celery's chain,

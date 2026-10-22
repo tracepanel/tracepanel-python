@@ -1,8 +1,9 @@
-"""What a request carried, as attributes of its trace: headers, query, body, cookies, the session.
+"""What a request carried and its response said, as attributes of its trace: headers, query, bodies, cookies, session.
 
 They stay on this machine (the agent keeps them out of what it sends anywhere), and the values under a sensitive name
-are masked before they are recorded, as an error's local variables are. A body is only what the app read itself,
-up to MAX_BODY characters: tracepanel never reads a stream for the app, nor holds an upload.
+are masked before they are recorded, as an error's local variables are. A request's body is only what the app read
+itself, a response's only one sent whole, each up to `max_body_kb`: tracepanel never reads a stream for the app, nor
+holds an upload.
 """
 
 import functools
@@ -13,11 +14,14 @@ from email.parser import BytesParser
 from email.policy import HTTP
 from urllib.parse import parse_qsl, quote, urlencode
 
+from tracepanel.core import conf
 from tracepanel.core.frames import MASK, SENSITIVE, safe_repr
 from tracepanel.core.model import Attrs
 
-# How much of a body is kept, in characters.
-MAX_BODY = 16_384
+# A response's JSON larger than this isn't parsed to mask its secrets, so isn't kept: its size is.
+MAX_PARSED = 4 << 20
+# What a response's body shows elsewhere (a page, its assets): kept by its size only.
+_SHOWN_ELSEWHERE = frozenset({"text/html", "text/css", "text/javascript", "application/javascript"})
 # A form as people read it: encoded, but its spaces, masks and file notes as they are.
 _READABLE = "*<>,. /:@"
 # A response's cookies are a session's keys, whatever their name.
@@ -120,35 +124,70 @@ def _session_value(name: str, value: object) -> str:
     return safe_repr("", value) if name in _SESSION_PLAIN else safe_repr(name, value)
 
 
+def max_body() -> int:
+    """How much of a body is kept, in bytes (and characters): none when bodies aren't captured."""
+    config = conf.get_config()
+    return max(config.max_body_kb, 0) * 1024 if config.capture_body else 0
+
+
 def body(content_type: str, data: bytes, *, complete: bool = True) -> Attrs:
     """http.request.body from what the app read: JSON and forms with secrets masked, text as it is, binary not.
 
     `complete` is False when only the start of the body is at hand: a form or JSON can't be read from a part, and
     a multipart upload past it is not kept.
     """
-    kind = content_type.split(";", 1)[0].strip().lower()
-    text: str | None
-    if not data:
+    limit = max_body()
+    if not data or not limit:
         return {}
-    if kind == "application/json" or kind.endswith("+json"):
-        text = _json(data) if complete else None
-    elif kind == "application/x-www-form-urlencoded":
-        text = _form(data) if complete else None
-    elif kind == "multipart/form-data":
-        text = _multipart(content_type, data) if complete else None
-    elif kind.startswith("text/") or kind in {"application/xml", "application/graphql"}:
-        text = data.decode("utf-8", errors="replace")
-    else:
+    text = _readable(content_type, data, complete=complete)
+    return {} if text is None else _cut("http.request.body", text, limit)
+
+
+def response_body(content_type: str, encoding: str, data: bytes) -> Attrs:
+    """http.response.body of a response sent whole, as a request's body is read, and its size in bytes.
+
+    A compressed body, a page and its assets, binary content and JSON too large to mask are kept by their size only.
+    """
+    limit = max_body()
+    if not limit:
         return {}
-    if text is None:
-        return {}
-    return _cut(text)
+    attrs: Attrs = {"http.response.body.size": len(data)}
+    kind = _kind(content_type)
+    if not data or encoding.strip().lower() not in {"", "identity"} or kind in _SHOWN_ELSEWHERE:
+        return attrs
+    if kind == "multipart/form-data" or (_is_json(kind) and len(data) > MAX_PARSED):
+        return attrs
+    text = _readable(content_type, data, complete=True)
+    return attrs if text is None else {**_cut("http.response.body", text, limit), **attrs}
+
+
+def _kind(content_type: str) -> str:
+    return content_type.split(";", 1)[0].strip().lower()
+
+
+def _is_json(kind: str) -> bool:
+    return kind == "application/json" or kind.endswith("+json")
+
+
+def _readable(content_type: str, data: bytes, *, complete: bool) -> str | None:
+    """A body as text: JSON and forms masked, text as it is; None for binary content or a part of a structure."""
+    kind = _kind(content_type)
+    if _is_json(kind):
+        return _json(data) if complete else None
+    if kind == "application/x-www-form-urlencoded":
+        return _form(data) if complete else None
+    if kind == "multipart/form-data":
+        return _multipart(content_type, data) if complete else None
+    if kind.startswith("text/") or kind in {"application/xml", "application/graphql"} or kind.endswith("+xml"):
+        return data.decode("utf-8", errors="replace")
+    return None
 
 
 def form(fields: Iterable[tuple[str, str]], files: Iterable[tuple[str, str, int]]) -> Attrs:
     """http.request.body from a form a framework already parsed: its fields, then its files by name and size."""
-    text = _form_text(fields, files)
-    return _cut(text) if text else {}
+    limit = max_body()
+    text = _form_text(fields, files) if limit else ""
+    return _cut("http.request.body", text, limit) if text else {}
 
 
 def _form_text(fields: Iterable[tuple[str, str]], files: Iterable[tuple[str, str, int]]) -> str:
@@ -161,10 +200,10 @@ def _file(name: str, size: int) -> str:
     return f"<file {name}, {size} bytes>"
 
 
-def _cut(text: str) -> Attrs:
-    if len(text) <= MAX_BODY:
-        return {"http.request.body": text}
-    return {"http.request.body": text[:MAX_BODY], "http.request.body.truncated": True}
+def _cut(attr: str, text: str, limit: int) -> Attrs:
+    if len(text) <= limit:
+        return {attr: text}
+    return {attr: text[:limit], f"{attr}.truncated": True}
 
 
 def _json(data: bytes) -> str | None:

@@ -317,3 +317,13 @@ def test_a_body_the_endpoint_read_is_recorded_masked(client: TestClient, traces:
         "r-1",
         '{"email":"ann@example.com","password":"********"}',
     )
+
+
+def test_the_response_body_is_recorded(client: TestClient, traces: list[Trace]) -> None:
+    client.post("/signup", json={"email": "ann@example.com", "password": "p"})
+
+    (trace,) = traces
+    assert {key: value for key, value in trace.attrs.items() if key.startswith("http.response.body")} == {
+        "http.response.body": '{"email":"ann@example.com"}',
+        "http.response.body.size": 27,
+    }

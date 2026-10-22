@@ -158,6 +158,16 @@ def echo_json(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"read": len(request.body)})
 
 
+def catalog(request: HttpRequest) -> JsonResponse:
+    del request
+    return JsonResponse({"api_key": "k", "books": [{"id": i, "title": "x" * 50} for i in range(2000)]})
+
+
+def export(request: HttpRequest) -> StreamingHttpResponse:
+    del request
+    return StreamingHttpResponse(iter([b'{"rows": [', b"1, 2", b"]}"]), content_type="application/json")
+
+
 def upload(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"fields": len(request.POST), "files": len(request.FILES)})
 
