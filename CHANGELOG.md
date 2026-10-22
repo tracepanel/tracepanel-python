@@ -114,6 +114,13 @@
 - A Dramatiq message retried while its next attempt already ran in another
   worker thread no longer says `finished` for the attempt that failed. The
   Tasks page's Live dropped the running attempt.
+- A Celery run killed by its hard time limit has one trace, the failed one.
+  Its pool process, sent SIGTERM before it is killed, wrote a second trace
+  that read ok and said `finished` for it, and the console could show that
+  one. The pool process now writes nothing of a run it leaves unfinished: the
+  worker's main process writes it. A run cut short by a cold shutdown or
+  `revoke(terminate=True)` reads REVOKED with Terminated, one whose pool
+  process died fails with WorkerLostError. They read ok, or had no trace.
 
 ## 0.4.1 (2026-10-21)
 

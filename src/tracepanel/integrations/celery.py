@@ -19,7 +19,10 @@ gives it: `task.parent_id`, `task.root_id` and `task.group_id` (a group's or a c
 
 A run stopped by its soft time limit fails with SoftTimeLimitExceeded and says the limit (`task.timeout`). The hard
 limit kills the pool process before the run can say anything: the worker's main process then writes the run's trace,
-failed with TimeLimitExceeded, and says it finished.
+failed with TimeLimitExceeded, and says it finished. So it does for a run whose pool process was terminated (a cold
+shutdown, `revoke(terminate=True)`: REVOKED with Terminated) or died (FAILURE with WorkerLostError). The pool process,
+sent SIGTERM before it is killed, writes nothing of the run it leaves unfinished: one trace per run, the main
+process's.
 """
 
 import functools
@@ -359,6 +362,11 @@ def postrun(task_id: str | None = None, retval: object = None, state: str | None
         run = _runs.pop(task_id or "", None)
     if run is None:
         return
+    if state is None and _terminating():
+        # Its pool process is being terminated: SIGTERM unwinds the run (SystemExit), which never finished. The
+        # worker's main process writes its trace and says it finished (_ended): a second one from here would read ok.
+        run.context.__exit__(None, None, None)
+        return
     trace = run.trace
     trace.attrs["task.state"] = state
     if state == "SUCCESS" and conf.get_config().capture_task_args:
@@ -374,19 +382,65 @@ def postrun(task_id: str | None = None, retval: object = None, state: str | None
         task_event("finished", SYSTEM, task_id or "", worker=trace.attrs.get("task.worker"), state=state)
 
 
+def _terminating() -> bool:
+    """Whether this pool process is being terminated: billiard's SIGTERM handler fired, the run is unwinding."""
+    try:
+        from billiard import common  # noqa: PLC0415 (Celery's own dependency)
+    except ImportError:
+        return False
+    fired = getattr(common, "terminate_handler_fired", None)
+    if callable(fired):
+        return bool(fired())
+    # An older billiard keeps the flag without a function to read it.
+    flag = getattr(common, "_should_have_exited", None)
+    return bool(flag and flag[0])
+
+
 def _on_timeout(original: Any) -> Any:  # noqa: ANN401
     @functools.wraps(original)
     def on_timeout(self: Any, soft: bool, timeout: float) -> Any:  # noqa: ANN401, FBT001 (Celery's signature)
         result = original(self, soft, timeout)
         if not soft:
-            _killed(self, timeout)
+            from billiard.exceptions import TimeLimitExceeded  # noqa: PLC0415 (Celery's own dependency)
+
+            _ended(self, TimeLimitExceeded(timeout), "FAILURE", timeout=timeout)
         return result
 
     return on_timeout
 
 
-def _killed(request: Any, timeout: float) -> None:  # noqa: ANN401 (celery.worker.request.Request)
-    """The hard time limit killed the pool process running it: its trace never ended there, so it is written here."""
+def _on_failure(original: Any) -> Any:  # noqa: ANN401
+    @functools.wraps(original)
+    def on_failure(self: Any, exc_info: Any, *args: object, **kwargs: object) -> Any:  # noqa: ANN401 (Celery's)
+        result = original(self, exc_info, *args, **kwargs)
+        _lost(self, exc_info)
+        return result
+
+    return on_failure
+
+
+def _lost(request: Any, exc_info: Any) -> None:  # noqa: ANN401 (a Request, billiard's ExceptionInfo)
+    """The pool process running it was terminated or died: its trace never ended there, so it is written here."""
+    from billiard.exceptions import Terminated, WorkerLostError  # noqa: PLC0415 (Celery's own dependency)
+
+    exception = getattr(exc_info, "exception", None)
+    # billiard's ExceptionInfo wraps it, with its traceback as text.
+    exception = getattr(exception, "exc", exception)
+    if isinstance(exception, Terminated):
+        state = "REVOKED"
+    elif isinstance(exception, WorkerLostError):
+        state = "FAILURE"
+    else:
+        return
+    with _lock:
+        # Run in this process (the solo or threads pool): its own trace says how it ended.
+        if str(getattr(request, "id", "") or "") in _runs:
+            return
+    _ended(request, exception, state)
+
+
+def _ended(request: Any, error: BaseException, state: str, *, timeout: float | None = None) -> None:  # noqa: ANN401
+    """The trace of a run whose pool process was killed, written by the worker's main process from its request."""
     name = str(getattr(request, "task_name", "") or getattr(request, "name", ""))
     task_id = str(getattr(request, "id", "") or "")
     if not task_id or conf.matches(name, conf.get_config().ignore_tasks):
@@ -419,17 +473,16 @@ def _killed(request: Any, timeout: float) -> None:  # noqa: ANN401 (celery.worke
         if isinstance(parent, str) and ":" in parent:
             parent_trace, parent_span = parent.split(":", 1)
             trace.links.append(Link(kind="enqueued_by", trace_id=parent_trace, span_id=parent_span))
-        from billiard.exceptions import TimeLimitExceeded  # noqa: PLC0415 (Celery's own dependency)
-
-        errors.capture(TimeLimitExceeded(timeout), handled=False)
-    trace.attrs["task.state"] = "FAILURE"
-    trace.attrs["task.timeout"] = timeout
+        errors.capture(error, handled=False)
+    trace.attrs["task.state"] = state
+    if timeout is not None:
+        trace.attrs["task.timeout"] = timeout
     if isinstance(started, (int, float)) and started > 0:
         # It ran from when the pool process took it until now.
         trace.start = trace.spans[0].start = int(started * 1_000_000)
         trace.duration = trace.spans[0].duration = max(now_us() - trace.start, 0)
     complete(trace)
-    task_event("finished", SYSTEM, task_id, worker=hostname, state="FAILURE")
+    task_event("finished", SYSTEM, task_id, worker=hostname, state=state)
 
 
 class _Headers:
@@ -490,3 +543,6 @@ def install() -> None:
 
     if not patched(Request, "on_timeout"):
         patch(Request, "on_timeout", _on_timeout(Request.on_timeout))
+    # Nor of a pool process terminated or lost: the request fails with Terminated or WorkerLostError there.
+    if not patched(Request, "on_failure"):
+        patch(Request, "on_failure", _on_failure(Request.on_failure))
