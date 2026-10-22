@@ -187,6 +187,27 @@ def test_a_forms_card_number_is_masked_beside_its_other_fields() -> None:
     }
 
 
+def test_tokens_are_masked_unless_they_are_a_models_counts() -> None:
+    data = {
+        "usage": {"prompt_tokens": 12, "completion_tokens": 7, "total_tokens": 19},
+        "max_tokens": 1024,
+        "tokens": [12, 7],
+        "user": {"tokens": ["ghp_abc"], "refresh_tokens": ["r1"], "api_keys": ["k1"], "client_secrets": ["s1"]},
+    }
+
+    assert request.body("application/json", json.dumps(data).encode()) == {
+        "http.request.body": (
+            '{"usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19},"max_tokens":1024,'
+            '"tokens":[12,7],"user":{"tokens":"********","refresh_tokens":"********","api_keys":"********",'
+            '"client_secrets":"********"}}'
+        ),
+    }
+
+    assert request.query("max_tokens=100&tokens=100&access_tokens=a") == {
+        "url.query": "max_tokens=100&tokens=********&access_tokens=********",
+    }
+
+
 def test_a_forms_card_fields_are_masked() -> None:
     form = b"card[number]=4242424242424242&card[cvc]=123&card[exp_month]=12&pan=4242"
 

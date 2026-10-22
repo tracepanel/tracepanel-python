@@ -18,7 +18,7 @@ from typing import TypeVar
 
 from tracepanel._compat import override
 from tracepanel.core import conf, masking
-from tracepanel.core.masking import MASK, card_fields, card_number
+from tracepanel.core.masking import MASK, card_fields, card_number, counted
 from tracepanel.core.model import Attrs, Scalar, Trace
 
 # Django's own settings whose names look secret but whose values aren't.
@@ -119,7 +119,8 @@ def masked(value: object, sensitive: Callable[[str], bool], depth: int = 0, pare
         beside_card = card_fields(value)
         return {
             key: _MASKED
-            if (isinstance(key, str) and sensitive(key)) or card_number(key, item, parent, beside_card=beside_card)
+            if (isinstance(key, str) and sensitive(key) and not counted(key, item))
+            or card_number(key, item, parent, beside_card=beside_card)
             else masked(item, sensitive, depth + 1, key)
             for key, item in value.items()
         }
@@ -193,7 +194,7 @@ SETTING_MAX = 4000
 
 def setting_repr(name: str, value: object) -> str:
     """A setting as the console shows it: masked whole under a secret name, else its masked repr, cut."""
-    if setting_sensitive(name) or card_number(name, value):
+    if (setting_sensitive(name) and not counted(name, value)) or card_number(name, value):
         return MASK
     text = _safe(lambda shown: _SETTINGS.repr(masked(shown, setting_sensitive, parent=name)), value)
     return text if len(text) <= SETTING_MAX else f"{text[: SETTING_MAX - 3]}..."
@@ -227,7 +228,7 @@ def context_wanted(trace: Trace | None, template: str) -> bool:
 
 def _context_repr(name: str, value: object, *, beside_card: bool) -> str:
     """A context value's masked repr; its name is the parent of its keys (a card's number under `card`)."""
-    if local_sensitive(name) or card_number(name, value, beside_card=beside_card):
+    if (local_sensitive(name) and not counted(name, value)) or card_number(name, value, beside_card=beside_card):
         return MASK
     return _safe(lambda shown: _CONTEXT.repr(masked(shown, local_sensitive, parent=name)), value)
 

@@ -12,7 +12,7 @@ from pathlib import Path
 from types import CodeType, FrameType, TracebackType
 
 from tracepanel.core import conf
-from tracepanel.core.masking import MASK, card_fields, card_number, sensitive
+from tracepanel.core.masking import MASK, card_fields, card_number, counted, sensitive
 from tracepanel.core.model import Frame
 
 # The standard library, installed packages, and the environment's scripts (.venv/bin/uvicorn, the entry point a
@@ -201,7 +201,7 @@ def library_caller(skip: int = 2) -> str | None:
 
 
 def safe_repr(name: str, value: object) -> str:
-    if sensitive(name):
+    if sensitive(name) and not counted(name, value):
         return MASK
     try:
         return _repr.repr(value)
