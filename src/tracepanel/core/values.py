@@ -3,7 +3,7 @@
 Both are repr()-ed and cut the way an error's local variables are (reprlib), after a masked copy is made: a value under
 a sensitive name is MASK at any depth (DATABASES' PASSWORD, a dict's `api_key`), and the credentials in a URL
 (`postgres://shop:pw@db/shop`, a Sentry DSN's key) are MASK too, whatever its name. Names are judged by a rule of the
-caller's: settings by SETTING_SENSITIVE, a template's context by the locals' SENSITIVE.
+caller's: settings by setting_sensitive(), a template's context by the locals' sensitive() (tracepanel.core.masking).
 
 A framework can say how to show its own objects without touching them (Django's QuerySet, which a repr() would run)
 with summarize(), and guard() what a repr() may do (Django blocks queries meanwhile).
@@ -17,13 +17,10 @@ from collections.abc import Callable, Mapping
 from typing import TypeVar
 
 from tracepanel._compat import override
-from tracepanel.core import conf
-from tracepanel.core.frames import CARD_SENSITIVE, MASK, SENSITIVE, card_number
+from tracepanel.core import conf, masking
+from tracepanel.core.masking import MASK, card_fields, card_number, counted
 from tracepanel.core.model import Attrs, Scalar, Trace
 
-# Settings' own names: Django's idea of a hidden setting. The locals' rule would mask SESSION_COOKIE_AGE,
-# AUTH_USER_MODEL and CSRF_COOKIE_NAME, which say nothing secret.
-SETTING_SENSITIVE = re.compile(rf"secret|token|pass|key|signature|private|credential|{CARD_SENSITIVE}", re.IGNORECASE)
 # Django's own settings whose names look secret but whose values aren't.
 SETTING_PLAIN = frozenset(
     {"PASSWORD_HASHERS", "AUTH_PASSWORD_VALIDATORS", "PASSWORD_RESET_TIMEOUT", "KEY_PREFIX", "KEY_FUNCTION"}
@@ -37,13 +34,13 @@ _MAX_DEPTH = 8
 @functools.lru_cache(maxsize=4096)
 def setting_sensitive(name: str) -> bool:
     """Whether a setting (or a key inside one) holds a secret: SECRET_KEY, PASSWORD, STRIPE_API_KEY, AWS_TOKEN."""
-    return name.upper() not in SETTING_PLAIN and SETTING_SENSITIVE.search(name) is not None
+    return name.upper() not in SETTING_PLAIN and masking.setting_sensitive(name)
 
 
 @functools.lru_cache(maxsize=4096)
 def local_sensitive(name: str) -> bool:
     """The rule of an error's local variables: password, token, csrf_token, session, api_key."""
-    return SENSITIVE.search(name) is not None
+    return masking.sensitive(name)
 
 
 class _Shown:
@@ -108,7 +105,7 @@ def _summary(value: object) -> str | None:
 def masked(value: object, sensitive: Callable[[str], bool], depth: int = 0, parent: object = None) -> object:
     """A copy of `value` fit to repr(): secrets masked, framework objects summarized; the rest as it is.
 
-    `parent` is the key `value` is under: a card's `number` is masked under its card.
+    `parent` is the key `value` is under: a card's `number` is masked under its card, or beside its other fields.
     """
     if isinstance(value, str):
         return mask_url(value)
@@ -119,9 +116,11 @@ def masked(value: object, sensitive: Callable[[str], bool], depth: int = 0, pare
     if plain or depth >= _MAX_DEPTH:
         return value
     if isinstance(value, Mapping):
+        beside_card = card_fields(value)
         return {
             key: _MASKED
-            if (isinstance(key, str) and sensitive(key)) or card_number(parent, key)
+            if (isinstance(key, str) and sensitive(key) and not counted(key, item))
+            or card_number(key, item, parent, beside_card=beside_card)
             else masked(item, sensitive, depth + 1, key)
             for key, item in value.items()
         }
@@ -195,7 +194,7 @@ SETTING_MAX = 4000
 
 def setting_repr(name: str, value: object) -> str:
     """A setting as the console shows it: masked whole under a secret name, else its masked repr, cut."""
-    if setting_sensitive(name):
+    if (setting_sensitive(name) and not counted(name, value)) or card_number(name, value):
         return MASK
     text = _safe(lambda shown: _SETTINGS.repr(masked(shown, setting_sensitive, parent=name)), value)
     return text if len(text) <= SETTING_MAX else f"{text[: SETTING_MAX - 3]}..."
@@ -227,9 +226,9 @@ def context_wanted(trace: Trace | None, template: str) -> bool:
     return True
 
 
-def _context_repr(name: str, value: object) -> str:
+def _context_repr(name: str, value: object, *, beside_card: bool) -> str:
     """A context value's masked repr; its name is the parent of its keys (a card's number under `card`)."""
-    if local_sensitive(name):
+    if (local_sensitive(name) and not counted(name, value)) or card_number(name, value, beside_card=beside_card):
         return MASK
     return _safe(lambda shown: _CONTEXT.repr(masked(shown, local_sensitive, parent=name)), value)
 
@@ -238,7 +237,8 @@ def context_attrs(items: Mapping[str, object]) -> Attrs:
     """`template.context.*`: its top-level names, their masked repr()s, how many were left out past MAX_CONTEXT."""
     names = [name for name in items if not name.startswith("__")]
     kept = names[:MAX_CONTEXT]
-    shown = guarded(lambda: [_context_repr(name, items[name]) for name in kept])
+    beside_card = card_fields(names)
+    shown = guarded(lambda: [_context_repr(name, items[name], beside_card=beside_card) for name in kept])
     attrs: Attrs = {"template.context.names": list[Scalar](kept), "template.context.values": list[Scalar](shown)}
     if len(names) > len(kept):
         attrs["template.context.omitted"] = len(names) - len(kept)

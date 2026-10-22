@@ -572,6 +572,42 @@ def test_a_task_stopped_by_its_time_limit_finishes_failed(recorder: Recorder) ->
     }
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.filterwarnings("ignore:Exception raised outside body:RuntimeWarning")  # Celery's, as expected here
+def test_a_run_cut_short_outside_its_body_finishes_failed_with_what_cut_it(recorder: Recorder) -> None:
+    # The soft time limit hits Celery storing STARTED, before the task's body: Celery gives task_postrun no state.
+    result = jobs.cut_short.delay()
+    run_all(result)
+    (task,) = by_kind(recorder.traces, "task")
+
+    assert task_attrs(task) == IsPartialDict({"task.id": result.id, "task.state": "FAILURE", "task.timeout": 3})
+    assert (task.status, [(error.type, error.handled) for error in task.errors]) == (
+        "error",
+        [("billiard.exceptions.SoftTimeLimitExceeded", False)],
+    )
+
+    assert without_heartbeats(recorder.events)[-1] == {
+        "event": "finished",
+        "system": "celery",
+        "id": result.id,
+        "time": IsPositiveInt,
+        "worker": IsStr,
+        "state": "FAILURE",
+    }
+
+
+@pytest.mark.django_db
+def test_an_eager_task_whose_error_reaches_its_caller_finishes_failed(traces: list[Trace]) -> None:
+    with pytest.raises(ValueError, match="boom"):
+        jobs.broken.apply(throw=True)
+    (task,) = traces
+
+    assert (task.status, task.attrs["task.state"]) == ("error", "FAILURE")
+    assert [(error.type, error.message, error.handled) for error in task.errors] == [
+        ("builtins.ValueError", "boom", False)
+    ]
+
+
 def test_a_task_killed_by_its_hard_time_limit_still_has_its_trace(recorder: Recorder) -> None:
     # What the worker's main process holds of a task its pool process runs, as Celery's own tests build it.
     message = TaskMessage(

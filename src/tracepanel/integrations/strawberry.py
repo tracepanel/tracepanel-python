@@ -55,7 +55,16 @@ def _finish_operation(context: Any, trace: "Trace", span: "Span | None") -> None
     except Exception:  # noqa: BLE001 (no parsed document: a syntax error)
         document = None
     failures = getattr(context.result, "errors", None) or context.pre_execution_errors or []
-    finish_operation(trace, span, kind=kind, name=name, query=context.query, document=document, failures=failures)
+    finish_operation(
+        trace,
+        span,
+        library="strawberry",
+        kind=kind,
+        name=name,
+        query=context.query,
+        document=document,
+        failures=failures,
+    )
 
 
 def _extension_class() -> type:

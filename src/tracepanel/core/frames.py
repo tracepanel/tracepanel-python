@@ -3,7 +3,6 @@
 import functools
 import linecache
 import os
-import re
 import reprlib
 import sys
 import sysconfig
@@ -13,6 +12,7 @@ from pathlib import Path
 from types import CodeType, FrameType, TracebackType
 
 from tracepanel.core import conf
+from tracepanel.core.masking import MASK, card_fields, card_number, counted, sensitive
 from tracepanel.core.model import Frame
 
 # The standard library, installed packages, and the environment's scripts (.venv/bin/uvicorn, the entry point a
@@ -28,25 +28,6 @@ _SKIP_MODULES = ("tracepanel", "django", "asgiref")
 CONTEXT_LINES = 5
 MAX_FRAMES = 50
 MAX_LOCALS = 40
-# Payment cards: the card's number (card_number, cardNumber, card_no, a PAN) and its security code (CVC, CVV, CVN).
-CARD_SENSITIVE = r"card_?(num|no(?:$|_))|cvv|cvc|cvn|(?:^|_)pan(?:$|_)"
-SENSITIVE = re.compile(
-    rf"pass(word|wd)?|secret|token|api_?key|auth|cookie|session|csrf|signature|private|{CARD_SENSITIVE}", re.IGNORECASE
-)
-# What holds a payment card (card, creditCard, payment_card): its `number` is the card's number.
-_CARD = re.compile(r"card$", re.IGNORECASE)
-MASK = "********"
-
-
-def card_number(parent: object, key: object) -> bool:
-    """Whether `key` under `parent` is a card's number: {"card": {"number": "4242..."}}."""
-    return (
-        isinstance(key, str)
-        and key.lower() == "number"
-        and isinstance(parent, str)
-        and _CARD.search(parent) is not None
-    )
-
 
 _repr = reprlib.Repr()
 _repr.maxstring = 160
@@ -220,7 +201,7 @@ def library_caller(skip: int = 2) -> str | None:
 
 
 def safe_repr(name: str, value: object) -> str:
-    if SENSITIVE.search(name):
+    if sensitive(name) and not counted(name, value):
         return MASK
     try:
         return _repr.repr(value)
@@ -230,7 +211,12 @@ def safe_repr(name: str, value: object) -> str:
 
 def _locals(frame: FrameType) -> dict[str, str]:
     items = [(name, value) for name, value in frame.f_locals.items() if not name.startswith("__")]
-    return {name: safe_repr(name, value) for name, value in items[:MAX_LOCALS]}
+    # A card's number among its other fields: charge(number, exp_month, exp_year, cvc).
+    beside_card = card_fields(name for name, _ in items)
+    return {
+        name: MASK if card_number(name, value, beside_card=beside_card) else safe_repr(name, value)
+        for name, value in items[:MAX_LOCALS]
+    }
 
 
 def _context(filename: str, lineno: int, module_globals: dict[str, object]) -> tuple[int | None, list[str]]:

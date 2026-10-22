@@ -18,7 +18,9 @@ failed task again unless `ack_failure` is on) and how long it waited (`task.queu
 `timeout` fails with TimeoutException and says the limit (`task.timeout`). The workflow follows django-q's: a task's
 `group` is `task.group_id`, a chain's next step (`Chain`, `async_chain`) follows the step before it
 (`task.parent_id`, `task.root_id` the chain's first step) and links to its run, and so does a task sent from inside
-another's run. A task's `hook` runs as a trace of its own (`task.callback = "hook"`), linked to the task's run.
+another's run. django-q gives a chain's steps a group id of their own to keep their results together: that is the
+chain, not a group, so they have no `task.group_id`. A task's `hook` runs as a trace of its own
+(`task.callback = "hook"`), linked to the task's run.
 
 Arguments and results are kept for local debugging only (masked like locals) and never leave the machine.
 
@@ -305,6 +307,11 @@ def _attempts(task: dict[str, Any]) -> int:
     return int(count or 0)
 
 
+def _chained(task: dict[str, Any]) -> bool:
+    """A step of a chain: django-q hands each one the steps after it (none for the last) and the chain's group."""
+    return "chain" in task
+
+
 def _run_attrs(task: dict[str, Any], *, eager: bool, worker: str | None) -> Attrs:
     attrs: Attrs = {
         "task.system": SYSTEM,
@@ -330,7 +337,7 @@ def _run_attrs(task: dict[str, Any], *, eager: bool, worker: str | None) -> Attr
     workflow = Workflow(
         parent_id=str(parent) if parent else None,
         root_id=str(root) if root else None,
-        group_id=str(task["group"]) if task.get("group") else None,
+        group_id=None if _chained(task) or not task.get("group") else str(task["group"]),
     )
     attrs.update(workflow.attrs(str(task.get("id") or "")))
     if conf.get_config().capture_task_args:

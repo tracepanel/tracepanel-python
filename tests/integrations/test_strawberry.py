@@ -38,6 +38,7 @@ def test_operation_names_the_request(
             "graphql.operation.name": "Team",
             "graphql.document": "query Team { users { username groups } }",
             "graphql.errors": 0,
+            "graphql.library": "strawberry",
         }
     )
     assert [(span.kind, span.name) for span in trace.spans if span.kind == "graphql"] == [
@@ -78,6 +79,50 @@ def test_resolver_error_comes_back_as_200(client: Client, traces: list[Trace]) -
     assert (trace.status, trace.attrs["http.status_code"], trace.attrs["graphql.errors"]) == ("error", 200, 1)
     assert [(error.type, error.handled) for error in trace.errors] == [("builtins.RuntimeError", False)]
     assert [issue.kind for issue in issues(trace)] == ["error"]
+
+
+@pytest.mark.django_db
+def test_invalid_document_is_not_an_exception(client: Client, traces: list[Trace], store: AgentStore) -> None:
+    post(client, "query Typo { usres { id } }")
+    post(client, "{ ...Team } fragment Team on Query { users { id } }")
+    post(client, "query Team {", "Team")
+    invalid, anonymous, unparsed = traces
+    store.write(traces)
+
+    # Validation failed: the operation keeps its name. The client's mistake: no error of the app's.
+    assert (invalid.name, invalid.attrs["graphql.operation.name"], invalid.attrs["graphql.errors"]) == (
+        "GraphQL query Typo",
+        "Typo",
+        1,
+    )
+    assert invalid.errors == []
+
+    # No operation at all: not a query, named apart from the anonymous ones.
+    assert (anonymous.name, unparsed.name, unparsed.attrs["graphql.errors"], unparsed.errors) == (
+        "GraphQL query anonymous",
+        "GraphQL syntax error",
+        1,
+        [],
+    )
+    assert unparsed.attrs == IsPartialDict(
+        {
+            "graphql.operation": "syntax error",
+            "graphql.operation.type": None,
+            "graphql.operation.name": None,
+            "graphql.document": "query Team {",
+        }
+    )
+    assert [(span.kind, span.name) for span in unparsed.spans if span.kind == "graphql"] == [
+        ("graphql", "syntax error"),
+        ("graphql", "parse"),
+    ]
+
+    assert store.list_graphql() == IsList(
+        IsPartialDict(operation="query Typo", type="query", name="Typo", calls=1),
+        IsPartialDict(operation="query anonymous", type="query", name=None, calls=1),
+        IsPartialDict(operation="syntax error", type=None, name=None, calls=1),
+        check_order=False,
+    )
 
 
 @pytest.mark.django_db
