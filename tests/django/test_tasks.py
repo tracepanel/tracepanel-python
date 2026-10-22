@@ -394,18 +394,18 @@ def test_a_worker_run_leaves_nothing_current(traces: list[Trace], users: list[Us
 
     assert (current_trace(), current_span()) == (None, None)
 
-    assert tree(run) == [
+    # Its queries, by database: SQLite's BEGIN is a statement of its own, PostgreSQL's is not.
+    assert [branch for branch in tree(run) if branch[0] != "sql"] == [
         ("task.run", None),
         ("transaction", "task.run"),
-        ("sql", "transaction"),
-        ("sql", "transaction"),
-        # The worker saves the result: pre_save, its UPDATE, then task_finished.
+        # The worker saves the result (pre_save), then sends task_finished.
         ("signal", "task.run"),
         ("function", "signal"),
-        ("sql", "task.run"),
         ("signal", "task.run"),
         ("function", "signal"),
     ]
+
+    assert {parent for kind, parent in tree(run) if kind == "sql"} == {"transaction", "task.run"}
 
 
 @pytest.mark.django_db
