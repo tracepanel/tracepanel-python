@@ -19,7 +19,7 @@ from django_q.monitor import monitor
 from django_q.queues import Queue
 from django_q.scheduler import scheduler
 from django_q.signing import SignedPackage
-from django_q.tasks import Chain, async_task, schedule
+from django_q.tasks import Chain, async_chain, async_task, schedule
 from django_q.worker import worker
 from jsonschema import Draft202012Validator
 
@@ -427,10 +427,12 @@ def test_a_chain_s_steps_follow_each_other(traces: list[Trace]) -> None:
     steps = sorted(tasks(traces), key=lambda trace: trace.start)
     first, second, _ = (str(step.attrs["task.id"]) for step in steps)
 
+    # The group django-q gives a chain's steps is the chain: they follow each other, they are not a group.
+    assert group
     assert [workflow(step) for step in steps] == [
-        {"task.group_id": group},
-        {"task.parent_id": first, "task.root_id": first, "task.group_id": group},
-        {"task.parent_id": second, "task.root_id": first, "task.group_id": group},
+        {},
+        {"task.parent_id": first, "task.root_id": first},
+        {"task.parent_id": second, "task.root_id": first},
     ]
 
     # The first was enqueued by the request, each next one by the monitor once the step before was done.
@@ -442,6 +444,18 @@ def test_a_chain_s_steps_follow_each_other(traces: list[Trace]) -> None:
     ]
 
     assert [step.attrs["task.trigger"] for step in steps] == ["request", "task", "task"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_async_chain_s_steps_follow_each_other_and_are_no_group(traces: list[Trace]) -> None:
+    async_chain([(add, (1,)), (add, (2,))])
+    work()
+    first, second = sorted(tasks(traces), key=lambda trace: trace.start)
+    first_id = str(first.attrs["task.id"])
+
+    assert [workflow(first), workflow(second)] == [{}, {"task.parent_id": first_id, "task.root_id": first_id}]
+
+    assert second.links == [Link(kind="enqueued_by", trace_id=first.id, span_id=first.spans[0].id)]
 
 
 @pytest.mark.django_db(transaction=True)
