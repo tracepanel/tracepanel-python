@@ -4,6 +4,20 @@
 
 ### Added
 
+- A response's body is recorded with its request's, as Django Silk shows
+  it: JSON and forms with their secrets masked as a request's are, and text,
+  in `http.response.body` with its size in bytes. Only a response sent whole
+  is read, never a stream (Django's StreamingHttpResponse, a streamed ASGI or
+  WSGI response). A page, its scripts and stylesheets, binary content and
+  compressed bodies are recorded by their size only. Both bodies are kept up
+  to `max_body_kb` (64 KiB, was 16 KiB for a request's), marked as cut past
+  it, and `capture_body = false` turns them off.
+- A payment card's number and security code are masked wherever secrets
+  are: names like `card_number`, `cardNumber`, `card[number]`, `card_no`,
+  `pan`, `cvc`, `cvv` and `cvn` in bodies, form fields, headers, settings, a
+  template's context and an error's local variables. In a body, a setting or
+  a template's context, `number` under a card (`card`, `creditCard`,
+  `payment_card`) is masked too.
 - A query a template made as it rendered (a lazy QuerySet its `{% for %}`
   reads, a related object it shows) has the template's line
   (`code.template_line`), Django's templates and Jinja's alike, and
@@ -11,6 +25,13 @@
   another names the base template for a query outside its own blocks. The
   console marks these queries and, with an agent that knows the line, an
   N+1 a template made names the template and its line in its hint.
+- Graphene: a request to graphene-django's GraphQLView is traced as its
+  GraphQL operation, as Strawberry's are. The trace is named after the
+  operation (`GraphQL query PostList`) and keeps its type, name, document and
+  error count. Its span holds `parse` and `validate`, and each of the
+  project's resolvers is a span of its own. Exceptions raised in resolvers are
+  the trace's errors. A batch view runs one operation span per entry. It needs
+  no GRAPHENE `MIDDLEWARE` entry, and `graphene_enabled = false` turns it off.
 - Task workflows link up across Celery, RQ, Dramatiq and Django Tasks. A
   run records the task it follows (`task.parent_id`), the first task of its
   workflow (`task.root_id`) and its group (`task.group_id`): Celery's chain,

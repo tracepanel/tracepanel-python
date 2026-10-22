@@ -7,27 +7,16 @@ resolvers come back to the client as `errors` with a 200; they are recorded as t
 """
 
 import inspect
-import re
 from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, Any
 
 from tracepanel._compat import override
-from tracepanel.core import errors
 from tracepanel.core.context import current_trace, start_span
 from tracepanel.core.patching import patch, patched
+from tracepanel.integrations._graphql import finish_operation
 
 if TYPE_CHECKING:
     from tracepanel.core.model import Attrs, Span, Trace
-
-MAX_DOCUMENT = 2000
-_WHITESPACE = re.compile(r"\s+")
-
-
-def _document(query: str | None) -> str | None:
-    if not query:
-        return None
-    text = _WHITESPACE.sub(" ", query).strip()
-    return text if len(text) <= MAX_DOCUMENT else f"{text[:MAX_DOCUMENT]}…"
 
 
 def _operation(context: Any) -> tuple[str, str | None]:  # noqa: ANN401 (Strawberry's ExecutionContext)
@@ -41,28 +30,6 @@ def _operation(context: Any) -> tuple[str, str | None]:  # noqa: ANN401 (Strawbe
     except Exception:  # noqa: BLE001
         name = None
     return kind, name
-
-
-MAX_ROOT_FIELDS = 3
-
-
-def _root_fields(context: Any) -> str | None:  # noqa: ANN401 (Strawberry's ExecutionContext)
-    """`{ posts, users }`: what an unnamed operation asks for, so `{ posts { id } }` isn't only "anonymous"."""
-    try:
-        operations = [
-            definition
-            for definition in context.graphql_document.definitions
-            if type(definition).__name__ == "OperationDefinitionNode" and definition.name is None
-        ]
-        selections = operations[0].selection_set.selections
-    except Exception:  # noqa: BLE001 (no parsed document: a syntax error)
-        return None
-    fields = [selection.name.value for selection in selections if type(selection).__name__ == "FieldNode"]
-    if not fields:
-        return None
-    more = len(fields) - MAX_ROOT_FIELDS
-    shown = ", ".join(fields[:MAX_ROOT_FIELDS]) + (f", +{more}" if more > 0 else "")
-    return f"{{ {shown} }}"
 
 
 def _custom_resolver(info: Any) -> Any:  # noqa: ANN401 (GraphQL's resolve info)
@@ -82,25 +49,13 @@ def _path(info: Any) -> str:  # noqa: ANN401
 
 
 def _finish_operation(context: Any, trace: "Trace", span: "Span | None") -> None:  # noqa: ANN401 (ExecutionContext)
-    """Name the operation's span and the request after it, and record resolver exceptions as errors."""
     kind, name = _operation(context)
-    label = f"{kind} {name or _root_fields(context) or 'anonymous'}"
-    failures = list(getattr(context.result, "errors", None) or context.pre_execution_errors or [])
-    attrs: Attrs = {
-        "graphql.operation.type": kind,
-        "graphql.operation.name": name,
-        "graphql.document": _document(context.query),
-        "graphql.errors": len(failures),
-    }
-    if span is not None:
-        span.name = label
-        span.attrs.update(attrs)
-    # The request is this operation: named and grouped after it.
-    trace.attrs.update({**attrs, "graphql.operation": label})
-    for failure in failures:
-        original = getattr(failure, "original_error", None)
-        if isinstance(original, Exception):
-            errors.capture(original, handled=False)
+    try:
+        document = context.graphql_document
+    except Exception:  # noqa: BLE001 (no parsed document: a syntax error)
+        document = None
+    failures = getattr(context.result, "errors", None) or context.pre_execution_errors or []
+    finish_operation(trace, span, kind=kind, name=name, query=context.query, document=document, failures=failures)
 
 
 def _extension_class() -> type:

@@ -97,6 +97,7 @@ def finish(trace: Trace, request: HttpRequest, response: HttpResponseBase) -> No
     if conf.get_config().capture_request:
         trace.attrs.update(details.response_headers(response.items()))
         trace.attrs.update(_read_body(request))
+        trace.attrs.update(_response_body(response))
         trace.attrs.update(_session(request))
     body = response.content if isinstance(response, HttpResponse) else None
     trace.attrs.update(htmx.response_attrs(trace.attrs, response.status_code, response.headers, body))
@@ -145,6 +146,15 @@ def _read_body(request: HttpRequest) -> Attrs:
     if isinstance(data, bytes):
         return details.body(request.content_type or "", data)
     return {}
+
+
+def _response_body(response: HttpResponseBase) -> Attrs:
+    """The body of a response made whole (JsonResponse, a rendered page); a streaming one is never read for it."""
+    if not isinstance(response, HttpResponse):
+        return {}
+    return details.response_body(
+        response.get("Content-Type", ""), response.get("Content-Encoding", ""), response.content
+    )
 
 
 def _session(request: HttpRequest) -> Attrs:

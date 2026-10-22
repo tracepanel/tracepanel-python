@@ -18,12 +18,12 @@ from typing import TypeVar
 
 from tracepanel._compat import override
 from tracepanel.core import conf
-from tracepanel.core.frames import MASK, SENSITIVE
+from tracepanel.core.frames import CARD_SENSITIVE, MASK, SENSITIVE, card_number
 from tracepanel.core.model import Attrs, Scalar, Trace
 
 # Settings' own names: Django's idea of a hidden setting. The locals' rule would mask SESSION_COOKIE_AGE,
 # AUTH_USER_MODEL and CSRF_COOKIE_NAME, which say nothing secret.
-SETTING_SENSITIVE = re.compile(r"secret|token|pass|key|signature|private|credential", re.IGNORECASE)
+SETTING_SENSITIVE = re.compile(rf"secret|token|pass|key|signature|private|credential|{CARD_SENSITIVE}", re.IGNORECASE)
 # Django's own settings whose names look secret but whose values aren't.
 SETTING_PLAIN = frozenset(
     {"PASSWORD_HASHERS", "AUTH_PASSWORD_VALIDATORS", "PASSWORD_RESET_TIMEOUT", "KEY_PREFIX", "KEY_FUNCTION"}
@@ -105,8 +105,11 @@ def _summary(value: object) -> str | None:
     return None
 
 
-def masked(value: object, sensitive: Callable[[str], bool], depth: int = 0) -> object:
-    """A copy of `value` fit to repr(): secrets masked, framework objects summarized; the rest as it is."""
+def masked(value: object, sensitive: Callable[[str], bool], depth: int = 0, parent: object = None) -> object:
+    """A copy of `value` fit to repr(): secrets masked, framework objects summarized; the rest as it is.
+
+    `parent` is the key `value` is under: a card's `number` is masked under its card.
+    """
     if isinstance(value, str):
         return mask_url(value)
     plain = isinstance(value, (int, float, bool, bytes)) or value is None
@@ -117,11 +120,13 @@ def masked(value: object, sensitive: Callable[[str], bool], depth: int = 0) -> o
         return value
     if isinstance(value, Mapping):
         return {
-            key: _MASKED if isinstance(key, str) and sensitive(key) else masked(item, sensitive, depth + 1)
+            key: _MASKED
+            if (isinstance(key, str) and sensitive(key)) or card_number(parent, key)
+            else masked(item, sensitive, depth + 1, key)
             for key, item in value.items()
         }
     if isinstance(value, (list, tuple, set, frozenset)):
-        return _masked_items(value, [masked(item, sensitive, depth + 1) for item in value])
+        return _masked_items(value, [masked(item, sensitive, depth + 1, parent) for item in value])
     return value
 
 
@@ -192,7 +197,7 @@ def setting_repr(name: str, value: object) -> str:
     """A setting as the console shows it: masked whole under a secret name, else its masked repr, cut."""
     if setting_sensitive(name):
         return MASK
-    text = _safe(lambda shown: _SETTINGS.repr(masked(shown, setting_sensitive)), value)
+    text = _safe(lambda shown: _SETTINGS.repr(masked(shown, setting_sensitive, parent=name)), value)
     return text if len(text) <= SETTING_MAX else f"{text[: SETTING_MAX - 3]}..."
 
 
@@ -222,15 +227,18 @@ def context_wanted(trace: Trace | None, template: str) -> bool:
     return True
 
 
-def _context_repr(value: object) -> str:
-    return _CONTEXT.repr(masked(value, local_sensitive))
+def _context_repr(name: str, value: object) -> str:
+    """A context value's masked repr; its name is the parent of its keys (a card's number under `card`)."""
+    if local_sensitive(name):
+        return MASK
+    return _safe(lambda shown: _CONTEXT.repr(masked(shown, local_sensitive, parent=name)), value)
 
 
 def context_attrs(items: Mapping[str, object]) -> Attrs:
     """`template.context.*`: its top-level names, their masked repr()s, how many were left out past MAX_CONTEXT."""
     names = [name for name in items if not name.startswith("__")]
     kept = names[:MAX_CONTEXT]
-    shown = guarded(lambda: [MASK if local_sensitive(name) else _safe(_context_repr, items[name]) for name in kept])
+    shown = guarded(lambda: [_context_repr(name, items[name]) for name in kept])
     attrs: Attrs = {"template.context.names": list[Scalar](kept), "template.context.values": list[Scalar](shown)}
     if len(names) > len(kept):
         attrs["template.context.omitted"] = len(names) - len(kept)
