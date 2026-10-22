@@ -19,7 +19,8 @@ A job's trace reaches the agent when it ends. Until then task events say where i
 (with the enqueuing trace and span), `started` as `perform` begins, then `retried` (with the error) when RQ will run it
 again, or `finished`. A worker says it is there when it registers (`register_birth`), and every process that runs jobs
 (the worker, each work horse) sends a `heartbeat` with them, so a job whose horse was killed leaves the console's
-Live list. A queue with `is_async=False` sends none: its jobs run inside the caller.
+Live list. A worker that stops says so as it unregisters (`register_death`): `worker_stopped`. A queue with
+`is_async=False` sends none: its jobs run inside the caller.
 """
 
 import contextlib
@@ -450,6 +451,18 @@ def _birth(original: Any) -> Any:  # noqa: ANN401
     return register_birth
 
 
+def _death(original: Any) -> Any:  # noqa: ANN401
+    @functools.wraps(original)
+    def register_death(self: Any) -> Any:  # noqa: ANN401 (rq.worker.BaseWorker)
+        try:
+            return original(self)
+        finally:
+            # The worker stops (a warm shutdown, --burst done): the console drops it at once.
+            _heart.stopped(str(self.name))
+
+    return register_death
+
+
 def install() -> None:
     """Wrap RQ's enqueues, perform, the callbacks and a worker's start; a no-op without RQ."""
     try:
@@ -468,6 +481,7 @@ def install() -> None:
         method = f"execute_{kind}_callback"
         patch(Job, method, _callback(kind, getattr(Job, method)))
     patch(BaseWorker, "register_birth", _birth(BaseWorker.register_birth))
+    patch(BaseWorker, "register_death", _death(BaseWorker.register_death))
     # Its task events: the console's Live list of tasks.
     agent.sends("live_tasks")
     # Records of task code, through the registry: off with logging_enabled.

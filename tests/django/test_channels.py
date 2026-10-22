@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import os
+import signal
 import socket
 import threading
 import time
@@ -12,7 +13,7 @@ import pytest
 pytest.importorskip("channels")
 
 from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
+from channels.layers import BaseChannelLayer, get_channel_layer
 from channels.routing import URLRouter
 from channels.testing import WebsocketCommunicator
 from channels.worker import Worker
@@ -22,7 +23,8 @@ from jsonschema import Draft202012Validator
 
 from tests.agentstore import AgentStore, issues
 from tests.project import sockets
-from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, without_heartbeats
+from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, stopped, without_worker_events
+from tracepanel._compat import override
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Link, Trace
 from tracepanel.django import channels as integration
@@ -306,6 +308,41 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
     return recorded
 
 
+class Waiting(BaseChannelLayer):
+    """A channel layer with no message for the worker: it waits until it is stopped."""
+
+    @override
+    async def receive(self, channel: str) -> dict[str, object]:
+        await asyncio.Event().wait()
+        raise AssertionError(channel)
+
+
+def test_a_worker_stopped_by_ctrl_c_says_so(recorder: Recorder) -> None:
+    def interrupt() -> None:
+        # Ctrl+C, once the worker said it is there.
+        deadline = time.monotonic() + 10
+        while not heartbeats(recorder.events, WORKER) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    # Python's own handler, whatever an earlier test's worker set (db_worker's): asyncio cancels its run on it.
+    handler = signal.signal(signal.SIGINT, signal.default_int_handler)
+    threading.Thread(target=interrupt, daemon=True).start()
+    try:
+        # What `runworker thumbnails` does.
+        Worker(application=sockets.application, channels=["thumbnails"], channel_layer=Waiting()).run()
+    finally:
+        signal.signal(signal.SIGINT, handler)
+
+    assert [event["event"] for event in recorder.events if event.get("worker") == WORKER] == [
+        "heartbeat",
+        "worker_stopped",
+    ]
+    assert stopped(recorder.events, WORKER) == [
+        {"event": "worker_stopped", "system": "channels", "id": "", "time": IsPositiveInt, "worker": WORKER}
+    ]
+
+
 def finished(recorder: Recorder, count: int = 1) -> Callable[[], bool]:
     return lambda: len([event for event in recorder.events if event["event"] == "finished"]) >= count
 
@@ -318,7 +355,7 @@ def test_a_sent_message_tells_the_agent_each_step(recorder: Recorder) -> None:
     (enqueue,) = [span for span in request.spans if span.kind == "task.enqueue"]
     task_id = enqueue.attrs["task.id"]
 
-    assert without_heartbeats(recorder.events) == [
+    assert without_worker_events(recorder.events) == [
         {
             "event": "enqueued",
             "system": "channels",
@@ -369,7 +406,7 @@ def test_a_sent_message_tells_the_agent_each_step(recorder: Recorder) -> None:
 def test_a_message_sent_outside_a_trace_is_enqueued_without_a_span(recorder: Recorder) -> None:
     send("thumbnails", {"type": "thumbnails.wait"})
     work(finished(recorder))
-    enqueued, started, done = without_heartbeats(recorder.events)
+    enqueued, started, done = without_worker_events(recorder.events)
 
     assert enqueued == {
         "event": "enqueued",
@@ -389,7 +426,7 @@ def test_a_message_sent_outside_a_trace_is_enqueued_without_a_span(recorder: Rec
 def test_websocket_events_and_group_sends_are_not_tasks(recorder: Recorder) -> None:
     async_to_sync(chat)({"text": "hi"})
 
-    assert without_heartbeats(recorder.events) == []
+    assert without_worker_events(recorder.events) == []
     assert [trace.kind for trace in recorder.traces] == ["websocket"] * 7
 
 
@@ -402,7 +439,7 @@ def test_ignored_messages_send_no_events(recorder: Recorder, monkeypatch: pytest
     send("thumbnails", {"type": "thumbnails.generate", "image_id": 7})
     work(finished(recorder))
 
-    assert {event["name"] for event in without_heartbeats(recorder.events) if "name" in event} == {GENERATE, BUILD}
+    assert {event["name"] for event in without_worker_events(recorder.events) if "name" in event} == {GENERATE, BUILD}
     assert {trace.name for trace in recorder.traces} <= {GENERATE, BUILD}
 
 
@@ -412,7 +449,7 @@ def test_arguments_are_left_out_of_the_events_too(recorder: Recorder, monkeypatc
     send("thumbnails", {"type": "thumbnails.wait", "secret": "x"})
     work(finished(recorder))
 
-    assert [{"args", "kwargs"} & event.keys() for event in without_heartbeats(recorder.events)] == [set()] * 3
+    assert [{"args", "kwargs"} & event.keys() for event in without_worker_events(recorder.events)] == [set()] * 3
 
 
 def test_channels_says_in_the_hello_that_it_sends_task_events() -> None:

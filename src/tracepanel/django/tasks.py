@@ -8,9 +8,10 @@ run links to the enqueue span directly, like an eager Celery task.
 
 A task's trace reaches the agent when it ends. Until then task events say where it is: `enqueued` (the
 `task_enqueued` signal, with the enqueuing trace and span), `started` and `finished` (the same signals as the
-trace). A worker process sends a `heartbeat` with the tasks it runs, from its first task on, so a task whose worker
-was killed leaves the console's Live list. The ImmediateBackend runs a task inside `enqueue()` and the DummyBackend
-never runs one: neither sends any.
+trace). A worker process sends a `heartbeat` with the tasks it runs, so a task whose worker was killed leaves the
+console's Live list. The database backend's `db_worker` says it is there as it starts and that it stopped
+(`worker_stopped`) as it ends: done with `--batch` or `--max-tasks`, or stopped by a signal. The ImmediateBackend runs
+a task inside `enqueue()` and the DummyBackend never runs one: neither sends any.
 
 A run says the worker that ran it (`task.worker`, the backend's worker id), when it was due (`task.eta`, from
 `run_after`) and its priority. Django Tasks carry nothing else to the worker, and have no time limit: a task enqueued
@@ -25,6 +26,7 @@ from typing import Any
 from tracepanel.core import conf, errors, forks
 from tracepanel.core.context import current_trace, start_span, start_trace
 from tracepanel.core.frames import origin
+from tracepanel.core.imports import when_imported
 from tracepanel.core.model import Attrs, Link
 from tracepanel.core.patching import patch, patched
 from tracepanel.integrations._tasks import (
@@ -243,6 +245,26 @@ def on_finished(sender: object, task_result: Any = None, **kwargs: object) -> No
         task_event("finished", SYSTEM, str(task_result.id), worker=worker, state=trace.attrs["task.state"])
 
 
+def _wrap_run(original: Any) -> Any:  # noqa: ANN401
+    @functools.wraps(original)
+    def run(self: Any) -> Any:  # noqa: ANN401 (django_tasks_db's db_worker Worker)
+        # The worker is there before it runs anything: the console lists it among the workers.
+        worker = str(self.worker_id)
+        _heart.start(worker)
+        _heart.beat()
+        try:
+            return original(self)
+        finally:
+            _heart.stopped(worker)
+
+    return run
+
+
+def _patch_db_worker(module: Any) -> None:  # noqa: ANN401 (django_tasks_db's db_worker command)
+    if not patched(module.Worker, "run"):
+        patch(module.Worker, "run", _wrap_run(module.Worker.run))
+
+
 def _framework() -> Any:  # noqa: ANN401 (a module)
     """`django.tasks` on Django 6.0+, the `django_tasks` backport before it; None without either."""
     for name in ("django.tasks", "django_tasks"):
@@ -268,5 +290,6 @@ def install() -> None:
     signals.task_started.connect(on_started, dispatch_uid="tracepanel.django_tasks.started", weak=False)
     signals.task_finished.connect(on_finished, dispatch_uid="tracepanel.django_tasks.finished", weak=False)
     signals.task_enqueued.connect(on_enqueued, dispatch_uid="tracepanel.django_tasks.enqueued", weak=False)
+    when_imported("django_tasks_db.management.commands.db_worker", _patch_db_worker)
     # Its task events: the console's Live list of tasks.
     agent.sends("live_tasks")

@@ -6,9 +6,9 @@ the enqueuing span to the worker (Celery headers), the run links to it at once; 
 store links them by `task.id`.
 
 While a task is in flight, before its trace exists, task events tell the agent where it is: `enqueued`, `started`,
-`retried`, `finished`, and a worker's `heartbeat`. The console lists the tasks queued, running and waiting to be
-retried from them (the Tasks page's Live). Any queue sends the same events; `system` says which one. A task run
-eagerly, inside its caller, sends none: it is never in flight apart from it.
+`retried`, `finished`, a worker's `heartbeat`, and its `worker_stopped` as it stops cleanly. The console lists the
+tasks queued, running and waiting to be retried from them (the Tasks page's Live). Any queue sends the same events;
+`system` says which one. A task run eagerly, inside its caller, sends none: it is never in flight apart from it.
 
 Every queue names the same things alike: `task.worker` (the worker that ran it), `task.eta` (when it was due to run,
 ISO 8601), `task.priority`, `task.timeout` (the time limit in seconds, on a run that hit it) and the workflow it
@@ -19,7 +19,6 @@ belongs to: `task.parent_id` (the task it follows: the one whose run sent it, or
 import contextlib
 import os
 import threading
-import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -27,13 +26,13 @@ from datetime import UTC, datetime
 from tracepanel.core.context import now_us
 from tracepanel.core.frames import safe_repr
 from tracepanel.core.model import Attrs, Trace
-from tracepanel.storage.transport import send_event
+from tracepanel.storage.transport import get_writer, send_event
 
 MAX_REPR = 2000
 # Arguments in a task event are for a glance at a list: shorter than in the trace.
 MAX_EVENT_REPR = 200
-# How often a worker process says it is alive, with the tasks it runs (the agent drops a running task after 2 minutes
-# without news of it).
+# How often a worker process says it is alive, with the tasks it runs (the agent drops a worker, and a running task,
+# after three heartbeats without news of it).
 HEARTBEAT_S = 30.0
 # The caller's trace kind -> task.trigger.
 TRIGGERS = {"http": "request", "task": "task", "command": "command", "websocket": "request"}
@@ -157,7 +156,8 @@ class Heartbeat:
     """A worker process's heartbeat: every HEARTBEAT_S, the worker alive and the ids of the tasks this process runs.
 
     One thread per process, started by the first task (or the worker's start) in it: a forked pool process or work
-    horse starts its own, since threads don't survive a fork.
+    horse starts its own, since threads don't survive a fork. A worker that stops cleanly says so (`stopped`): the
+    console drops it at once, not after three heartbeats missed.
     """
 
     def __init__(self, system: str, running: Callable[[], list[str]]) -> None:
@@ -165,6 +165,7 @@ class Heartbeat:
         self.running = running
         self.worker = ""
         self._pid = 0
+        self._done = threading.Event()
 
     def start(self, worker: str) -> None:
         """This process's thread, started once; `worker` is the worker it speaks for, kept if empty."""
@@ -172,13 +173,29 @@ class Heartbeat:
         if self._pid == os.getpid():
             return
         self._pid = os.getpid()
-        threading.Thread(target=self._run, name=f"tracepanel-heartbeat-{self.system}", daemon=True).start()
+        self._done = threading.Event()
+        threading.Thread(
+            target=self._run, args=(self._done,), name=f"tracepanel-heartbeat-{self.system}", daemon=True
+        ).start()
 
     def beat(self) -> None:
         """One heartbeat now: a worker that starts says so before it runs anything, for the console's workers."""
         task_event("heartbeat", self.system, "", worker=self.worker or None, ids=self.running())
 
-    def _run(self) -> None:
-        while True:
-            time.sleep(HEARTBEAT_S)
+    def stopped(self, worker: str = "") -> None:
+        """A worker stopped cleanly: it says so, and is written before the process exits.
+
+        This process's own worker by default, whose heartbeats end (a worker started again in it beats again); or
+        `worker`, one this process speaks for (a cluster for a worker process it replaced).
+        """
+        name = worker or self.worker
+        if name == self.worker:
+            self._done.set()
+            self._pid = 0
+        if name:
+            task_event("worker_stopped", self.system, "", worker=name)
+            get_writer().flush()
+
+    def _run(self, done: threading.Event) -> None:
+        while not done.wait(HEARTBEAT_S):
             self.beat()
