@@ -3,8 +3,9 @@ import os
 import socket
 import threading
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from dirty_equals import IsInstance, IsInt, IsList, IsPartialDict, IsPositiveInt, IsStr
@@ -13,7 +14,7 @@ dramatiq = pytest.importorskip("dramatiq")
 
 from dramatiq import group, pipeline  # noqa: E402 (optional test group)
 from dramatiq.brokers.stub import StubBroker  # noqa: E402
-from dramatiq.middleware import GroupCallbacks  # noqa: E402
+from dramatiq.middleware import GroupCallbacks, Middleware, TimeLimitExceeded  # noqa: E402
 from dramatiq.rate_limits.backends import StubBackend  # noqa: E402
 from dramatiq.results import Results  # noqa: E402
 from dramatiq.results.backends import StubBackend as StubResults  # noqa: E402
@@ -21,7 +22,8 @@ from dramatiq.worker import Worker  # noqa: E402
 
 from tests.agentstore import AgentStore  # noqa: E402
 from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, without_heartbeats  # noqa: E402
-from tracepanel.core.context import start_trace  # noqa: E402
+from tracepanel._compat import override  # noqa: E402
+from tracepanel.core.context import current_trace, start_trace  # noqa: E402
 from tracepanel.core.model import Link, Span, Trace  # noqa: E402
 from tracepanel.integrations import dramatiq as integration  # noqa: E402
 from tracepanel.storage import agent, transport  # noqa: E402
@@ -43,6 +45,10 @@ def broker() -> Generator[StubBroker, None, None]:
 
 def tasks(traces: list[Trace]) -> list[Trace]:
     return [trace for trace in traces if trace.kind == "task"]
+
+
+def task_attrs(trace: Trace) -> dict[str, object]:
+    return {key: value for key, value in trace.attrs.items() if key.startswith("task.")}
 
 
 def enqueues(trace: Trace) -> list[Span]:
@@ -459,6 +465,70 @@ def test_a_message_stopped_by_its_time_limit_says_so(broker: StubBroker, recorde
         "worker": WORKER,
         "state": "FAILURE",
     }
+
+
+class Interrupted:
+    """`original`, but its first call is stopped by TimeLimitExceeded, as TimeLimit raises it in the worker thread."""
+
+    def __init__(self, original: Callable[..., Any]) -> None:
+        self.original = original
+        self.calls = 0
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        self.calls += 1
+        if self.calls == 1:
+            raise TimeLimitExceeded
+        return self.original(*args, **kwargs)
+
+
+class Seen(Middleware):
+    """The trace current in the worker thread after tracepanel's after_process_message: None, unless one leaked."""
+
+    def __init__(self) -> None:
+        self.after: list[Trace | None] = []
+
+    @override
+    def after_process_message(self, broker: Any, message: Any, **kwargs: object) -> None:  # noqa: ANN401
+        self.after.append(current_trace())
+
+
+@pytest.mark.parametrize("where", ["_priority", "TaskRun", "task_repr"])
+def test_a_time_limit_in_tracepanels_hooks_leaves_nothing_behind_and_the_message_is_recorded(
+    where: str, broker: StubBroker, recorder: Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # TimeLimit raises in the worker thread from another one, a moment late at times: in tracepanel's hooks.
+    seen = Seen()
+    broker.middleware.insert(0, seen)
+    monkeypatch.setattr(integration, where, Interrupted(getattr(integration, where)))
+
+    @dramatiq.actor(time_limit=100, max_retries=0)
+    def quick(text: str) -> str:
+        return text
+
+    first, second = quick.send("first"), quick.send("second")
+    worker = Worker(broker, worker_threads=1, worker_timeout=50)
+    worker.start()
+    try:
+        broker.join("default", fail_fast=False)
+        worker.join()
+    finally:
+        worker.stop()
+    cut, after = tasks(recorder.traces)
+
+    assert seen.after == [None, None]
+
+    # Stopped before the message ran (Dramatiq fails it), or as it ended (it ran: its trace says so).
+    ran = where == "task_repr"
+    assert task_attrs(cut) == IsPartialDict(
+        {"task.id": first.message_id, "task.state": "SUCCESS" if ran else "FAILURE"}
+        | ({} if ran else {"task.timeout": 0.1})
+    )
+    assert [(error.type, error.handled) for error in cut.errors] == (
+        [] if ran else [("dramatiq.middleware.time_limit.TimeLimitExceeded", False)]
+    )
+
+    assert task_attrs(after) == IsPartialDict({"task.id": second.message_id, "task.state": "SUCCESS"})
+    assert (after.status, after.errors) == ("ok", [])
 
 
 def test_arguments_can_be_left_out(broker: StubBroker, traces: list[Trace], monkeypatch: pytest.MonkeyPatch) -> None:

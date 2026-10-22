@@ -70,3 +70,12 @@ def overruns() -> None:
 def make_group() -> int:
     # post_save of Group has a receiver (tests.project.views.group_saved): a signal span inside the task's trace.
     return Group.objects.create(name="from a task").pk
+
+
+@app.task
+def hurried(text: str) -> str:
+    return text
+
+
+# A soft time limit of milliseconds: it can pass while Celery's task_prerun is still running.
+hurried.soft_time_limit = 0.005  # type: ignore[assignment]  # Celery takes a float, its stubs say int

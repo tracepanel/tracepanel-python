@@ -23,6 +23,11 @@ failed with TimeLimitExceeded, and says it finished. So it does for a run whose 
 shutdown, `revoke(terminate=True)`: REVOKED with Terminated) or died (FAILURE with WorkerLostError). The pool process,
 sent SIGTERM before it is killed, writes nothing of the run it leaves unfinished: one trace per run, the main
 process's.
+
+A soft time limit can also pass inside tracepanel's own task_prerun or task_postrun: Celery logs the exception and
+goes on. What tracepanel began is undone or ended, so no trace stays current for the next run in the process, and the
+run is still recorded: with SoftTimeLimitExceeded as a handled error and `task.timeout`. A run whose task_prerun
+never reached tracepanel is recorded from its end, with the state Celery gives.
 """
 
 import functools
@@ -30,7 +35,16 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from tracepanel.core import conf, errors, forks, registry, services
-from tracepanel.core.context import adopt, current_span, current_trace, now_us, record_span, recorded, start_trace
+from tracepanel.core.context import (
+    TraceBlock,
+    adopt,
+    current_span,
+    current_trace,
+    now_us,
+    record_span,
+    recorded,
+    start_trace,
+)
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
@@ -225,20 +239,24 @@ def _started(task_id: str, task: "Task[Any, Any]", attrs: Attrs, called: Argumen
 
 
 def prerun(task_id: str | None = None, task: "Task[Any, Any] | None" = None, **kwargs: object) -> None:
-    if task is None or task_id is None or conf.matches(task.name, conf.get_config().ignore_tasks):
+    if task is None or task_id is None:
+        return
+    try:
+        _prerun(task_id, task, kwargs)
+    except BaseException as exc:
+        _cut_short(task_id, task, exc)
+        raise
+
+
+def _prerun(task_id: str, task: "Task[Any, Any]", kwargs: Mapping[str, object]) -> None:
+    if conf.matches(task.name, conf.get_config().ignore_tasks):
         return
     request = task.request
     eager = bool(getattr(request, "is_eager", False))
+    if not eager:
+        _leftover()
     started = now_us()
-    attrs: Attrs = {
-        "task.system": SYSTEM,
-        "task.name": task.name,
-        "task.id": task_id,
-        "task.queue": str((getattr(request, "delivery_info", None) or {}).get("routing_key") or "") or None,
-        "task.worker": str(getattr(request, "hostname", "") or "") or None,
-        "task.retries": int(getattr(request, "retries", 0) or 0),
-        "task.eager": eager,
-    }
+    attrs = _identity(task_id, task)
     # As the enqueued event showed them: Celery's argsrepr and kwargsrepr come with the message.
     called = (
         arguments(
@@ -281,11 +299,95 @@ def prerun(task_id: str | None = None, task: "Task[Any, Any] | None" = None, **k
         )
         links.append(Link(kind="enqueued_by", trace_id=caller.id, span_id=span.id if span else caller_span.id))
 
-    context = start_trace("task", task.name, attrs, root_kind="task.run")
-    trace = context.__enter__()
-    trace.links.extend(links)
+    _begin(task_id, start_trace("task", task.name, attrs, root_kind="task.run"), links)
+
+
+def _identity(task_id: str, task: Any) -> Attrs:  # noqa: ANN401 (a Celery task)
+    """What a run's task and request say of it at once: enough for its trace when nothing more is known."""
+    request = task.request
+    return {
+        "task.system": SYSTEM,
+        "task.name": task.name,
+        "task.id": task_id,
+        "task.queue": str((getattr(request, "delivery_info", None) or {}).get("routing_key") or "") or None,
+        "task.worker": str(getattr(request, "hostname", "") or "") or None,
+        "task.retries": int(getattr(request, "retries", 0) or 0),
+        "task.eager": bool(getattr(request, "is_eager", False)),
+    }
+
+
+def _begin(task_id: str, context: TraceBlock, links: list[Link]) -> TaskRun:
+    """The run's trace made current and kept for its end, prerun's last step: undone if cut short before it is kept."""
+    run: TaskRun | None = None
+    try:
+        trace = context.__enter__()
+        trace.links.extend(links)
+        run = TaskRun(context=context, trace=trace)
+        with _lock:
+            _runs[task_id] = run
+    except BaseException:
+        with _lock:
+            kept = run is not None and _runs.get(task_id) is run
+        if not kept:
+            context.__exit__(None, None, None)
+        raise
+    return run
+
+
+def _cut_short(task_id: str, task: "Task[Any, Any]", exc: BaseException) -> None:
+    """Prerun was stopped halfway: by a soft time limit, whose signal can land anywhere, or by an error of its own.
+
+    Celery's signal swallows the exception, logs it and runs the task: the run is recorded all the same. Its trace
+    is the one prerun made, when it got as far as keeping it, else one from what the task says (_late). Nothing
+    prerun began is left current to leak into the next run. The exception is kept on the trace, handled: Celery
+    logged it, and the run's own outcome comes with its end.
+    """
     with _lock:
-        _runs[task_id] = TaskRun(context=context, trace=trace)
+        run = _runs.get(task_id)
+    if run is None:
+        run = _late(task_id, task)
+        if run is None:
+            return
+        with _lock:
+            _runs[task_id] = run
+    status = run.trace.status
+    errors.capture(exc, handled=True)
+    run.trace.status = status
+    _limited(run, exc, task)
+
+
+def _late(task_id: str | None, task: object) -> TaskRun | None:
+    """A trace begun now for a run prerun didn't start, from what its task says; None for a run not traced.
+
+    Only for the run this process is running: its task's request is that run's (the worker's main process tells
+    of a run its pool process ran, with no request of it).
+    """
+    name = getattr(task, "name", None)
+    request = getattr(task, "request", None)
+    if (
+        not task_id
+        or not isinstance(name, str)
+        or getattr(request, "id", None) != task_id
+        or conf.matches(name, conf.get_config().ignore_tasks)
+    ):
+        return None
+    context = start_trace("task", name, _identity(task_id, task), root_kind="task.run")
+    return TaskRun(context=context, trace=context.__enter__())
+
+
+def _leftover() -> None:
+    """A run's trace still current as the next run starts here: its end was cut short. It ends now, not current.
+
+    A worker runs nothing inside a trace, so a task trace current here is an earlier run's.
+    """
+    stale = current_trace()
+    if stale is None or stale.kind != "task":
+        return
+    with _lock:
+        ids = [task_id for task_id, run in _runs.items() if run.trace is stale]
+        runs = [_runs.pop(task_id) for task_id in ids]
+    for run in runs:
+        run.context.__exit__(None, None, None)
 
 
 def _scheduling(request: object) -> Attrs:
@@ -322,13 +424,26 @@ def failure(
     sender: object = None, task_id: str | None = None, exception: BaseException | None = None, **kwargs: object
 ) -> None:
     del kwargs
-    run = _runs.get(task_id or "")
-    if run is None or exception is None:
+    if exception is None:
         return
+    with _lock:
+        run = _runs.get(task_id or "")
+    if run is None:
+        # A run prerun never reached (a soft time limit hitting Celery before it): it is recorded from here.
+        run = _late(task_id, sender)
+        if run is None:
+            return
+        with _lock:
+            _runs[task_id or ""] = run
     errors.capture(exception, handled=False)
     run.trace.status = "error"
+    _limited(run, exception, sender)
+
+
+def _limited(run: TaskRun, exception: BaseException, task: object) -> None:
+    """The soft time limit the run had (`task.timeout`), when a time limit stopped it."""
     if type(exception).__name__ in TIME_LIMITS:
-        limit = _soft_limit(sender)
+        limit = _soft_limit(task)
         if isinstance(limit, (int, float)):
             run.trace.attrs["task.timeout"] = limit
 
@@ -357,29 +472,40 @@ def retry(request: object = None, reason: object = None, **kwargs: object) -> No
 
 
 def postrun(task_id: str | None = None, retval: object = None, state: str | None = None, **kwargs: object) -> None:
-    del kwargs
     with _lock:
         run = _runs.pop(task_id or "", None)
     if run is None:
-        return
+        # A run prerun never reached: recorded from its end, with the state Celery gives.
+        run = _late(task_id, kwargs.get("task"))
+        if run is None:
+            return
     if state is None and _terminating():
         # Its pool process is being terminated: SIGTERM unwinds the run (SystemExit), which never finished. The
         # worker's main process writes its trace and says it finished (_ended): a second one from here would read ok.
         run.context.__exit__(None, None, None)
         return
     trace = run.trace
-    trace.attrs["task.state"] = state
-    if state == "SUCCESS" and conf.get_config().capture_task_args:
-        trace.attrs["task.result"] = task_repr("result", retval)
-    if state == "FAILURE":
-        trace.status = "error"
-    run.context.__exit__(None, None, None)
-    if state == "RETRY":
-        trace.status = "ok"
-    complete(trace)
-    # A retry waits for its next attempt: it is still in flight.
-    if state != "RETRY" and not trace.attrs.get("task.eager"):
-        task_event("finished", SYSTEM, task_id or "", worker=trace.attrs.get("task.worker"), state=state)
+    completed = False
+    try:
+        trace.attrs["task.state"] = state
+        if state == "SUCCESS" and conf.get_config().capture_task_args:
+            trace.attrs["task.result"] = task_repr("result", retval)
+        if state == "FAILURE":
+            trace.status = "error"
+        run.context.__exit__(None, None, None)
+        if state == "RETRY":
+            trace.status = "ok"
+        complete(trace)
+        completed = True
+        # A retry waits for its next attempt: it is still in flight.
+        if state != "RETRY" and not trace.attrs.get("task.eager"):
+            task_event("finished", SYSTEM, task_id or "", worker=trace.attrs.get("task.worker"), state=state)
+    except BaseException:
+        # Cut short too (a soft time limit as the run ends): the trace is still written, and not left current.
+        run.context.__exit__(None, None, None)
+        if not completed:
+            complete(trace)
+        raise
 
 
 def _terminating() -> bool:
