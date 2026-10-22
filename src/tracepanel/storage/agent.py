@@ -25,8 +25,14 @@ import struct
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import BinaryIO
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 
 from tracepanel._agent import AGENT, find_agent_bin
 from tracepanel._compat import override
@@ -40,6 +46,10 @@ ADDR_FILE = "agent.addr"
 # Where the agent serves the console (with --serve): an app's /__tracepanel__/ sends its API calls there.
 CONSOLE_FILE = "console.addr"
 LOG_FILE = "agent.log"
+# How an agent exits when another one already serves its store (it holds the store's lock): that one is waited for.
+ALREADY_RUNS = 3
+# What an app's processes take in turn to start the store's agent: one starts it, the others find it answering.
+START_LOCK_FILE = "start.lock"
 # An agent an SDK started exits after this long unused; how long the SDK waits for it to answer.
 IDLE_EXIT_S = 1800
 START_WAIT_S = 1.0
@@ -78,17 +88,22 @@ def can_start(config: conf.Config) -> bool:
 def start(config: conf.Config) -> subprocess.Popen[bytes] | None:
     """Start the project's agent, serving the console too; its own session, so an app's restarts don't stop it.
 
-    It exits after IDLE_EXIT_S unused. Returns the process once it answers (writes its address), else None.
+    It exits after IDLE_EXIT_S unused. Returns the process once it answers (writes its address); None if it didn't, or
+    if another process's agent answers.
     """
     executable = binary()
     if executable is None:
         return None
     directory = store_dir(config)
     directory.mkdir(parents=True, exist_ok=True)
-    # An agent that didn't exit cleanly (killed, a reboot) leaves its addresses: nobody answers there.
-    if not answers(address(config)):
-        for name in (ADDR_FILE, CONSOLE_FILE):
-            (directory / name).unlink(missing_ok=True)
+    # An app's workers, forked together, each start one: in turn.
+    with _one_at_a_time(directory / START_LOCK_FILE):
+        return None if answers(address(config)) else _spawn(executable, directory, config)
+
+
+def _spawn(executable: str, directory: Path, config: conf.Config) -> subprocess.Popen[bytes] | None:
+    # An agent that didn't exit cleanly (killed, a reboot) leaves its addresses behind: the next one removes them, while
+    # it holds the store's lock. Not here: they may be another process's agent's, starting this very moment.
     command = [executable, "--dir", str(directory), "--serve", "127.0.0.1:0", "--idle-exit", str(IDLE_EXIT_S)]
     # Its own session (process group on Windows): Ctrl-C and reloads of the app don't reach it.
     windows = sys.platform == "win32"
@@ -104,17 +119,65 @@ def start(config: conf.Config) -> subprocess.Popen[bytes] | None:
         )
     deadline = time.monotonic() + START_WAIT_S
     while time.monotonic() < deadline:
-        if (directory / ADDR_FILE).exists():
+        exited = process.poll()
+        if answers(address(config)):
+            if exited is not None:
+                # Another process's agent got there first (one agent per store): this process sends to it.
+                return None
             sys.stderr.write(f"tracepanel ▸ agent started for {directory}\n")
             return process
-        if process.poll() is not None:
-            # Another process's agent got there first (one agent per store): its address is there.
-            if not (directory / ADDR_FILE).exists():
-                _not_started(directory)
-            return None
+        if exited is not None and exited != ALREADY_RUNS:
+            break
+        # Started, or another process's agent is: until it answers.
         time.sleep(0.02)
     _not_started(directory)
     return None
+
+
+@contextlib.contextmanager
+def _one_at_a_time(path: Path) -> Iterator[None]:
+    """An exclusive lock on `path` while inside: the OS lets it go if the process dies holding it.
+
+    Without one (a file system that has none), inside anyway: the agent's own lock keeps one per store.
+    """
+    with path.open("a+b") as file:
+        locked = _lock(file)
+        try:
+            yield
+        finally:
+            if locked:
+                _unlock(file)
+
+
+if sys.platform == "win32":
+
+    def _lock(file: BinaryIO) -> bool:
+        file.seek(0)
+        try:
+            # Tries for 10 s.
+            msvcrt.locking(file.fileno(), msvcrt.LK_LOCK, 1)
+        except OSError:
+            return False
+        return True
+
+    def _unlock(file: BinaryIO) -> None:
+        file.seek(0)
+        with contextlib.suppress(OSError):
+            msvcrt.locking(file.fileno(), msvcrt.LK_UNLCK, 1)
+
+else:
+
+    def _lock(file: BinaryIO) -> bool:
+        try:
+            fcntl.flock(file, fcntl.LOCK_EX)
+        except OSError:
+            return False
+        return True
+
+    def _unlock(file: BinaryIO) -> None:
+        # Explicitly: a child forked meanwhile holds the same lock through its copy of the file.
+        with contextlib.suppress(OSError):
+            fcntl.flock(file, fcntl.LOCK_UN)
 
 
 def _not_started(directory: Path) -> None:

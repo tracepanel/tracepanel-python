@@ -192,6 +192,16 @@
 
 ### Fixed
 
+- An app's processes that start the agent at the same moment, as django-q2's
+  cluster does when it forks its workers, start one. Two could run on the
+  store, and the processes on the first sent their traces and task events
+  where the console didn't look. They now start it in turn, and one whose
+  agent finds the store served sends to the agent that serves it.
+- A GraphQL document that doesn't parse is named `GraphQL syntax error`,
+  with no operation type or name, for Strawberry and Graphene. It was
+  `GraphQL query anonymous`, so the GraphQL page grouped it with the
+  anonymous queries. A document that fails validation keeps its operation's
+  name, as before.
 - A query a Jinja template made, in a template file inside the project, has
   the line of project code that rendered it as its `code.origin`. It had the
   template's file with a line of Jinja's compiled code.
