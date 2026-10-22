@@ -228,6 +228,11 @@
   Requests are traced as usual.
 - A Channels Redis layer configured with `("host", port)` pairs names its
   server on its spans. They said `localhost:6379`, whatever the host.
+- A Celery run that ends without a state from Celery is FAILURE, with the
+  error that ended it. That is a run cut short outside the task's body, say
+  by a soft time limit hitting Celery as it imports its result backend, or
+  an eager task whose error reaches its caller. It was stored with no state
+  and status ok.
 - Secrets are masked by the words of a name, not the letters in it. An `author`,
   `authors`, `author_id`, `authority`, `is_authenticated`, `tokenizer`, a
   model's `max_tokens` or a `passenger` is shown in bodies, locals, settings and
