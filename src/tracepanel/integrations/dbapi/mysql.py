@@ -32,10 +32,10 @@ def _text(value: object) -> str:
 
 
 def _explainer(connect: Any, params: dict[str, Any]) -> _core.plans.Execute:  # noqa: ANN401 (a driver's connect)
-    def execute(sql_text: str, values: object) -> tuple[_core.plans.Rows, list[str]]:
+    def execute(sql_text: str, values: object, session: _core.plans.Session) -> tuple[_core.plans.Rows, list[str]]:
         connection = connect(**params)
         try:
-            return _core.cursor_rows(connection.cursor(), sql_text, values)
+            return _core.cursor_rows(connection.cursor(), sql_text, values, session)
         finally:
             connection.close()
 

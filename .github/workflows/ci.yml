@@ -148,7 +148,7 @@ jobs:
     # The database drivers on their servers, with Django and SQLAlchemy on the same drivers: each statement once; and
     # MongoDB's commands.
     # Oracle's image takes over a minute to start: it runs on main only, not on each pull request.
-    name: drivers (PostgreSQL, MySQL, ${{ github.event_name == 'push' && 'Oracle, ' || '' }}MongoDB)
+    name: drivers (PostgreSQL, MySQL, SQL Server, ${{ github.event_name == 'push' && 'Oracle, ' || '' }}MongoDB)
     needs: agent
     runs-on: ubuntu-latest
     services:
@@ -169,6 +169,15 @@ jobs:
         options: >-
           --health-cmd "mysqladmin ping -h 127.0.0.1 -pmysql" --health-interval 5s --health-timeout 5s
           --health-retries 20
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: Tracepanel-1
+        ports: ["1433:1433"]
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P Tracepanel-1 -Q 'SELECT 1'"
+          --health-interval 5s --health-timeout 5s --health-retries 30
       oracle:
         image: ${{ github.event_name == 'push' && 'gvenzl/oracle-free:23-slim-faststart' || '' }}
         env:
@@ -192,6 +201,7 @@ jobs:
       TRACEPANEL_TEST_DB: postgres
       PGHOST: localhost
       TRACEPANEL_TEST_MYSQL: "1"
+      TRACEPANEL_TEST_MSSQL: "1"
       TRACEPANEL_TEST_ORACLE: ${{ github.event_name == 'push' && '1' || '' }}
       ORACLE_DSN: localhost:1521/FREEPDB1
       TRACEPANEL_TEST_MONGO: mongodb://localhost:27017
@@ -216,6 +226,17 @@ jobs:
           python-version: "3.14"
           working-directory: tracepanel-python
       - run: sudo apt-get install -y --no-install-recommends pkg-config default-libmysqlclient-dev
+      # pyodbc (and mssql-django on it) talks to SQL Server through Microsoft's ODBC driver: installed when missing.
+      - name: Microsoft ODBC Driver 18 for SQL Server
+        run: |
+          if ! odbcinst -q -d -n "ODBC Driver 18 for SQL Server" > /dev/null 2>&1; then
+            curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+              | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+            curl -fsSL "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list" \
+              | sudo tee /etc/apt/sources.list.d/mssql-release.list
+            sudo apt-get update
+            sudo ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18
+          fi
       - run: uv sync --locked $GROUPS --group postgres --group drivers --no-install-package tracepanel-agent
       - run: uv pip install --no-deps ../agent/*.whl
       - run: uv run --no-sync pytest

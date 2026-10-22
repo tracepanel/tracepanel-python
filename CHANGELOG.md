@@ -4,6 +4,12 @@
 
 ### Added
 
+- SQL Server: statements run through pyodbc and pymssql are traced like the
+  other drivers' (`db.system` "mssql"), with N+1 and duplicate detection on
+  `?`, `%s` and `%(name)s` placeholders. Under Django (mssql-django) and
+  SQLAlchemy they are recorded once, by the ORM, and Django's atomic blocks
+  are transactions. EXPLAIN shows SQL Server's estimated plan (SHOWPLAN_ALL),
+  a full scan of a table marked, for the drivers, Django and SQLAlchemy.
 - Task workflows link up across Celery, RQ, Dramatiq and Django Tasks. A
   run records the task it follows (`task.parent_id`), the first task of its
   workflow (`task.root_id`) and its group (`task.group_id`): Celery's chain,

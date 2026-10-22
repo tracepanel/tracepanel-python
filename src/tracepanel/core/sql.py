@@ -25,7 +25,9 @@ T = TypeVar("T")
 Params = Sequence[object] | Mapping[str, object] | None
 
 _WHITESPACE = re.compile(r"\s+")
-_IN_LIST = re.compile(r"\bIN \((?:%s|\?)(?:, ?(?:%s|\?))*\)", re.IGNORECASE)
+# An IN list of placeholders: %s (Django, psycopg, PyMySQL), ? (sqlite3, pyodbc), %(name)s (SQLAlchemy on pymssql or
+# psycopg2, one name per value).
+_IN_LIST = re.compile(r"\bIN \((?:%s|\?|%\(\w+\)s)(?:, ?(?:%s|\?|%\(\w+\)s))*\)", re.IGNORECASE)
 _TABLE = re.compile(r'\b(?:FROM|INTO|UPDATE|JOIN)\s+[`"\[]?([\w.]+)', re.IGNORECASE)
 _COUNT = re.compile(r"^\s*SELECT\s+COUNT\(", re.IGNORECASE)
 

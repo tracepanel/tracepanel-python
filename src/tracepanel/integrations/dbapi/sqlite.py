@@ -32,10 +32,10 @@ def _where(connection: object, client: str) -> _core.Where:
 
 
 def _explainer(path: str) -> _core.plans.Execute:
-    def execute(sql_text: str, values: object) -> tuple[_core.plans.Rows, list[str]]:
+    def execute(sql_text: str, values: object, session: _core.plans.Session) -> tuple[_core.plans.Rows, list[str]]:
         connection = original(sqlite3, "connect")(f"file:{path}?mode=ro", uri=True)
         try:
-            return _core.cursor_rows(sqlite3.Cursor(connection), sql_text, values)
+            return _core.cursor_rows(sqlite3.Cursor(connection), sql_text, values, session)
         finally:
             connection.close()
 

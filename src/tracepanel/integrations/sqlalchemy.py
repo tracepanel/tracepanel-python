@@ -75,13 +75,10 @@ def explain(
         msg = f"No engine for database {alias!r} in this process."
         raise plans.ExplainError(msg)
 
-    def execute(sql_text: str, values: Sequence[Scalar] | Mapping[str, Scalar] | None) -> tuple[plans.Rows, list[str]]:
+    def execute(sql_text: str, values: plans.Values, session: plans.Session) -> tuple[plans.Rows, list[str]]:
         connection = engine.raw_connection()
         try:
-            cursor = connection.cursor()
-            cursor.execute(sql_text, values if values is not None else ())
-            rows = [tuple(row) for row in cursor.fetchall()]
-            return rows, [str(column[0]) for column in cursor.description or []]
+            return plans.cursor_rows(connection.cursor(), sql_text, values, session)
         except Exception as exc:
             msg = f"The database could not explain this query: {exc}"
             raise plans.ExplainError(msg) from exc

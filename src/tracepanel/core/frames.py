@@ -129,6 +129,10 @@ _QUERY_LAYERS = (
     "pymysql",
     "MySQLdb",
     "oracledb",
+    "pyodbc",
+    "pymssql",
+    # mssql-django's backend.
+    "mssql",
     "asgiref",
     "contextlib",
     "functools",
