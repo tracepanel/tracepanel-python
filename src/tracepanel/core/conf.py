@@ -113,9 +113,10 @@ class Config:
     # Loggers whose records are left out (with their children), on top of tracepanel's own and SQL echo.
     ignore_loggers: tuple[str, ...] = ()
     # Django signals left out entirely, glob patterns on the name (post_save) or the dotted path
-    # (shop.signals.order_placed). pre_init and post_init fire for every object a query loads: by default even their
-    # count would cost more than it tells. Read at startup.
-    ignore_signals: tuple[str, ...] = ("pre_init", "post_init")
+    # (shop.signals.order_placed). pre_init and post_init fire for every object a query loads, class_prepared for every
+    # model class built (each historical model a migration renders): by default even their count would cost more than
+    # it tells. Read at startup.
+    ignore_signals: tuple[str, ...] = ("pre_init", "post_init", "class_prepared")
     # Management commands not traced: long-running and interactive ones by default (servers, shells, workers).
     ignore_commands: tuple[str, ...] = (
         "runserver",

@@ -83,12 +83,20 @@
   exception it raised: `send_robust()` swallows it, so the trace stays ok
   and the receiver's span shows the error. A send nobody receives makes no
   span: the trace's `signal.unreceived` counts it, once per signal and
-  sender (`pre_save shop.Order: 3`). When a receiver of the project's
-  listens to `request_started`, what it does opens the request's trace.
+  sender (`pre_save shop.Order: 3`). Django's lifecycle signals
+  (`request_started`, `request_finished`, `setting_changed`,
+  `connection_created`, `pre_migrate`, `post_migrate`) show only when a
+  receiver of the project's listens, with Django's own beside it: sent to
+  nobody or to Django's own receivers alone (`create_permissions` after
+  every migrate), they make no span and are not counted. When a receiver of
+  the project's listens to `request_started`, what it does opens the
+  request's trace.
 - `signals_enabled` turns the signal spans off, and `ignore_signals` leaves
   signals out by name or dotted path (glob patterns). By default it holds
   `pre_init` and `post_init`, which Django sends twice for every object a
-  query loads: they keep Django's own send and cost nothing.
+  query loads, and `class_prepared`, sent for every model class built (each
+  historical model a `migrate` renders): they keep Django's own send and
+  cost nothing.
 
 ### Changed
 

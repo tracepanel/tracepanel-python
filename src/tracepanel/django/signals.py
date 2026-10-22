@@ -13,14 +13,20 @@ A send nobody receives costs a counter, not a span: the trace's `signal.unreceiv
 once, with how many times it was sent (`pre_save auth.Group: 3`). Tracepanel's own receivers don't count, and a send
 only they receive is left out.
 
+Django's own lifecycle signals (request_started, request_finished, setting_changed, connection_created, pre_migrate,
+post_migrate) are sent whatever the app does, and Django listens to most of them itself: reset_queries and
+close_old_connections on every request, create_contenttypes and create_permissions after every migrate. They are
+recorded only when a receiver of the app's listens, and then with Django's own beside it; sent to Django's own alone or
+to nobody, they make no span and are not counted in `signal.unreceived`.
+
 request_started is sent before the request's trace begins. When a receiver of the app's listens to it, what it does is
-kept and becomes the start of the trace; Django's own receivers alone (reset_queries, close_old_connections) are left
-out, as every request has them. request_finished is sent once the response has gone out, after the trace is
+kept and becomes the start of the trace. request_finished is sent once the response has gone out, after the trace is
 complete: it is not recorded.
 
 `ignore_signals` leaves signals out entirely, by name or dotted path (glob patterns). By default these are pre_init
-and post_init: they fire for every object a query loads, thousands in one request, so even counting them would cost
-more than the rest of the signals together. Their send is Django's own, not wrapped at all.
+and post_init, which fire for every object a query loads, thousands in one request, so even counting them would cost
+more than the rest of the signals together, and class_prepared, which fires for every model class built (every
+historical model a migration renders). Their send is Django's own, not wrapped at all.
 """
 
 import functools
@@ -34,7 +40,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from asgiref.sync import iscoroutinefunction
-from django.core.signals import request_finished, request_started
+from django.core.signals import request_finished, request_started, setting_changed
+from django.db.backends.signals import connection_created
+from django.db.models.signals import post_migrate, pre_migrate
 from django.dispatch import Signal
 from django.dispatch.dispatcher import NO_RECEIVERS
 
@@ -61,16 +69,25 @@ _sending: ContextVar[Signal | None] = ContextVar("tracepanel_signal", default=No
 # What request_started did, kept until the request's trace begins.
 _held: ContextVar[Trace | None] = ContextVar("tracepanel_request_started", default=None)
 
+# Django's own lifecycle signals: recorded only when a receiver of the app's listens (see the module's docstring).
+LIFECYCLE = frozenset(
+    (request_started, request_finished, setting_changed, connection_created, pre_migrate, post_migrate)
+)
+
 # Django's own receiver lookup, kept before it is patched.
 _live_receivers = Signal._live_receivers  # noqa: SLF001 (the one place Django resolves receivers)
 
 
 @dataclass(frozen=True, slots=True)
 class Named:
-    """A signal as traces name it: `path` is where the project imports it from, `label` its span's name."""
+    """A signal as traces name it: `path` is where the project imports it from, `label` its span's name.
+
+    `lifecycle` for Django's own lifecycle signals: recorded only when a receiver of the app's listens.
+    """
 
     path: str
     label: str
+    lifecycle: bool = False
 
 
 # ---------- names ----------
@@ -133,7 +150,7 @@ def _named(signal: Signal) -> Named | None:
     found = vars(signal).get(MARKER)
     if found is None:
         path = signal_name(signal)
-        named = Named(path, _label(path))
+        named = Named(path, _label(path), lifecycle=signal in LIFECYCLE)
         found = False if _ignored(named, conf.get_config().ignore_signals) else named
         setattr(signal, MARKER, found)
         if found is False:
@@ -211,6 +228,12 @@ def _project(receiver: object) -> bool:
     return not str(getattr(getattr(receiver, "__func__", receiver), "__module__", "") or "").startswith("tracepanel.")
 
 
+def _app_receiver(receiver: object) -> bool:
+    """A receiver neither Django nor Tracepanel connected: the app's, or another library's."""
+    module = str(getattr(getattr(receiver, "__func__", receiver), "__module__", "") or "")
+    return not module.startswith(("django.", "tracepanel."))
+
+
 def _failed(exc: Exception) -> "Attrs":
     kind = type(exc)
     message = str(exc)
@@ -284,7 +307,12 @@ class Tally:
 
 
 def _count(trace: Trace, signal: Signal, named: Named, sender: object) -> None:
-    """One more send nobody received: `signal.unreceived` lists each signal and sender once, with its count."""
+    """One more send nobody received: `signal.unreceived` lists each signal and sender once, with its count.
+
+    Not Django's lifecycle signals: they are sent whatever the app does.
+    """
+    if named.lifecycle:
+        return
     # By the sender's class, as it is named: an instance may not be hashable (a model object not saved yet).
     key = (signal, sender if isinstance(sender, type) else type(sender))
     tally = trace.counts.get(key)
@@ -339,7 +367,10 @@ def _span_attrs(trace: Trace, signal: Signal, sender: object, *, robust: bool) -
     if not sync and not asynchronous:
         _count(trace, signal, named, sender)
         return None
-    receivers: list[Scalar] = [qualname(receiver) for receiver in (*sync, *asynchronous) if _project(receiver)]
+    everyone = (*sync, *asynchronous)
+    if named.lifecycle and not any(_app_receiver(receiver) for receiver in everyone):
+        return None
+    receivers: list[Scalar] = [qualname(receiver) for receiver in everyone if _project(receiver)]
     if not receivers:
         return None
     attrs: Attrs = {"signal.name": named.path}
@@ -359,11 +390,6 @@ def _span_attrs(trace: Trace, signal: Signal, sender: object, *, robust: bool) -
 def _unwrapped(responses: Responses) -> Responses:
     """Callers get their own receivers back, not the timing wrappers."""
     return [(_original(receiver), response) for receiver, response in responses]
-
-
-def _app_receiver(receiver: object) -> bool:
-    module = str(getattr(getattr(receiver, "__func__", receiver), "__module__", "") or "")
-    return not module.startswith(("django.", "tracepanel."))
 
 
 def _before_trace(signal: Signal, sender: object) -> bool:
@@ -467,7 +493,7 @@ def install() -> None:
     patch(Signal, "asend", _wrap_async(Signal.asend, robust=False))
     patch(Signal, "asend_robust", _wrap_async(Signal.asend_robust, robust=True))
     # Django's own signals are known now: the ignored ones (pre_init and post_init, sent for every object a query
-    # loads) keep Django's send, and never pass through here at all.
+    # loads, and class_prepared) keep Django's send, and never pass through here at all.
     from django.contrib.auth import signals as auth  # noqa: PLC0415
     from django.core import signals as core  # noqa: PLC0415
     from django.db.backends import signals as backends  # noqa: PLC0415
