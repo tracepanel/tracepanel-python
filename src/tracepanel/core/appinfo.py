@@ -42,6 +42,7 @@ PACKAGES = (
     "kombu",
     "rq",
     "dramatiq",
+    "huey",
     "channels",
     "daphne",
     "uvicorn",

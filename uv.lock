@@ -1809,6 +1809,15 @@ wheels = [
 ]
 
 [[package]]
+name = "huey"
+version = "3.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/57/25/1281d8f3febc30b5facbfc5e4163447241711591c094dac642d32c827eb0/huey-3.4.0.tar.gz", hash = "sha256:ac9b02e741f13da4092ea19bcaafc73669e97d3153914d2fed2868df144f6dfa", size = 630013, upload-time = "2026-09-04T02:04:34.521Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/31/cee585bd4d1e39947a426a6736f4e17d22b454952370fb9cf48eb3103085/huey-3.4.0-py3-none-any.whl", hash = "sha256:d0580762397744026f83baae5f2b97a62474a62b8565ac75bbafefe72f9c784f", size = 136493, upload-time = "2026-09-04T02:04:32.848Z" },
+]
+
+[[package]]
 name = "hyperlink"
 version = "21.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3592,6 +3601,9 @@ faststream = [
 flask = [
     { name = "flask" },
 ]
+huey = [
+    { name = "huey" },
+]
 mongodb = [
     { name = "pymongo" },
 ]
@@ -3694,6 +3706,9 @@ flask = [
     { name = "flask-sqlalchemy" },
     { name = "sqlalchemy" },
 ]
+huey = [
+    { name = "huey" },
+]
 ninja = [
     { name = "django-ninja" },
 ]
@@ -3723,6 +3738,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.142" },
     { name = "faststream", marker = "extra == 'faststream'", specifier = ">=0.6" },
     { name = "flask", marker = "extra == 'flask'", specifier = ">=3.0" },
+    { name = "huey", marker = "extra == 'huey'", specifier = ">=2.5" },
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.45" },
     { name = "pymongo", marker = "extra == 'mongodb'", specifier = ">=4.13" },
     { name = "rq", marker = "extra == 'rq'", specifier = ">=2.0" },
@@ -3731,7 +3747,7 @@ requires-dist = [
     { name = "strawberry-graphql", marker = "extra == 'strawberry'", specifier = ">=0.250" },
     { name = "tracepanel-agent", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'armv6l' and sys_platform == 'linux') or (platform_machine == 'armv7l' and sys_platform == 'linux') or (platform_machine == 'i686' and sys_platform == 'linux') or (platform_machine == 'ppc64le' and sys_platform == 'linux') or (platform_machine == 'riscv64' and sys_platform == 'linux') or (platform_machine == 's390x' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (platform_machine == 'ARM64' and sys_platform == 'win32') or (platform_machine == 'x86' and sys_platform == 'win32') or sys_platform == 'darwin'", directory = "../tracepanel" },
 ]
-provides-extras = ["django", "celery", "dramatiq", "faststream", "rq", "channels", "strawberry", "fastapi", "starlette", "flask", "falcon", "sqlalchemy", "mongodb", "ninja", "drf", "otel"]
+provides-extras = ["django", "celery", "dramatiq", "faststream", "rq", "huey", "channels", "strawberry", "fastapi", "starlette", "flask", "falcon", "sqlalchemy", "mongodb", "ninja", "drf", "otel"]
 
 [package.metadata.requires-dev]
 bench = [{ name = "pytest-codspeed", specifier = ">=5.0.3" }]
@@ -3804,6 +3820,7 @@ flask = [
     { name = "flask-sqlalchemy", specifier = ">=3.1.1" },
     { name = "sqlalchemy", specifier = ">=2.1.4" },
 ]
+huey = [{ name = "huey", specifier = ">=3.4.0" }]
 ninja = [{ name = "django-ninja", specifier = ">=1.7.1" }]
 otel = [{ name = "opentelemetry-sdk", specifier = ">=1.45.1" }]
 postgres = [{ name = "psycopg", extras = ["binary"], specifier = ">=3.2" }]

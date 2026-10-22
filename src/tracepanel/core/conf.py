@@ -94,6 +94,7 @@ class Config:
     faststream_enabled: bool = True
     # Outgoing HTTP calls: urllib3 (requests, boto3), httpx, aiohttp.
     http_clients_enabled: bool = True
+    huey_enabled: bool = True
     jinja_enabled: bool = True
     logging_enabled: bool = True
     mongodb_enabled: bool = True
@@ -131,6 +132,7 @@ class Config:
         "rqworker",
         "rqscheduler",
         "rundramatiq",
+        "run_huey",
         "runworker",
     )
 
@@ -172,6 +174,7 @@ class Settings(TypedDict, total=False):
     drf_enabled: bool
     faststream_enabled: bool
     http_clients_enabled: bool
+    huey_enabled: bool
     jinja_enabled: bool
     logging_enabled: bool
     mongodb_enabled: bool
