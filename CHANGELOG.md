@@ -4,6 +4,16 @@
 
 ### Added
 
+- Channels' background work is a task, `task.system` `channels`, on the
+  Tasks page and in its Live. A task is a message sent to a worker channel
+  (a channel name without `!`, the kind `runworker` listens on): the send is
+  a `task.enqueue` span, the worker's handling of it a `task` trace named
+  after the consumer's handler, with its module (`ThumbnailConsumer`'s
+  `thumbnails_generate` for type `thumbnails.generate`), and linked to the
+  send. The sender says `enqueued`, the worker `started` and `finished`, and a
+  `runworker` process sends heartbeats from its start, whatever the channel
+  layer. WebSocket and HTTP consumers serve requests, and group sends reach
+  them: neither is a task.
 - A response's body is recorded with its request's, as Django Silk shows
   it: JSON and forms with their secrets masked as a request's are, and text,
   in `http.response.body` with its size in bytes. Only a response sent whole
@@ -179,6 +189,8 @@
   models for user switching, and Django refused to load them. Without auth,
   user switching is left out of the console and logouts are not recorded.
   Requests are traced as usual.
+- A Channels Redis layer configured with `("host", port)` pairs names its
+  server on its spans. They said `localhost:6379`, whatever the host.
 
 ## 0.4.1 (2026-10-21)
 
