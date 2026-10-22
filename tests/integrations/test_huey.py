@@ -594,7 +594,8 @@ def djhuey(settings: Settings) -> ModuleType:
     return module
 
 
-@pytest.mark.django_db
+# djhuey's db_task closes the connection a test's transaction holds (as in a worker): a transactional test it is.
+@pytest.mark.django_db(transaction=True)
 def test_django_huey(djhuey: ModuleType, traces: list[Trace]) -> None:
     @djhuey.db_task()
     def send_digest(user_id: int) -> int:
@@ -612,7 +613,7 @@ def test_django_huey(djhuey: ModuleType, traces: list[Trace]) -> None:
     assert task.links == [Link(kind="enqueued_by", trace_id=request.id, span_id=enqueue.id)]
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_django_tasks_on_huey_are_traced_once(djhuey: ModuleType, settings: Settings, traces: list[Trace]) -> None:
     pytest.importorskip("django_tasks_db")
     from tests.project import django_jobs  # noqa: PLC0415 (Django Tasks are optional)
