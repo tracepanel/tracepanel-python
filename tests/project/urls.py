@@ -47,6 +47,7 @@ urlpatterns = [
     path("multi-backend/", views.multi_backend),
     path("welcome-email/", views.welcome_email),
     path("create-group/", views.create_group),
+    path("log-in/", views.log_in),
     path("same-group/", views.same_group),
     path("health/", views.health),
     path("instrumented/", views.instrumented),
