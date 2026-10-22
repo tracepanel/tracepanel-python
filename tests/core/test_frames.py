@@ -16,3 +16,14 @@ def test_a_script_of_the_environment_is_not_the_project_s() -> None:
 
 def test_a_file_of_the_project_is() -> None:
     assert frames.is_in_app(str(Path("shop/schemas.py").resolve()), "shop.schemas") is True
+
+
+def test_a_local_holding_a_cards_number_or_code_is_masked() -> None:
+    shown = {name: frames.safe_repr(name, "4242424242424242") for name in ("card_number", "cvv", "pan", "company")}
+
+    assert shown == {
+        "card_number": frames.MASK,
+        "cvv": frames.MASK,
+        "pan": frames.MASK,
+        "company": "'4242424242424242'",
+    }

@@ -253,7 +253,35 @@ def test_a_request_records_what_it_carried_with_secrets_masked(
         "http.response.header.set_cookie": "********",
         "http.response.header.x_read": str(len(body)),
         "http.request.body": '{"email":"ann@example.com","password":"********"}',
+        "http.response.body": "ok",
+        "http.response.body.size": 2,
     }
+
+
+def answers_json(environ: dict[str, Any], start_response: StartResponse) -> Iterable[bytes]:
+    if environ["PATH_INFO"] == "/stream":
+        return stream(start_response)
+    body = b'{"id": 7, "token": "t"}'
+    start_response("200 OK", [("Content-Type", "application/json"), ("Content-Length", str(len(body)))])
+    return [body]
+
+
+def test_a_response_sent_whole_records_its_body_masked_a_stream_nothing(traces: list[Trace]) -> None:
+    previous = conf._framework  # noqa: SLF001
+    wrapped = tracepanel.wsgi.install(answers_json, enabled=True)
+
+    _, _, body = call(wrapped, "/order")
+    call(wrapped, "/stream")
+    conf.use_source(previous)
+    whole, streamed = traces
+
+    assert body == b'{"id": 7, "token": "t"}'
+    assert {key: value for key, value in whole.attrs.items() if key.startswith("http.response.body")} == {
+        "http.response.body": '{"id":7,"token":"********"}',
+        "http.response.body.size": 23,
+    }
+
+    assert not any(key.startswith("http.response.body") for key in streamed.attrs)
 
 
 def test_a_body_the_app_never_read_is_not_read_for_it(reading: tracepanel.wsgi.WSGIApp, traces: list[Trace]) -> None:

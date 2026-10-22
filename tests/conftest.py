@@ -1,9 +1,11 @@
 import json
+import sys
 from collections.abc import Generator
 from pathlib import Path
 
 import pytest
 from django.contrib.auth.models import Group, User
+from django.db import connections
 from jsonschema import Draft202012Validator
 
 from tests.agentstore import AGENT_SCHEMAS, AgentStore
@@ -96,3 +98,18 @@ def fresh_app_info() -> Generator[None, None, None]:
     appinfo._packages[:] = packages  # noqa: SLF001
     appinfo._checks[:] = checks  # noqa: SLF001
     appinfo.reset()
+
+
+@pytest.fixture(autouse=True)
+def graphene_debug_cursors() -> Generator[None, None, None]:
+    """Each test's connections unwrapped of graphene-django's DEBUG middleware.
+
+    In DEBUG it wraps every connection's cursor at an operation's first field and unwraps them only when the operation
+    asks for `_debug`: the wrapper would outlive the test, with the cursor pytest-django forbids for databases the test
+    didn't ask for.
+    """
+    yield
+    tracking = sys.modules.get("graphene_django.debug.sql.tracking")
+    if tracking is not None:
+        for connection in connections.all(initialized_only=True):
+            tracking.unwrap_cursor(connection)

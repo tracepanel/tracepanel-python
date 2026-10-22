@@ -73,6 +73,10 @@ def _answered(
     trace.attrs.update(htmx.response_attrs(trace.attrs, response.code, headers, body))
     if reader is not None:
         trace.attrs.update(reader.attrs(content_type, response.headers))
+        if body is not None:
+            # A response sent whole, as the app made it: a stream is never read for it.
+            encoding = headers.get("content-encoding", "")
+            trace.attrs.update(details.response_body(headers.get("content-type", ""), encoding, body))
     widget.set_header(response.headers, "Tracepanel-Id", trace.id)
 
 
@@ -157,7 +161,8 @@ def _capture(environ: dict[str, Any], headers: dict[str, str], attrs: dict[str, 
     # A request without a body (most GETs) keeps wsgi.input as it is: nothing to read, nothing to wrap.
     length = str(environ.get("CONTENT_LENGTH") or "")
     chunked = "chunked" in headers.get("transfer-encoding", "").lower()
-    return _BodyReader(environ) if chunked or (length.isdigit() and int(length) > 0) else _NO_BODY
+    sent = chunked or (length.isdigit() and int(length) > 0)
+    return _BodyReader(environ) if sent and details.max_body() else _NO_BODY
 
 
 class _NoBody:
@@ -183,11 +188,12 @@ class _BodyReader:
         self.size = 0
         length = str(environ.get("CONTENT_LENGTH") or "")
         self.length = int(length) if length.isdigit() else 0
+        self.limit = details.max_body()
         environ["wsgi.input"] = self
 
     def _kept(self, data: bytes) -> bytes:
-        if self.size <= details.MAX_BODY:
-            self.chunks.append(data[: details.MAX_BODY + 1 - self.size])
+        if self.size <= self.limit:
+            self.chunks.append(data[: self.limit + 1 - self.size])
         self.size += len(data)
         return data
 
@@ -206,7 +212,7 @@ class _BodyReader:
     def attrs(self, content_type: str, response_headers: Headers) -> dict[str, Any]:
         """The response's headers, and the body as far as the app read it."""
         data = b"".join(self.chunks)
-        whole = self.size <= details.MAX_BODY and (self.length == 0 or self.size >= self.length)
+        whole = self.size <= self.limit and (self.length == 0 or self.size >= self.length)
         return {**details.response_headers(response_headers), **details.body(content_type, data, complete=whole)}
 
 

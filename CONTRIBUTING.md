@@ -10,11 +10,15 @@ the console. The agent and its console live in
 Check out tracepanel next to this repository, then:
 
 ```bash
-uv sync --all-groups   # builds the agent from ../tracepanel
-uv run poe test        # pytest on SQLite
-uv run poe lint        # ruff, pyrefly (strict), import-linter, the docs
-uv run poe fmt         # ruff check --fix and ruff format
+uv sync --all-groups --no-group graphene  # builds the agent from ../tracepanel
+uv run poe test                           # pytest on SQLite
+uv run poe lint                           # ruff, pyrefly (strict), import-linter, the docs
+uv run poe fmt                            # ruff check --fix and ruff format
 ```
+
+Graphene needs graphql-core older than Strawberry's, so the `graphene` group
+has an environment of its own: `uv run poe test-matrix graphene` runs the
+tests there, as CI's graphene job does.
 
 `TRACEPANEL_TEST_DB=postgres` runs the tests on PostgreSQL, with the usual
 `PG*` variables. `uv sync --no-sources` installs the published agent in place
@@ -76,7 +80,7 @@ enforces that. Imports use full paths.
 | `src/tracepanel/core/` | Trace model, context, configuration, frames, errors, SQL spans and their fingerprints, EXPLAIN plans, service attributes; `registry` (every integration) and `patching` (every monkeypatch: once, remembered, undoable) |
 | `src/tracepanel/storage/` | The background writer and the agent: finding it, starting it, sending to it |
 | `src/tracepanel/console/` | The console under the prefix (forwarded to the agent), the widget's markup, the terminal line after tasks and commands |
-| `src/tracepanel/django/` | The Django app, middleware, collectors (ORM, cache, mail, signals, views and templates, transactions, commands, auth), user switching, EXPLAIN, Channels, Django Tasks, django-q2, Django Ninja, Django REST framework |
+| `src/tracepanel/django/` | The Django app, middleware, collectors (ORM, cache, mail, signals, views and templates, transactions, commands, auth), user switching, EXPLAIN, Channels, Django Tasks, django-q2, Django Ninja, Django REST framework, Graphene |
 | `src/tracepanel/asgi/` | `tracepanel.asgi.install(app)` and the ASGI middleware. Starlette and FastAPI add the route and the endpoint |
 | `src/tracepanel/fastapi/` | `tracepanel.fastapi.install(app)`: `tracepanel.asgi` under the name FastAPI users look for |
 | `src/tracepanel/wsgi/` | `tracepanel.wsgi.install(app)` and the WSGI middleware |

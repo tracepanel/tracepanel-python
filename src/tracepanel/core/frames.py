@@ -28,10 +28,25 @@ _SKIP_MODULES = ("tracepanel", "django", "asgiref")
 CONTEXT_LINES = 5
 MAX_FRAMES = 50
 MAX_LOCALS = 40
+# Payment cards: the card's number (card_number, cardNumber, card_no, a PAN) and its security code (CVC, CVV, CVN).
+CARD_SENSITIVE = r"card_?(num|no(?:$|_))|cvv|cvc|cvn|(?:^|_)pan(?:$|_)"
 SENSITIVE = re.compile(
-    r"pass(word|wd)?|secret|token|api_?key|auth|cookie|session|csrf|signature|private", re.IGNORECASE
+    rf"pass(word|wd)?|secret|token|api_?key|auth|cookie|session|csrf|signature|private|{CARD_SENSITIVE}", re.IGNORECASE
 )
+# What holds a payment card (card, creditCard, payment_card): its `number` is the card's number.
+_CARD = re.compile(r"card$", re.IGNORECASE)
 MASK = "********"
+
+
+def card_number(parent: object, key: object) -> bool:
+    """Whether `key` under `parent` is a card's number: {"card": {"number": "4242..."}}."""
+    return (
+        isinstance(key, str)
+        and key.lower() == "number"
+        and isinstance(parent, str)
+        and _CARD.search(parent) is not None
+    )
+
 
 _repr = reprlib.Repr()
 _repr.maxstring = 160
