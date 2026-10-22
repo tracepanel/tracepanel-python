@@ -17,7 +17,7 @@ from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
 from tests.agentstore import AgentStore, issues, newer
-from tests.tasklive import Recorder, live, live_when, named, without_heartbeats
+from tests.tasklive import Recorder, live, live_when, named, without_worker_events
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Link, Span, Trace
 from tracepanel.storage import agent, transport
@@ -269,7 +269,7 @@ def test_a_queued_task_tells_the_agent_each_step(client: Client, recorder: Recor
     with start_worker(jobs.app, pool="solo", perform_ping_check=False, shutdown_timeout=10):
         jobs.app.AsyncResult(task_id).get(timeout=10)
 
-    assert without_heartbeats(recorder.events) == [
+    assert without_worker_events(recorder.events) == [
         {
             "event": "enqueued",
             "system": "celery",
@@ -349,7 +349,7 @@ def test_a_retry_waits_with_its_error_and_runs_again(recorder: Recorder) -> None
         result.get(timeout=10)
     steps = [
         (event["event"], event.get("retries"), event.get("error"), event.get("state"))
-        for event in without_heartbeats(recorder.events)
+        for event in without_worker_events(recorder.events)
     ]
 
     assert steps == [
@@ -562,7 +562,7 @@ def test_a_task_stopped_by_its_time_limit_finishes_failed(recorder: Recorder) ->
     (task,) = by_kind(recorder.traces, "task")
 
     assert task_attrs(task) == IsPartialDict({"task.state": "FAILURE", "task.timeout": 2})
-    assert without_heartbeats(recorder.events)[-1] == {
+    assert without_worker_events(recorder.events)[-1] == {
         "event": "finished",
         "system": "celery",
         "id": result.id,
@@ -765,6 +765,24 @@ def test_a_run_cut_short_by_a_cold_shutdown_has_one_trace_revoked(worker: Prefor
     ]
 
     assert finished == [{"event": "finished", "system": "celery", "id": task_id, "worker": IsStr, "state": "REVOKED"}]
+
+
+def test_a_worker_that_stops_says_so_from_its_main_process(worker: PreforkWorker) -> None:
+    worker.stop()
+    goodbyes = [line for line in worker.lines() if line.get("event") == "worker_stopped"]
+    ready = next(line for line in worker.lines() if line["pid"] == worker.process.pid and line["event"] == "heartbeat")
+
+    # Once its pool processes are gone, not from each of them: they are one worker.
+    assert goodbyes == [
+        {
+            "pid": worker.process.pid,
+            "event": "worker_stopped",
+            "system": "celery",
+            "id": "",
+            "time": IsPositiveInt,
+            "worker": ready["worker"],
+        }
+    ]
 
 
 @pytest.mark.django_db(transaction=True)

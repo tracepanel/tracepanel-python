@@ -1,8 +1,10 @@
 import logging
+import socket
 import time
 from datetime import timedelta
 from multiprocessing import Value
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -13,6 +15,7 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from django_q import tasks as django_q_tasks
 from django_q.brokers import get_broker
+from django_q.cluster import Sentinel
 from django_q.conf import Conf
 from django_q.models import OrmQ, Schedule
 from django_q.monitor import monitor
@@ -24,7 +27,7 @@ from django_q.worker import worker
 from jsonschema import Draft202012Validator
 
 from tests.agentstore import AgentStore, issues
-from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, without_heartbeats
+from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, stopped, without_worker_events
 from tracepanel.core import patching
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Link, Span, Trace
@@ -263,7 +266,7 @@ def test_a_queued_task_tells_the_agent_each_step(recorder: Recorder) -> None:
     (run,) = tasks(recorder.traces)
     name = str(run.attrs["task.worker"])
 
-    assert without_heartbeats(recorder.events) == [
+    assert without_worker_events(recorder.events) == [
         {
             "event": "enqueued",
             "system": "django-q",
@@ -321,7 +324,7 @@ def test_sync_and_ignored_tasks_send_no_events(recorder: Recorder, monkeypatch: 
     async_task(housekeeping)
     work()
 
-    assert without_heartbeats(recorder.events) == []
+    assert without_worker_events(recorder.events) == []
     assert [event["worker"] for event in recorder.events] == [IsStr(regex=r"django-q@.+:\d+")]
 
 
@@ -332,11 +335,41 @@ def test_arguments_are_left_out_of_the_events_too(recorder: Recorder, monkeypatc
     async_task(add, 7)
     work()
 
-    assert [{"args", "kwargs"} & event.keys() for event in without_heartbeats(recorder.events)] == [set()] * 3
+    assert [{"args", "kwargs"} & event.keys() for event in without_worker_events(recorder.events)] == [set()] * 3
 
 
 def test_django_q_says_in_the_hello_that_it_sends_task_events() -> None:
     assert "live_tasks" in agent.SENDS
+
+
+def test_the_cluster_says_a_worker_it_replaced_stopped(recorder: Recorder) -> None:
+    # A worker process recycled after its tasks (timer -2), and the monitor, both replaced by the sentinel.
+    recycled = SimpleNamespace(pid=4242, name="Process-w", timer=SimpleNamespace(value=-2))
+    monitor_process = SimpleNamespace(pid=4243, name="Process-m")
+    spawned: list[str] = []
+    sentinel = cast(
+        "Sentinel",
+        SimpleNamespace(
+            pool=[recycled],
+            monitor=monitor_process,
+            pusher=None,
+            reincarnations=0,
+            spawn_worker=lambda: spawned.append("worker"),
+            spawn_monitor=lambda: spawned.append("monitor"),
+        ),
+    )
+
+    Sentinel.reincarnate(sentinel, monitor_process)
+    Sentinel.reincarnate(sentinel, recycled)
+    worker_name = f"django-q@{socket.gethostname()}:4242"
+
+    assert spawned == ["monitor", "worker"]
+
+    # The monitor runs no tasks: only the worker is gone from the console.
+    assert stopped(recorder.events, worker_name) == [
+        {"event": "worker_stopped", "system": "django-q", "id": "", "time": IsPositiveInt, "worker": worker_name}
+    ]
+    assert recorder.events == stopped(recorder.events, worker_name)
 
 
 # The store a running task reads the agent's list from, and what it read: work() runs it in the test's thread.
@@ -405,7 +438,7 @@ def test_a_task_stopped_by_its_timeout_says_so(recorder: Recorder) -> None:
     assert run.attrs == IsPartialDict({"task.state": "FAILURE", "task.timeout": 1})
     assert [(error.type, error.handled) for error in run.errors] == [("django_q.exceptions.TimeoutException", False)]
 
-    assert without_heartbeats(recorder.events)[-1] == {
+    assert without_worker_events(recorder.events)[-1] == {
         "event": "finished",
         "system": "django-q",
         "id": task_id,

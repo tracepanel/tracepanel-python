@@ -17,7 +17,9 @@ A task's trace reaches the agent when it ends. Until then task events say where 
 (with the enqueuing trace and span), `started` as it runs, `retried` (with the error) when Huey puts it back, then
 `finished`, also for a task revoked or expired before it ran. A delayed task moved to the queue when due is not
 enqueued again. Each worker says it is there as it starts and every process that runs tasks sends a `heartbeat` with
-them, so a task whose worker was killed leaves the console's Live list. Immediate mode sends none.
+them, so a task whose worker was killed leaves the console's Live list. A worker that stops says so
+(`worker_stopped`): a process worker as it shuts down, thread and greenlet workers (their process) as the consumer
+exits. Immediate mode sends none.
 
 A task's trace says the worker process that ran it (`task.worker`), when a delayed task or retry was due
 (`task.eta`), its priority and, on a run stopped by its time limit (TaskTimeout), the limit (`task.timeout`). A task
@@ -28,6 +30,7 @@ or a chord share a `task.group_id`. Periodic tasks run with the trigger `schedul
 
 import contextlib
 import functools
+import multiprocessing
 import os
 import socket
 import sys
@@ -541,17 +544,33 @@ def _shutdown(original: Any) -> Any:  # noqa: ANN401
         try:
             return original(self)
         finally:
-            # A process worker ends without running anything at exit: write what is queued now.
+            # A process worker ends without running anything at exit: write what is queued now, and say it stopped
+            # (the process is the worker). Threads share theirs: the consumer says so as it exits.
             get_writer().flush()
+            if multiprocessing.parent_process() is not None:
+                _heart.stopped()
 
     return shutdown
+
+
+def _consumer_run(original: Any) -> Any:  # noqa: ANN401
+    @functools.wraps(original)
+    def run(self: Any) -> Any:  # noqa: ANN401 (huey.consumer.Consumer)
+        try:
+            return original(self)
+        finally:
+            # Its thread or greenlet workers stop with it, done or interrupted: the console drops them at once.
+            if self.worker_type != "process":
+                _heart.stopped(_worker())
+
+    return run
 
 
 def install() -> None:
     """Wrap Huey's enqueue and execute and its consumer's workers; a no-op without Huey."""
     try:
         from huey.api import Huey  # noqa: PLC0415 (optional dependency)
-        from huey.consumer import Worker  # noqa: PLC0415
+        from huey.consumer import Consumer, Worker  # noqa: PLC0415
     except ImportError:
         return
     if patched(Huey, "enqueue"):
@@ -560,6 +579,7 @@ def install() -> None:
     patch(Huey, "execute", _execute(Huey.execute))
     patch(Worker, "initialize", _initialize(Worker.initialize))
     patch(Worker, "shutdown", _shutdown(Worker.shutdown))
+    patch(Consumer, "run", _consumer_run(Consumer.run))
     # djhuey binds `enqueue` to its instance as it is imported: the bound method of the original.
     djhuey = sys.modules.get("huey.contrib.djhuey")
     if djhuey is not None and getattr(djhuey, "HUEY", None) is not None:

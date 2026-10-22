@@ -15,7 +15,7 @@ from pytest_django.fixtures import Settings
 
 from tests.agentstore import AgentStore, issues
 from tests.project import django_jobs
-from tests.tasklive import Recorder, live, live_when, named, without_heartbeats
+from tests.tasklive import GOODBYE, Recorder, heartbeats, left, live, live_when, named, stopped, without_worker_events
 from tracepanel.core.context import start_trace
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Link, Span, Trace
@@ -166,7 +166,7 @@ def test_a_queued_task_tells_the_agent_each_step(client: Client, recorder: Recor
     (enqueue,) = [span for span in request.spans if span.kind == "task.enqueue"]
     task_id = enqueue.attrs["task.id"]
 
-    assert without_heartbeats(recorder.events) == [
+    assert without_worker_events(recorder.events) == [
         {
             "event": "enqueued",
             "system": "django",
@@ -201,6 +201,20 @@ def test_a_queued_task_tells_the_agent_each_step(client: Client, recorder: Recor
             "state": "SUCCESS",
         },
     ]
+
+    # The worker says it is there as it starts, before it runs anything, and that it stopped as it ends.
+    assert heartbeats(recorder.events, "worker-1")[0] == {
+        "event": "heartbeat",
+        "system": "django",
+        "id": "",
+        "time": IsPositiveInt,
+        "worker": "worker-1",
+        "ids": [],
+    }
+    assert stopped(recorder.events, "worker-1") == [
+        {"event": "worker_stopped", "system": "django", "id": "", "time": IsPositiveInt, "worker": "worker-1"}
+    ]
+    assert [event["event"] for event in recorder.events if event.get("worker") == "worker-1"][-1] == "worker_stopped"
 
     # The task's trace shows its arguments as its events do.
     (run,) = by_kind(recorder.traces, "task")
@@ -277,9 +291,10 @@ def test_the_agent_lists_a_task_queued_then_running_until_it_ends(store: AgentSt
             {"name": "worker-live", "system": "django", "service": IsStr, "last_seen": IsPositiveInt, "in_flight": 1}
         ]
 
-        done = live_when(store, lambda answer: not answer["tasks"])
+        # The batch ends: the worker says it stopped, and leaves the list.
+        done = left(store, "worker-live")
 
-        assert named(done, "worker-live") == [IsPartialDict(name="worker-live", in_flight=0)]
+        assert named(done, "worker-live") == ([] if GOODBYE else [IsPartialDict(name="worker-live", in_flight=0)])
     finally:
         django_jobs.during.clear()
         set_writer(None)

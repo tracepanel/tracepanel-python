@@ -184,6 +184,17 @@
 
 ### Fixed
 
+- A task worker that stops leaves the Tasks page's Now at once instead of
+  staying there as an idle worker. It says so in a `worker_stopped` event
+  as it stops cleanly: a Celery worker at `worker_shutdown`, an RQ worker as
+  it unregisters, a Dramatiq worker process after its shutdown, a Huey
+  process worker as it shuts down and thread workers as the consumer exits
+  (a SIGTERM'd `run_huey`), django-q2's cluster for a worker process it
+  replaced (recycled, stopped by its timeout, dead) and for each one as it
+  stops, Django Tasks' `db_worker` as it ends, and a Channels `runworker` at
+  Ctrl+C. A Celery worker's main process beats from its start, so an idle
+  worker stays listed, and `db_worker` says it is there as it starts. An
+  older agent keeps listing a stopped worker as before.
 - A query a Jinja template made, in a template file inside the project, has
   the line of project code that rendered it as its `code.origin`. It had the
   template's file with a line of Jinja's compiled code.
