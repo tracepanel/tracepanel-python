@@ -192,6 +192,11 @@
 
 ### Fixed
 
+- A GraphQL document that doesn't parse is named `GraphQL syntax error`,
+  with no operation type or name, for Strawberry and Graphene. It was
+  `GraphQL query anonymous`, so the GraphQL page grouped it with the
+  anonymous queries. A document that fails validation keeps its operation's
+  name, as before.
 - A query a Jinja template made, in a template file inside the project, has
   the line of project code that rendered it as its `code.origin`. It had the
   template's file with a line of Jinja's compiled code.
