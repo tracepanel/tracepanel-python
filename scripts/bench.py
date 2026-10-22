@@ -103,7 +103,8 @@ def internal_state() -> dict[str, int]:
         "celery runs": len(celery._runs),  # noqa: SLF001
         "celery published": len(celery._published),  # noqa: SLF001
         "django task runs": len(django_tasks._runs),  # noqa: SLF001
-        "signal names": len(signals._names),  # noqa: SLF001
+        "signal names": len(signals._paths),  # noqa: SLF001
+        "signal senders": len(signals._senders),  # noqa: SLF001
         "writer queue": writer._queue.qsize(),  # type: ignore[attr-defined]  # noqa: SLF001
         "writer dropped": writer.dropped,  # type: ignore[attr-defined]
     }

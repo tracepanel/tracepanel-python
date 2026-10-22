@@ -23,7 +23,10 @@ from celery.contrib.testing.mocks import TaskMessage
 from celery.contrib.testing.worker import start_worker
 from celery.worker.request import Request
 
-from tests.project import jobs
+from tests.project import (
+    jobs,
+    views,  # noqa: F401 (connects views.group_saved to post_save of Group)
+)
 
 
 def by_kind(traces: list[Trace], kind: str) -> list[Trace]:
@@ -624,3 +627,22 @@ def test_the_console_shows_a_chains_steps_as_related(store: AgentStore, users: l
 
     assert store.related(str(first["id"]))["enqueued"] == [IsPartialDict(id=second["id"])]
     assert store.related(str(second["id"]))["enqueued_by"] == IsPartialDict(id=first["id"])
+
+
+@pytest.mark.django_db
+def test_django_signals_inside_a_task_once_and_celery_s_own_not_at_all(traces: list[Trace]) -> None:
+    jobs.make_group.apply()
+    (task,) = traces
+    spans = {span.id: span for span in task.spans}
+
+    # Celery's signals (task_prerun, task_postrun…) are how the task's trace is made: not spans of their own.
+    assert [
+        (span.kind, span.name, spans[span.parent_id].name if span.parent_id else None)
+        for span in task.spans
+        if span.kind in {"signal", "function"}
+    ] == [
+        ("signal", "post_save", "tests.project.jobs.make_group"),
+        ("function", "tests.project.views.group_saved", "post_save"),
+    ]
+
+    assert task.attrs["signal.unreceived"] == ["pre_save auth.Group: 1"]

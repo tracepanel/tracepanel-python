@@ -59,6 +59,26 @@
 - Settings and a template's context show their strings in double quotes,
   `"django.db.backends.postgresql"`, as one writes them, still Python a
   reader can paste.
+- Django signals say more. A send's span is named by the signal: Django's
+  own by their name (`post_save`), the project's and other libraries' by
+  their dotted path (`shop.signals.order_placed`). It carries the sender
+  (`shop.Order` for a model) and the line of the project that sent it
+  (`code.origin`, as for SQL), or the library's line when no project code
+  did. Each receiver's span has the receiver's own file and line, and the
+  exception it raised: `send_robust()` swallows it, so the trace stays ok
+  and the receiver's span shows the error. A send nobody receives makes no
+  span: the trace's `signal.unreceived` counts it, once per signal and
+  sender (`pre_save shop.Order: 3`). When a receiver of the project's
+  listens to `request_started`, what it does opens the request's trace.
+- `signals_enabled` turns the signal spans off, and `ignore_signals` leaves
+  signals out by name or dotted path (glob patterns). By default it holds
+  `pre_init` and `post_init`, which Django sends twice for every object a
+  query loads: they keep Django's own send and cost nothing.
+
+### Changed
+
+- A signal's span is named `post_save`, not `signal post_save`, and a model
+  sender reads `auth.Group`, not `django.contrib.auth.models.Group`.
 
 ### Fixed
 

@@ -49,12 +49,12 @@ def test_async_view_under_asgi(traces: list[Trace], users: list[User]) -> None:
     shown = [item for item in shape(trace) if item[0] != "sql" or item[2] != "tests.project.views.async_users"]
     assert shown[:2] == [
         ("view", "tests.project.views.async_users", "GET /async/users/"),
-        ("signal", "signal order_placed", "tests.project.views.async_users"),
+        ("signal", "tests.project.views.order_placed", "tests.project.views.async_users"),
     ]
     # Django 6.1 runs a signal's receivers concurrently under asend(): their order is not fixed.
     assert sorted(shown[2:]) == [
-        ("function", "tests.project.views.count_orders", "signal order_placed"),
-        ("function", "tests.project.views.notify_shop", "signal order_placed"),
+        ("function", "tests.project.views.count_orders", "tests.project.views.order_placed"),
+        ("function", "tests.project.views.notify_shop", "tests.project.views.order_placed"),
         ("sql", "SELECT COUNT auth_user", "tests.project.views.count_orders"),
         ("sql", "SELECT COUNT auth_user", "tests.project.views.notify_shop"),
     ]

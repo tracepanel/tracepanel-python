@@ -128,6 +128,8 @@ class Trace:
     profile: dict[str, object] | None = None
     # How many renders of each template got their context (core.values.context_wanted): not sent, a budget.
     contexts: dict[str, int] = field(default_factory=dict, repr=False, compare=False)
+    # Running counts behind an attribute (each signal and sender nobody received, tracepanel.django.signals): not sent.
+    counts: dict[tuple[object, object], object] = field(default_factory=dict, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, object]:
         """The trace as JSON-ready dicts, without copying values (it is serialized right away, never mutated)."""

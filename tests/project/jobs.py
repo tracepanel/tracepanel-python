@@ -4,7 +4,7 @@ import threading
 from typing import TYPE_CHECKING
 
 from celery import Celery
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
 
 if TYPE_CHECKING:
     from celery import Task
@@ -64,3 +64,9 @@ def overruns() -> None:
     from billiard.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
 
     raise SoftTimeLimitExceeded
+
+
+@app.task
+def make_group() -> int:
+    # post_save of Group has a receiver (tests.project.views.group_saved): a signal span inside the task's trace.
+    return Group.objects.create(name="from a task").pk
