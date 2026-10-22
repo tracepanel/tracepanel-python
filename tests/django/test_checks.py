@@ -12,7 +12,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from dirty_equals import IsList, IsPartialDict, IsStr
+from dirty_equals import IsList, IsPartialDict
 from django.db import connection
 from django.db.migrations.recorder import MigrationRecorder
 
@@ -24,6 +24,7 @@ from django.db import models
 
 class Order(models.Model):
     name = models.CharField(max_length=20)
+    quantity = models.IntegerField(max_length=3)
     note = models.TextField(default="")
 """
 MIGRATION = """
@@ -38,6 +39,7 @@ class Migration(migrations.Migration):
             fields=[
                 ("id", models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
                 ("name", models.CharField(max_length=20)),
+                ("quantity", models.IntegerField(max_length=3)),
             ],
         ),
     ]
@@ -49,16 +51,17 @@ import os
 DEBUG = os.environ["DEBUG"] == "1"
 SECRET_KEY = "tracepanel-tests"
 INSTALLED_APPS = ["shop"]
+DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
 DATABASES = {"default": json.loads(os.environ["DATABASE"])}
 SILENCED_SYSTEM_CHECKS = json.loads(os.environ.get("SILENCED", "[]"))
 """
-W042 = {
-    "id": "models.W042",
+# A field's check, the same on every Django version.
+W122 = {
+    "id": "fields.W122",
     "level": "warning",
-    "message": "Auto-created primary key used when not defining a primary key type, by default "
-    "'django.db.models.AutoField'.",
-    "hint": IsStr(regex=r"^Configure the DEFAULT_AUTO_FIELD setting .*"),
-    "object": "shop.Order",
+    "message": "'max_length' is ignored when used with IntegerField.",
+    "hint": "Remove 'max_length' from field",
+    "object": "shop.Order.quantity",
 }
 CHANGES = [{"app": "shop", "changes": ["Add field note to order"]}]
 
@@ -105,7 +108,7 @@ def test_django_says_its_checks_and_the_migrations_not_applied_or_not_made(proje
     report = _report(project)
 
     assert report == {
-        "checks": [W042],
+        "checks": [W122],
         "migrations": {"unapplied": [{"app": "shop", "names": ["0001_initial"]}], "changes": CHANGES},
     }
 
@@ -115,7 +118,7 @@ def test_a_migration_applied_is_no_longer_said(project: Path) -> None:
 
     report = _report(project)
 
-    assert report == {"checks": [W042], "migrations": {"unapplied": [], "changes": CHANGES}}
+    assert report == {"checks": [W122], "migrations": {"unapplied": [], "changes": CHANGES}}
 
 
 def test_with_debug_off_the_deployment_checks_run_too(project: Path) -> None:
@@ -123,7 +126,7 @@ def test_with_debug_off_the_deployment_checks_run_too(project: Path) -> None:
 
     assert report == {
         "checks": IsList(
-            W042,
+            W122,
             IsPartialDict({"id": "security.W001", "level": "warning", "hint": None, "object": None}),
             IsPartialDict({"id": "security.W020", "message": "ALLOWED_HOSTS must not be empty in deployment."}),
             check_order=False,
@@ -134,7 +137,7 @@ def test_with_debug_off_the_deployment_checks_run_too(project: Path) -> None:
 
 
 def test_a_silenced_check_is_left_out(project: Path) -> None:
-    report = _report(project, SILENCED='["models.W042"]')
+    report = _report(project, SILENCED='["fields.W122"]')
 
     assert report == IsPartialDict({"checks": []})
 
@@ -146,7 +149,7 @@ def test_a_database_that_doesnt_answer_leaves_the_migrations_applied_unknown(pro
 
     report = _report(project, database=database)
 
-    assert report == {"checks": [W042], "migrations": {"unapplied": None, "changes": CHANGES}}
+    assert report == {"checks": [W122], "migrations": {"unapplied": None, "changes": CHANGES}}
 
 
 def test_the_checks_thread_leaves_an_in_memory_database_alone(project: Path) -> None:
@@ -155,7 +158,7 @@ def test_the_checks_thread_leaves_an_in_memory_database_alone(project: Path) -> 
 
     report = json.loads(_run(project, "print(json.dumps(checks.in_own_thread()))", database=database))
 
-    assert report == {"checks": [W042], "migrations": {"unapplied": None, "changes": CHANGES}}
+    assert report == {"checks": [W122], "migrations": {"unapplied": None, "changes": CHANGES}}
 
 
 @pytest.mark.django_db
