@@ -90,6 +90,7 @@ TRACE: dict[str, object] = {
         "code.view": "tests.project.urls_bare.ping",
         "http.status_code": 200,
         "http.response.header.content_type": "text/html; charset=utf-8",
+        "http.response.body.size": 4,
         "service.name": IsStr,  # the name of the directory the tests run in
         "service.role": "web",
         "telemetry.sdk.language": "python",
