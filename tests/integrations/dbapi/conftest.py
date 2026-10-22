@@ -5,7 +5,8 @@ runs on the wrapped drivers, and would see a statement recorded twice. Installed
 modules run alone.
 
 The servers come from the environment: TRACEPANEL_TEST_DB=postgres (PG* variables), and
-TRACEPANEL_TEST_MYSQL / TRACEPANEL_TEST_ORACLE for the MySQL and Oracle drivers (MYSQL_* / ORACLE_* variables).
+TRACEPANEL_TEST_MYSQL / TRACEPANEL_TEST_ORACLE / TRACEPANEL_TEST_MSSQL for the MySQL, Oracle and SQL Server drivers
+(MYSQL_* / ORACLE_* / MSSQL_* variables; pyodbc also needs Microsoft's ODBC driver).
 """
 
 import os
@@ -25,6 +26,7 @@ sqlalchemy_integration.install()
 postgres = pytest.mark.skipif(os.environ.get("TRACEPANEL_TEST_DB") != "postgres", reason="needs PostgreSQL")
 mysql = pytest.mark.skipif(not os.environ.get("TRACEPANEL_TEST_MYSQL"), reason="needs MySQL")
 oracle = pytest.mark.skipif(not os.environ.get("TRACEPANEL_TEST_ORACLE"), reason="needs Oracle")
+mssql = pytest.mark.skipif(not os.environ.get("TRACEPANEL_TEST_MSSQL"), reason="needs SQL Server")
 
 
 def traced(work: Callable[[], object]) -> Trace:
@@ -70,3 +72,23 @@ def my() -> dict[str, str | int]:
 def my_url(dialect: str) -> str:
     m = my()
     return f"mysql+{dialect}://{m['user']}:{m['password']}@{m['host']}:{m['port']}/{m['database']}"
+
+
+def ms() -> dict[str, str]:
+    return {
+        "host": os.environ.get("MSSQL_HOST", "127.0.0.1"),
+        "port": os.environ.get("MSSQL_PORT", "1433"),
+        "user": os.environ.get("MSSQL_USER", "sa"),
+        "password": os.environ.get("MSSQL_PASSWORD", "Tracepanel-1"),
+        "database": os.environ.get("MSSQL_DATABASE", "tracepanel"),
+        "driver": os.environ.get("MSSQL_ODBC_DRIVER", "ODBC Driver 18 for SQL Server"),
+    }
+
+
+def ms_odbc(database: str | None = None) -> str:
+    """An ODBC connection string for pyodbc."""
+    m = ms()
+    return (
+        f"DRIVER={{{m['driver']}}};SERVER={m['host']},{m['port']};DATABASE={database or m['database']};"
+        f"UID={m['user']};PWD={m['password']};TrustServerCertificate=yes"
+    )

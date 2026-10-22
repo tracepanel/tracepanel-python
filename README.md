@@ -56,11 +56,11 @@ Tracepanel also traces Celery, Dramatiq, RQ, FastStream, SQLAlchemy,
 Strawberry, Graphene, Django REST framework, Django Ninja, Channels, django-q2
 and htmx when they are installed. SQL you run
 through a database driver without an ORM is traced too: sqlite3, psycopg,
-psycopg2, asyncpg, the MySQL drivers and oracledb. So are the HTTP calls your
-app makes with requests, httpx, aiohttp or boto3, and its Redis commands. It
-reads the log lines you write with `logging` and attaches each one to the
-request, task or command that wrote it. Your logging configuration stays as it
-is.
+psycopg2, asyncpg, the MySQL drivers, oracledb, pyodbc and pymssql. So are
+the HTTP calls your app makes with requests, httpx, aiohttp or boto3, and its
+Redis commands. It reads the log lines you write with `logging` and attaches
+each one to the request, task or command that wrote it. Your logging
+configuration stays as it is.
 
 In Django it shows each signal sent, its sender, the line that sent it and
 the receivers that ran, each with its own time, queries and errors.

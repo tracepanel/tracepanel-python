@@ -33,8 +33,10 @@ CALLERS = Callers(
         "aiomysql",
         "asyncmy",
         "oracledb",
+        "pymssql",
     ),
-    layers=("django.db.", "sqlalchemy.", "tracepanel.", "aiosqlite.", "psycopg_pool."),
+    # mssql-django's backend (`mssql`) is Django's database layer for SQL Server.
+    layers=("django.db.", "mssql.", "sqlalchemy.", "tracepanel.", "aiosqlite.", "psycopg_pool."),
     # asyncpg's pool resets a connection it gets back.
     housekeeping=frozenset({("asyncpg.connection", "reset"), ("asyncpg.connection", "_reset")}),
 )
@@ -353,9 +355,9 @@ def explain(
         msg = f"EXPLAIN isn't available for queries made through {alias.partition(':')[0]}."
         raise plans.ExplainError(msg)
 
-    def guarded(sql_text: str, values: Sequence[Scalar] | Mapping[str, Scalar] | None) -> tuple[plans.Rows, list[str]]:
+    def guarded(sql_text: str, values: plans.Values, session: plans.Session) -> tuple[plans.Rows, list[str]]:
         try:
-            return execute(sql_text, values)
+            return execute(sql_text, values, session)
         except plans.ExplainError:
             raise
         except Exception as exc:
@@ -370,8 +372,5 @@ def known(alias: str) -> bool:
         return alias in _explainers
 
 
-def cursor_rows(cursor: Any, sql_text: str, values: object) -> tuple[plans.Rows, list[str]]:  # noqa: ANN401
-    """Run a statement on a DB-API cursor: its rows and column names."""
-    cursor.execute(sql_text, values if values is not None else ())
-    rows = [tuple(row) for row in cursor.fetchall()]
-    return rows, [str(column[0]) for column in cursor.description or []]
+# Runs a statement on a DB-API cursor: its rows and column names.
+cursor_rows = plans.cursor_rows

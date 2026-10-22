@@ -8,19 +8,18 @@ database through the driver (FastAPI or Flask with raw SQL, Peewee, a script) ge
 - PostgreSQL: psycopg (3), psycopg2, asyncpg.
 - MySQL and MariaDB: PyMySQL, mysqlclient, MySQL Connector/Python, aiomysql, asyncmy.
 - Oracle: python-oracledb.
+- SQL Server: pyodbc, pymssql.
 
 An ORM runs its statements through the same drivers, and records them itself. What decides is who called the driver
 (tracepanel.core.callers): the first frame above the call that is neither the driver's own code nor this package's.
 When that is Django's database layer, SQLAlchemy or tracepanel itself (EXPLAIN), the statement is theirs and the
 driver's wrapper leaves it alone; the app, or a library on top of the driver, gets it recorded here.
-
-Not covered: drivers whose cursors are C types with no factory to subclass (pyodbc, pymssql).
 """
 
 from collections.abc import Callable
 
 from tracepanel.core import explain as plans
-from tracepanel.integrations.dbapi import mysql, oracle, postgres, sqlite
+from tracepanel.integrations.dbapi import mssql, mysql, oracle, postgres, sqlite
 from tracepanel.integrations.dbapi._core import explain, known
 
 __all__ = ["explain", "explain_or", "install", "known"]
@@ -39,5 +38,5 @@ def explain_or(fallback: Callable[..., plans.Plan]) -> Callable[..., plans.Plan]
 
 def install() -> None:
     """Wrap the drivers that are installed (sqlite3 always: it is the standard library)."""
-    for family in (sqlite, postgres, mysql, oracle):
+    for family in (sqlite, postgres, mysql, oracle, mssql):
         family.install()

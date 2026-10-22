@@ -87,6 +87,8 @@ INTEGRATIONS: tuple[Integration, ...] = (
             "MySQLdb",
             "mysql.connector",
             "oracledb",
+            "pyodbc",
+            "pymssql",
         ),
         "tracepanel.integrations.dbapi",
     ),

@@ -16,12 +16,10 @@ def explain(
         raise plans.ExplainError(msg)
     connection = connections[alias]
 
-    def execute(sql: str, values: Sequence[Scalar] | Mapping[str, Scalar] | None) -> tuple[plans.Rows, list[str]]:
+    def execute(sql: str, values: plans.Values, session: plans.Session) -> tuple[plans.Rows, list[str]]:
         try:
             with connection.cursor() as cursor:
-                cursor.execute(sql, values)
-                rows = [tuple(row) for row in cursor.fetchall()]
-                return rows, [str(column[0]) for column in cursor.description or []]
+                return plans.cursor_rows(cursor, sql, values, session)
         except DatabaseError as exc:
             msg = f"The database could not explain this query: {exc}"
             raise plans.ExplainError(msg) from exc

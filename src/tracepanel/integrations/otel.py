@@ -42,6 +42,7 @@ COVERED = frozenset(
         "pymysql",
         "mysqlclient",
         "mysql",
+        "pymssql",
         "requests",
         "urllib3",
         "httpx",

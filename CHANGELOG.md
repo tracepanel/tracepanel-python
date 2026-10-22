@@ -4,6 +4,12 @@
 
 ### Added
 
+- SQL Server: statements run through pyodbc and pymssql are traced like the
+  other drivers' (`db.system` "mssql"), with N+1 and duplicate detection on
+  `?`, `%s` and `%(name)s` placeholders. Under Django (mssql-django) and
+  SQLAlchemy they are recorded once, by the ORM, and Django's atomic blocks
+  are transactions. EXPLAIN shows SQL Server's estimated plan (SHOWPLAN_ALL),
+  a full scan of a table marked, for the drivers, Django and SQLAlchemy.
 - Channels' background work is a task, `task.system` `channels`, on the
   Tasks page and in its Live. A task is a message sent to a worker channel
   (a channel name without `!`, the kind `runworker` listens on): the send is

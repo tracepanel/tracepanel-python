@@ -32,12 +32,19 @@ docker run -d --name pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=tracepanel 
 docker run -d --name mysql -e MYSQL_ROOT_PASSWORD=mysql -e MYSQL_DATABASE=tracepanel -p 3306:3306 mysql:8.4
 docker run -d --name oracle -e ORACLE_PASSWORD=oracle -e APP_USER=tracepanel \
   -e APP_USER_PASSWORD=tracepanel -p 1521:1521 gvenzl/oracle-free:23-slim-faststart
-TRACEPANEL_TEST_DB=postgres TRACEPANEL_TEST_MYSQL=1 TRACEPANEL_TEST_ORACLE=1 uv run poe test
+docker run -d --name mssql -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD=Tracepanel-1 \
+  -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+TRACEPANEL_TEST_DB=postgres TRACEPANEL_TEST_MYSQL=1 TRACEPANEL_TEST_ORACLE=1 \
+  TRACEPANEL_TEST_MSSQL=1 uv run poe test
 ```
 
 mysqlclient builds against the MySQL client library: `brew install mysql-client
 pkg-config` on macOS, `apt install default-libmysqlclient-dev pkg-config` on
 Debian and Ubuntu.
+
+pyodbc reaches SQL Server through Microsoft's ODBC Driver 18 (`msodbcsql18`,
+from Microsoft's Homebrew tap or apt repository). SQL Server also runs Django
+through mssql-django on its `mssql` database (`tests/django/test_mssql.py`).
 
 `uv run poe build` runs `uv build` and checks that the wheel and the sdist hold
 the package only, none of the agent's files.
