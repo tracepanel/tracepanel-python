@@ -148,6 +148,45 @@ def test_a_cards_number_is_masked_under_the_card_that_holds_it() -> None:
     }
 
 
+def test_a_cards_number_is_masked_beside_its_other_fields_or_by_its_digits() -> None:
+    data = {
+        # Stripe's own shape: the card's object named after what it is for.
+        "source": {"number": "4242424242424242", "exp_month": 12, "exp_year": 2030, "cvc": "123"},
+        "payment_method": {"num": "5555 5555 5555 4444", "expiryMonth": 1},
+        # Under a number's name, a card's digits whatever is beside them.
+        "billing": {"number": "378282246310005", "account": 6011111111111117},
+        # A snowflake id, an order's number and an author: shown.
+        "order": {"id": 1234567890123456789, "number": "4242424242424241", "author": "ann"},
+    }
+
+    assert request.body("application/json", json.dumps(data).encode()) == {
+        "http.request.body": (
+            '{"source":{"number":"********","exp_month":12,"exp_year":2030,"cvc":"********"},'
+            '"payment_method":{"num":"********","expiryMonth":1},'
+            '"billing":{"number":"********","account":"********"},'
+            '"order":{"id":1234567890123456789,"number":"4242424242424241","author":"ann"}}'
+        ),
+    }
+
+
+def test_a_forms_card_number_is_masked_beside_its_other_fields() -> None:
+    form = (
+        b"source[number]=4242424242424242&source[exp_month]=12&source[cvc]=123"
+        b"&order[number]=17&number=7&author=ann&pm.number=1&pm.exp_year=2030"
+    )
+
+    assert request.body("application/x-www-form-urlencoded", form) == {
+        "http.request.body": (
+            "source[number]=********&source[exp_month]=12&source[cvc]=********"
+            "&order[number]=17&number=7&author=ann&pm.number=********&pm.exp_year=2030"
+        ),
+    }
+
+    assert request.form([("number", "1"), ("exp_year", "2030"), ("author_id", "7")], []) == {
+        "http.request.body": "number=********&exp_year=2030&author_id=7",
+    }
+
+
 def test_a_forms_card_fields_are_masked() -> None:
     form = b"card[number]=4242424242424242&card[cvc]=123&card[exp_month]=12&pan=4242"
 
