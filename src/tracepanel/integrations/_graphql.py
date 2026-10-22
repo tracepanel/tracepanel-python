@@ -4,6 +4,7 @@ The operation's span and the request are named after it (`query PostList`, `quer
 its document is kept, whitespace collapsed, and the exceptions resolvers raised are the trace's errors: the client
 got them as `errors` with a 200. A document that didn't parse is no operation: `syntax error`, with no type or name,
 so it doesn't group with the queries. One that parsed and failed validation keeps its operation's name.
+`graphql.library` names the server (`strawberry`, `graphene`), so the agent's hints name its DataLoader.
 """
 
 import re
@@ -53,6 +54,7 @@ def finish_operation(  # noqa: PLR0913 (what an operation is)
     trace: "Trace",
     span: "Span | None",
     *,
+    library: str,
     kind: str | None,
     name: str | None,
     query: str | None,
@@ -72,6 +74,7 @@ def finish_operation(  # noqa: PLR0913 (what an operation is)
         "graphql.operation.name": name,
         "graphql.document": document_text(query),
         "graphql.errors": len(failures),
+        "graphql.library": library,
     }
     if span is not None:
         span.name = label

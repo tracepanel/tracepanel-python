@@ -305,6 +305,12 @@ def test_explain_runs_the_statement_in_a_showplan_session() -> None:
             "SELECT * FROM t WHERE a = 1 AND b = 2.5 AND c LIKE '%%'",
         ),
         ("SELECT * FROM t WHERE a = %(a)s OR b = %(a)s", {"a": 7}, "SELECT * FROM t WHERE a = 7 OR b = 7"),
+        # A [name] is a name, whatever it holds.
+        (
+            "SELECT TOP 21 [order?].[id] FROM [order?] WHERE [order?].[id] = ?",
+            [3],
+            "SELECT TOP 21 [order?].[id] FROM [order?] WHERE [order?].[id] = 3",
+        ),
         ("SELECT 1", None, "SELECT 1"),
     ],
 )
@@ -320,6 +326,35 @@ def test_parameters_are_written_into_the_statement_as_literals(
     plans.explain(statement, params, vendor="mssql", alias="default", execute=execute)
 
     assert ran == [inlined]
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "SELECT TOP 21 [users].[id] FROM [users] WHERE [users].[id] = @P1",
+        "SELECT * FROM users WHERE id = @id",
+        "SELECT * FROM users WHERE id = :1",
+        "SELECT * FROM users WHERE id = :id",
+        "SELECT * FROM users WHERE id = $1",
+        "SELECT * FROM users WHERE tags = ARRAY[%s]",
+    ],
+)
+def test_a_statement_with_placeholders_needs_its_parameters(statement: str) -> None:
+    with pytest.raises(plans.ExplainError, match="Parameters of this query were not captured"):
+        plans.explain(statement, None, vendor="mssql", alias="default", execute=lambda *_: ([], []))
+
+
+def test_placeholders_are_not_read_in_names_strings_or_functions() -> None:
+    ran: list[str] = []
+
+    def execute(sql: str, values: plans.Values, session: plans.Session) -> tuple[plans.Rows, list[str]]:
+        ran.append(sql)
+        return [], []
+
+    statement = "SELECT TOP 21 [order?].[id] FROM [order?] WHERE [order?].[at] > '12:30' AND @@ROWCOUNT > 0"
+    plans.explain(statement, None, vendor="mssql", alias="default", execute=execute)
+
+    assert ran == [statement]
 
 
 def test_parameters_that_do_not_match_the_placeholders_are_refused() -> None:

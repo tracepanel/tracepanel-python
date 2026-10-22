@@ -36,6 +36,95 @@ def test_span_names_tell_counts_from_reads() -> None:
     assert span_name('UPDATE "t" SET "likes" = ("t"."likes" + %s)') == "UPDATE t"
 
 
+_USERS = "[auth_user].[id] AS [id], [auth_user].[username] AS [username] FROM [auth_user]"
+_IN_GROUP = (
+    "INNER JOIN [auth_user_groups] ON ([auth_user].[id] = [auth_user_groups].[user_id]) "
+    "INNER JOIN [auth_group] ON ([auth_user_groups].[group_id] = [auth_group].[id])"
+)
+
+
+@pytest.mark.parametrize(
+    ("statement", "name", "fingerprinted"),
+    [
+        # SQL Server as mssql-django writes it: [names], TOP for a slice from the start, OFFSET ... FETCH for the rest.
+        (
+            f"SELECT TOP 21 {_USERS} WHERE [auth_user].[id] = %s",
+            "SELECT auth_user",
+            f"SELECT TOP 21 {_USERS} WHERE [auth_user].[id] = %s",
+        ),
+        (
+            f"SELECT {_USERS} ORDER BY 1 ASC  OFFSET 20 ROWS FETCH FIRST 10 ROWS ONLY",
+            "SELECT auth_user",
+            f"SELECT {_USERS} ORDER BY 1 ASC OFFSET 20 ROWS FETCH FIRST 10 ROWS ONLY",
+        ),
+        (
+            f"SELECT {_USERS} WHERE [auth_user].[id] IN (%s, %s, %s)",
+            "SELECT auth_user",
+            f"SELECT {_USERS} WHERE [auth_user].[id] IN (...)",
+        ),
+        (
+            f"SELECT {_USERS} {_IN_GROUP} WHERE [auth_group].[name] = %s",
+            "SELECT auth_user",
+            f"SELECT {_USERS} {_IN_GROUP} WHERE [auth_group].[name] = %s",
+        ),
+        (
+            "UPDATE [auth_user] SET [username] = %s WHERE [auth_user].[id] = %s",
+            "UPDATE auth_user",
+            "UPDATE [auth_user] SET [username] = %s WHERE [auth_user].[id] = %s",
+        ),
+        # A schema stays in the name, as the agent names a statement it maps from OpenTelemetry.
+        (
+            "SELECT TOP 10 [o].[id] FROM [dbo].[orders] AS [o] WHERE [o].[customer_id] IN (@P1, @P2, @P3)",
+            "SELECT dbo.orders",
+            "SELECT TOP 10 [o].[id] FROM [dbo].[orders] AS [o] WHERE [o].[customer_id] IN (...)",
+        ),
+        (
+            "SELECT [id] FROM [dbo].[orders] WHERE [customer_id] IN (@id0, @id1)",
+            "SELECT dbo.orders",
+            "SELECT [id] FROM [dbo].[orders] WHERE [customer_id] IN (...)",
+        ),
+        (
+            "SELECT id FROM dbo.orders WHERE customer_id IN (?, ?)",
+            "SELECT dbo.orders",
+            "SELECT id FROM dbo.orders WHERE customer_id IN (...)",
+        ),
+        # Oracle, PostgreSQL, MySQL and SQLite quoting and placeholders.
+        (
+            'SELECT "ID" FROM "SHOP"."ORDERS" WHERE "ID" IN (:1, :2)',
+            "SELECT SHOP.ORDERS",
+            'SELECT "ID" FROM "SHOP"."ORDERS" WHERE "ID" IN (...)',
+        ),
+        (
+            "SELECT id FROM orders WHERE id IN (:id_1, :id_2)",
+            "SELECT orders",
+            "SELECT id FROM orders WHERE id IN (...)",
+        ),
+        (
+            'SELECT "shop_order"."id" FROM "shop_order" WHERE "shop_order"."id" IN ($1, $2)',
+            "SELECT shop_order",
+            'SELECT "shop_order"."id" FROM "shop_order" WHERE "shop_order"."id" IN (...)',
+        ),
+        (
+            'SELECT "t"."id" FROM "public"."t" WHERE "t"."id" IN (%s, %s)',
+            "SELECT public.t",
+            'SELECT "t"."id" FROM "public"."t" WHERE "t"."id" IN (...)',
+        ),
+        (
+            "SELECT `shop_order`.`id` FROM `shop_order` WHERE `shop_order`.`id` IN (%s, %s) LIMIT 21",
+            "SELECT shop_order",
+            "SELECT `shop_order`.`id` FROM `shop_order` WHERE `shop_order`.`id` IN (...) LIMIT 21",
+        ),
+        (
+            "SELECT id FROM t WHERE id IN (?1, ?2)",
+            "SELECT t",
+            "SELECT id FROM t WHERE id IN (...)",
+        ),
+    ],
+)
+def test_names_and_fingerprints_in_each_dialect(statement: str, name: str, fingerprinted: str) -> None:
+    assert (span_name(statement), fingerprint(statement)) == (name, fingerprinted)
+
+
 def test_ids_are_ulids_sorted_by_time() -> None:
     ids = [new_id() for _ in range(100)]
     assert all(re.fullmatch(r"[0-9A-HJKMNP-TV-Z]{26}", i) for i in ids)

@@ -23,6 +23,7 @@ SECRET = [
     "secret",
     "secrets",
     "client_secret",
+    "client_secrets",
     "clientSecret",
     "clientsecret",
     "webhook_secret",
@@ -35,6 +36,16 @@ SECRET = [
     "accesstoken",
     "refresh_token",
     "id_token",
+    # Tokens in the plural: credentials after a credential's word, and alone (unless counted(), see below).
+    "tokens",
+    "refresh_tokens",
+    "access_tokens",
+    "accessTokens",
+    "auth_tokens",
+    "api_tokens",
+    "bearer_tokens",
+    "id_tokens",
+    "session_tokens",
     "csrftoken",
     "csrf_token",
     "X-CSRFToken",
@@ -49,6 +60,7 @@ SECRET = [
     "apikey",
     "x-api-key",
     "api_keys",
+    "apiKeys",
     # Auth: the header, its schemes, OAuth's.
     "auth",
     "x-auth",
@@ -126,10 +138,11 @@ PLAIN = [
     "WWW-Authenticate",
     # Not a token: a model's tokens are counted.
     "tokenizer",
-    "tokens",
     "max_tokens",
     "prompt_tokens",
     "total_tokens",
+    "completion_tokens",
+    "input_tokens",
     # Not a password, a secret or a card.
     "bypass",
     "compass",
@@ -186,6 +199,11 @@ def test_a_name_without_one_is_shown(name: str) -> None:
         "SIGNING_SIGNATURE",
         "TEST_CARD_NUMBER",
         "STRIPE_TEST_CVC",
+        "API_KEYS",
+        "CLIENT_SECRETS",
+        "SERVICE_PASSWORDS",
+        "API_TOKENS",
+        "TOKENS",
     ],
 )
 def test_a_setting_with_a_secrets_word_is_masked(name: str) -> None:
@@ -209,6 +227,8 @@ def test_a_setting_with_a_secrets_word_is_masked(name: str) -> None:
         # About a secret.
         "PASSWORD_RESET_TIMEOUT",
         "TOKEN_EXPIRY",
+        # A model's tokens.
+        "MAX_TOKENS",
     ],
 )
 def test_a_setting_without_one_is_shown(name: str) -> None:
@@ -314,3 +334,28 @@ def test_a_cards_number_by_where_it_is_and_what_it_is() -> None:
 )
 def test_a_cards_other_fields_are_its_code_and_expiry(keys: list[object], found: bool) -> None:  # noqa: FBT001
     assert masking.card_fields(keys) is found
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "found"),
+    [
+        # A model's counts.
+        ("tokens", 1024, True),
+        ("tokens", [12, 7], True),
+        ("tokens", {"prompt": 12, "completion": 7}, True),
+        ("tokens", 1.5, True),
+        ("tokens", [], True),
+        # Credentials, or not only counts.
+        ("tokens", ["abc", "def"], False),
+        ("tokens", "abc", False),
+        ("tokens", [1, "abc"], False),
+        ("tokens", {"github": "abc"}, False),
+        ("tokens", True, False),
+        # Not `tokens` alone: the name decides.
+        ("refresh_tokens", [1], False),
+        ("token", 1, False),
+        (7, 1, False),
+    ],
+)
+def test_tokens_alone_holding_counts_are_a_models(name: object, value: object, found: bool) -> None:  # noqa: FBT001
+    assert masking.counted(name, value) is found

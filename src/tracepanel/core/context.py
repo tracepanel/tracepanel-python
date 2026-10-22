@@ -19,6 +19,22 @@ _trace: ContextVar[Trace | None] = ContextVar("tracepanel_trace", default=None)
 _span: ContextVar[Span | None] = ContextVar("tracepanel_span", default=None)
 
 
+@dataclass(slots=True, eq=False)
+class _Outer:
+    """What a trace's end makes current again: the span current where it began, and the outer trace's own _Outer.
+
+    A trace can begin or end inside a span of another trace's: a task run, begun in one Django Tasks signal's
+    receiver and ended in another's, each send a `signal` span. The span that was current where the trace began can
+    end before the trace does: its parent is current again once the trace ends (`_over`).
+    """
+
+    span: Span | None
+    previous: "_Outer | None"
+
+
+_outer: ContextVar[_Outer | None] = ContextVar("tracepanel_outer", default=None)
+
+
 def now_us() -> int:
     return time.time_ns() // 1000
 
@@ -62,7 +78,7 @@ class TraceBlock:
         self.trace: Trace | None = None
         self._started = 0
         self._recording: profiling.Recording | None = None
-        self._outer: tuple[Trace | None, Span | None, profiling.Recording | None] | None = None
+        self._saved: _Saved | None = None
 
     def __enter__(self) -> Trace:
         start = now_us()
@@ -70,23 +86,24 @@ class TraceBlock:
         trace = Trace(id=new_id(), kind=self.kind, name=self.name, start=start, attrs=dict(self.attrs or {}))
         root = Span(id=new_id(), parent_id=None, kind=self.root_kind or self.kind, name=self.name, start=start)
         trace.spans.append(root)
-        outer = _trace.get(), _span.get(), profiling.current.get()
+        saved = _Saved(_trace.get(), _Outer(_span.get(), _outer.get()), profiling.current.get())
         try:
             _trace.set(trace)
+            _outer.set(saved.outer)
             _span.set(root)
             self._recording = profiling.SAMPLER.start() if profiling.wanted(asked=self.profile) else None
             profiling.current.set(self._recording)
         except BaseException:
-            _put_back(outer)
+            saved.put_back()
             if self._recording is not None:
                 profiling.SAMPLER.stop(self._recording)
             raise
-        self.trace, self._outer = trace, outer
+        self.trace, self._saved = trace, saved
         return trace
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
-        outer, trace = self._outer, self.trace
-        if outer is None or trace is None:
+        saved, trace = self._saved, self.trace
+        if saved is None or trace is None:
             return
         root = trace.spans[0]
         if exc_type is not None:
@@ -96,15 +113,24 @@ class TraceBlock:
         if recording is not None:
             trace.profile = profiling.SAMPLER.stop(recording)
         root.name = trace.name
-        _put_back(outer)
-        self._outer = None
+        saved.put_back()
+        self._saved = None
 
 
-def _put_back(outer: tuple[Trace | None, Span | None, profiling.Recording | None]) -> None:
-    """Make the trace, span and profile recording current that were before a trace began."""
-    _trace.set(outer[0])
-    _span.set(outer[1])
-    profiling.current.set(outer[2])
+@dataclass(slots=True, eq=False)
+class _Saved:
+    """What was current before a trace began: its end, or a beginning cut short, makes it current again."""
+
+    trace: Trace | None
+    outer: _Outer
+    recording: profiling.Recording | None
+
+    def put_back(self) -> None:
+        _trace.set(self.trace)
+        _outer.set(self.outer.previous)
+        # The span current where the trace began, or its parent when it ended meanwhile (_over).
+        _span.set(self.outer.span)
+        profiling.current.set(self.recording)
 
 
 def start_trace(
@@ -157,7 +183,20 @@ def start_span(kind: str, name: str, attrs: Attrs | None = None) -> Generator[Sp
         raise
     finally:
         span.duration = (time.perf_counter_ns() - started) // 1000
-        _span.reset(token)
+        if _trace.get() is trace:
+            _span.reset(token)
+        else:
+            # A trace began or ended inside the block: the current span is that trace's, or its outer's, not ours.
+            _over(span, parent)
+
+
+def _over(span: Span, parent: Span | None) -> None:
+    """`span` ended while a trace begun inside it is still running: that trace's end makes `parent` current."""
+    outer = _outer.get()
+    while outer is not None:
+        if outer.span is span:
+            outer.span = parent
+        outer = outer.previous
 
 
 def set_current_span(span: Span | None) -> None:
@@ -181,6 +220,8 @@ class OpenSpan:
         self.span.duration = (time.perf_counter_ns() - self.started) // 1000
         if _span.get() is self.span:
             _span.set(self.parent)
+        else:
+            _over(self.span, self.parent)
 
 
 def open_span(kind: str, name: str, attrs: Attrs | None = None) -> OpenSpan | None:

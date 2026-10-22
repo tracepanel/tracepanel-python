@@ -170,6 +170,15 @@ def test_an_authors_name_is_shown_in_a_context() -> None:
     }
 
 
+def test_tokens_in_a_context_are_masked_unless_they_are_a_models_counts() -> None:
+    attrs = values.context_attrs({"tokens": {"prompt": 12}, "user": {"tokens": ["abc"], "max_tokens": 1024}})
+
+    assert attrs == {
+        "template.context.names": ["tokens", "user"],
+        "template.context.values": ['{"prompt": 12}', '{"max_tokens": 1024, "tokens": ********}'],
+    }
+
+
 def test_a_context_keeps_its_names_in_order_with_the_locals_rules() -> None:
     attrs = values.context_attrs(
         {

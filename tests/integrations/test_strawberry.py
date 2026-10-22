@@ -38,6 +38,7 @@ def test_operation_names_the_request(
             "graphql.operation.name": "Team",
             "graphql.document": "query Team { users { username groups } }",
             "graphql.errors": 0,
+            "graphql.library": "strawberry",
         }
     )
     assert [(span.kind, span.name) for span in trace.spans if span.kind == "graphql"] == [

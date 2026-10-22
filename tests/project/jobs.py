@@ -1,10 +1,13 @@
 """A Celery app for the tests: an in-memory broker, so a real worker can run in a thread."""
 
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from celery import Celery
+from celery.backends.cache import CacheBackend
 from django.contrib.auth.models import Group, User
+
+from tracepanel._compat import override
 
 if TYPE_CHECKING:
     from celery import Task
@@ -70,6 +73,30 @@ def overruns() -> None:
 def make_group() -> int:
     # post_save of Group has a receiver (tests.project.views.group_saved): a signal span inside the task's trace.
     return Group.objects.create(name="from a task").pk
+
+
+class StartedFails(CacheBackend):
+    """A result backend that fails storing STARTED as a soft time limit can make it: outside the task's body.
+
+    Celery imports its result backend when a pool process first uses it, inside the run's time limits: a soft limit
+    hitting that import raises SoftTimeLimitExceeded there.
+    """
+
+    @override
+    def store_result(self, task_id: str, result: object, state: str, *args: Any, **kwargs: Any) -> object:  # noqa: ANN401
+        if state == "STARTED":
+            from billiard.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
+
+            raise SoftTimeLimitExceeded
+        return super().store_result(task_id, result, state, *args, **kwargs)
+
+
+@app.task(track_started=True, soft_time_limit=3)
+def cut_short() -> None:
+    pass
+
+
+cut_short.backend = StartedFails(app, backend="memory")
 
 
 @app.task

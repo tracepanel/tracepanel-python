@@ -22,7 +22,8 @@ limit kills the pool process before the run can say anything: the worker's main 
 failed with TimeLimitExceeded, and says it finished. So it does for a run whose pool process was terminated (a cold
 shutdown, `revoke(terminate=True)`: REVOKED with Terminated) or died (FAILURE with WorkerLostError). The pool process,
 sent SIGTERM before it is killed, writes nothing of the run it leaves unfinished: one trace per run, the main
-process's.
+process's. A run Celery ends without a state (an error outside the task's body, as when a soft time limit hits Celery
+importing its result backend) failed: FAILURE, with that error.
 
 A soft time limit can also pass inside tracepanel's own task_prerun or task_postrun: Celery logs the exception and
 goes on. What tracepanel began is undone or ended, so no trace stays current for the next run in the process, and the
@@ -31,6 +32,7 @@ never reached tracepanel is recorded from its end, with the state Celery gives.
 """
 
 import functools
+import sys
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -435,9 +437,13 @@ def failure(
             return
         with _lock:
             _runs[task_id or ""] = run
+    _failed(run, exception, sender)
+
+
+def _failed(run: TaskRun, exception: BaseException, task: object) -> None:
     errors.capture(exception, handled=False)
     run.trace.status = "error"
-    _limited(run, exception, sender)
+    _limited(run, exception, task)
 
 
 def _limited(run: TaskRun, exception: BaseException, task: object) -> None:
@@ -472,18 +478,16 @@ def retry(request: object = None, reason: object = None, **kwargs: object) -> No
 
 
 def postrun(task_id: str | None = None, retval: object = None, state: str | None = None, **kwargs: object) -> None:
-    with _lock:
-        run = _runs.pop(task_id or "", None)
+    run = _ending(task_id, kwargs.get("task"))
     if run is None:
-        # A run prerun never reached: recorded from its end, with the state Celery gives.
-        run = _late(task_id, kwargs.get("task"))
-        if run is None:
-            return
+        return
     if state is None and _terminating():
         # Its pool process is being terminated: SIGTERM unwinds the run (SystemExit), which never finished. The
         # worker's main process writes its trace and says it finished (_ended): a second one from here would read ok.
         run.context.__exit__(None, None, None)
         return
+    if state is None:
+        state = _unfinished(run, kwargs.get("task"))
     trace = run.trace
     completed = False
     try:
@@ -506,6 +510,27 @@ def postrun(task_id: str | None = None, retval: object = None, state: str | None
         if not completed:
             complete(trace)
         raise
+
+
+def _ending(task_id: str | None, task: object) -> TaskRun | None:
+    """The run postrun ends: the one prerun began, or one recorded from its end when prerun never reached it."""
+    with _lock:
+        run = _runs.pop(task_id or "", None)
+    return run if run is not None else _late(task_id, task)
+
+
+def _unfinished(run: TaskRun, task: object) -> str:
+    """The state of a run Celery gives none: it failed, with the exception unwinding it, as Celery itself reports it.
+
+    Celery says no state when the run ends outside the task's body (storing STARTED, or a soft time limit hitting
+    there), or when an eager task's exception propagates to its caller. Celery's task_failure comes after
+    task_postrun then, or not at all: the exception is read here, while it unwinds the run.
+    """
+    exception = sys.exc_info()[1]
+    if exception is not None:
+        _failed(run, exception, task)
+    run.trace.status = "error"
+    return "FAILURE"
 
 
 def _terminating() -> bool:

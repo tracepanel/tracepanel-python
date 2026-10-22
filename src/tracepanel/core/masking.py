@@ -4,8 +4,11 @@ A name is read word by word, split at `_ - . [ ]` and the like and where camelCa
 cardNumber, APIKey and X-CSRFToken are (x, api, key), (card, number), (card, number), (api, key), (x, csrf, token).
 A secret's word must be a whole word, so `author`, `authority` and `is_authenticated` aren't `auth`, and
 `tokenizer` isn't `token`. Words written together are read too: csrftoken and accesstoken end in a token, sessionid
-starts with a session, PHPSESSID ends in one. `tokens` is no secret's word: it counts a model's tokens
-(max_tokens, prompt_tokens, total_tokens).
+starts with a session, PHPSESSID ends in one.
+
+`tokens` counts a model's tokens (max_tokens, prompt_tokens, total_tokens) as often as it holds credentials: it is a
+secret after a credential's word (refresh_tokens, access_tokens, api_tokens) and alone, unless what it holds is
+counts (counted()): {"tokens": 1024} or {"tokens": [12, 7]} is a model's, {"tokens": ["abc"]} a credential's.
 
 Two kinds of names hold no secret though a secret's word is in them: one that says something about the secret
 (password_length, token_type, session_timeout, cookie_name, token_expires_at) and a yes or no (is_private,
@@ -20,7 +23,7 @@ masked whatever is beside them: see card_digits().
 import functools
 import itertools
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 MASK = "********"
 
@@ -59,7 +62,11 @@ _WORDS = _CARD_WORDS | {
     "signatures",
     "private",
 }
-_PAIRS = _CARD_PAIRS | {("api", "key"), ("api", "keys")}
+# A credential's word before `tokens`: refresh_tokens, accessTokens, api_tokens.
+_TOKENS_OF = ("refresh", "access", "auth", "api", "bearer", "id", "session", "oauth", "csrf", "xsrf", "jwt", "client")
+_PAIRS = _CARD_PAIRS | {("api", "key"), ("api", "keys")} | {(word, "tokens") for word in _TOKENS_OF}
+# A name that holds a model's counts as often as credentials: a secret's unless counted() says otherwise.
+_COUNTED = ("tokens",)
 # Settings: Django's idea of a hidden setting. A session, a cookie, CSRF and auth say nothing secret as settings
 # (SESSION_COOKIE_AGE, AUTH_USER_MODEL, CSRF_COOKIE_NAME), but any key does (SECRET_KEY, AWS_ACCESS_KEY_ID), and a
 # credential (GOOGLE_CREDENTIALS).
@@ -128,6 +135,8 @@ def words(name: str) -> tuple[str, ...]:
 
 def _secret(name: str, secret_words: frozenset[str], starts: tuple[str, ...]) -> bool:
     found = words(name)
+    if found == _COUNTED:
+        return True
     if len(found) > 1 and (found[0] in _YES_OR_NO or found[-1] in _ABOUT):
         return False
     return any(word in secret_words or word.endswith(_ENDS) or word.startswith(starts) for word in found) or any(
@@ -149,6 +158,19 @@ def sensitive(name: str) -> bool:
 def setting_sensitive(name: str) -> bool:
     """Whether a setting (or a key inside one) holds a secret by its name: SECRET_KEY, DB_PASS, AWS_TOKEN."""
     return _secret(name, _SETTING_WORDS, _SETTING_STARTS)
+
+
+def counted(name: object, value: object) -> bool:
+    """Whether `tokens` holds a model's counts, not credentials: a number, or numbers only (a list, a dict's values).
+
+    A name alone (a header, a query's parameter, a cookie) holds a string: it stays masked.
+    """
+    if not isinstance(name, str) or words(name) != _COUNTED:
+        return False
+    if isinstance(value, Mapping):
+        value = list(value.values())
+    items = value if isinstance(value, (list, tuple)) else [value]
+    return all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in items)
 
 
 # A card's number in its object: under `number` (num, no).
