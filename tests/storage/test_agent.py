@@ -21,7 +21,7 @@ from dirty_equals import IsList, IsPartialDict, IsPositiveInt, IsStr
 from django.contrib.auth.models import User
 from django.test import Client
 
-from tests.agentstore import AGENT_SCHEMAS, AgentStore
+from tests.agentstore import AGENT_SCHEMAS, AgentStore, newer
 from tracepanel.console import proxy
 from tracepanel.core import appinfo, conf, runtime
 from tracepanel.core.context import record_span, start_trace
@@ -303,11 +303,16 @@ def test_the_agent_serves_what_the_hello_said_of_the_app(store: AgentStore, djan
 
     answer = store.get("app", service="shop")
 
-    assert answer == {
-        "service": "shop",
-        "agent": IsStr(),
-        "connected": True,
-        "received": IsPositiveInt,
-        "settings": IsPartialDict({"DEBUG": "True", "SECRET_KEY": "********"}),
-        "versions": appinfo.describe(config)["versions"],
-    }
+    # No checks here (the tests add them where they test them): an agent that serves them has nulls.
+    assert answer == newer(
+        {
+            "service": "shop",
+            "agent": IsStr(),
+            "connected": True,
+            "received": IsPositiveInt,
+            "settings": IsPartialDict({"DEBUG": "True", "SECRET_KEY": "********"}),
+            "versions": appinfo.describe(config)["versions"],
+        },
+        answer,
+        {"checks": None, "migrations": None},
+    )
