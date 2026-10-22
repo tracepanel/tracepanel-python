@@ -15,7 +15,7 @@ from email.policy import HTTP
 from urllib.parse import parse_qsl, quote, urlencode
 
 from tracepanel.core import conf
-from tracepanel.core.frames import MASK, SENSITIVE, safe_repr
+from tracepanel.core.frames import MASK, SENSITIVE, card_number, safe_repr
 from tracepanel.core.model import Attrs
 
 # A response's JSON larger than this isn't parsed to mask its secrets, so isn't kept: its size is.
@@ -23,7 +23,7 @@ MAX_PARSED = 4 << 20
 # What a response's body shows elsewhere (a page, its assets): kept by its size only.
 _SHOWN_ELSEWHERE = frozenset({"text/html", "text/css", "text/javascript", "application/javascript"})
 # A form as people read it: encoded, but its spaces, masks and file notes as they are.
-_READABLE = "*<>,. /:@"
+_READABLE = "*<>,. /:@[]"
 # A response's cookies are a session's keys, whatever their name.
 _ALWAYS_MASKED = frozenset({"set-cookie"})
 # Session keys that say who is signed in, kept as they are; the hash that proves it stays masked, as a secret.
@@ -34,6 +34,8 @@ _SESSION_MASKED = frozenset({"_id"})
 
 
 _UNKEYED = re.compile(r"[^a-z0-9_]")
+# A name's separators as the rule reads them: x-api-key, card[number] and card.cvc as x_api_key, card_number_, card_cvc.
+_SEPARATORS = re.compile(r"[^a-zA-Z0-9]")
 
 
 def key(name: str) -> str:
@@ -42,8 +44,8 @@ def key(name: str) -> str:
 
 
 def sensitive(name: str) -> bool:
-    """Whether a secret goes under the name: x-api-key, csrftoken, sessionid, password."""
-    return SENSITIVE.search(name.replace("-", "_")) is not None
+    """Whether a secret goes under the name: x-api-key, csrftoken, sessionid, password, card[number], cvc."""
+    return SENSITIVE.search(_SEPARATORS.sub("_", name)) is not None
 
 
 def request_headers(headers: Iterable[tuple[str, str]]) -> Attrs:
@@ -214,12 +216,15 @@ def _json(data: bytes) -> str | None:
     return json.dumps(_masked(value), ensure_ascii=False, separators=(",", ":"))
 
 
-def _masked(value: object) -> object:
-    """A JSON value with the values under sensitive keys masked, at any depth."""
+def _masked(value: object, parent: str | None = None) -> object:
+    """A JSON value with the values under sensitive keys masked, at any depth; a card's number under its card."""
     if isinstance(value, dict):
-        return {key: MASK if sensitive(str(key)) else _masked(item) for key, item in value.items()}
+        return {
+            key: MASK if sensitive(str(key)) or card_number(parent, key) else _masked(item, str(key))
+            for key, item in value.items()
+        }
     if isinstance(value, list):
-        return [_masked(item) for item in value]
+        return [_masked(item, parent) for item in value]
     return value
 
 

@@ -96,11 +96,64 @@ def test_a_json_body_is_compacted_with_secrets_masked_at_any_depth() -> None:
 
     assert request.body("application/json; charset=utf-8", data.encode()) == {
         "http.request.body": (
-            '{"email":"ann@example.com","password":"********","card":{"number":"4242","cvc_token":"********"}}'
+            '{"email":"ann@example.com","password":"********","card":{"number":"********","cvc_token":"********"}}'
         ),
     }
 
     assert request.body("application/json", b"{not json") == {"http.request.body": "{not json"}
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "cvc",
+        "cvv",
+        "cvv2",
+        "cvn",
+        "card_cvc",
+        "card_number",
+        "cardNumber",
+        "cardnumber",
+        "card_no",
+        "card-number",
+        "card[number]",
+        "card[cvc]",
+        "pan",
+        "card_pan",
+    ],
+)
+def test_a_payment_cards_number_and_code_are_secrets(name: str) -> None:
+    assert request.sensitive(name)
+
+
+@pytest.mark.parametrize("name", ["company", "span", "expand", "pane", "card_brand", "card_last4", "discount"])
+def test_names_that_only_contain_a_cards_letters_are_not(name: str) -> None:
+    assert not request.sensitive(name)
+
+
+def test_a_cards_number_is_masked_under_the_card_that_holds_it() -> None:
+    data = {
+        "card": {"number": "4242424242424242", "exp_month": 12, "brand": "visa"},
+        "payment": {"creditCard": {"number": "4000056655665556", "cvv": "123"}},
+        "cards": [{"number": "1"}],
+        "order": {"number": 7},
+    }
+
+    assert request.body("application/json", json.dumps(data).encode()) == {
+        "http.request.body": (
+            '{"card":{"number":"********","exp_month":12,"brand":"visa"},'
+            '"payment":{"creditCard":{"number":"********","cvv":"********"}},'
+            '"cards":[{"number":"1"}],"order":{"number":7}}'
+        ),
+    }
+
+
+def test_a_forms_card_fields_are_masked() -> None:
+    form = b"card[number]=4242424242424242&card[cvc]=123&card[exp_month]=12&pan=4242"
+
+    assert request.body("application/x-www-form-urlencoded", form) == {
+        "http.request.body": "card[number]=********&card[cvc]=********&card[exp_month]=12&pan=********",
+    }
 
 
 def test_a_form_body_masks_its_secret_fields() -> None:

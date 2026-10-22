@@ -12,6 +12,12 @@
   compressed bodies are recorded by their size only. Both bodies are kept up
   to `max_body_kb` (64 KiB, was 16 KiB for a request's), marked as cut past
   it, and `capture_body = false` turns them off.
+- A payment card's number and security code are masked wherever secrets
+  are: names like `card_number`, `cardNumber`, `card[number]`, `card_no`,
+  `pan`, `cvc`, `cvv` and `cvn` in bodies, form fields, headers, settings, a
+  template's context and an error's local variables. In a body, a setting or
+  a template's context, `number` under a card (`card`, `creditCard`,
+  `payment_card`) is masked too.
 - Task workflows link up across Celery, RQ, Dramatiq and Django Tasks. A
   run records the task it follows (`task.parent_id`), the first task of its
   workflow (`task.root_id`) and its group (`task.group_id`): Celery's chain,
