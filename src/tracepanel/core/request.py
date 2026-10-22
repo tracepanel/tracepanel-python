@@ -16,7 +16,7 @@ from urllib.parse import parse_qsl, quote, urlencode
 
 from tracepanel.core import conf, masking
 from tracepanel.core.frames import safe_repr
-from tracepanel.core.masking import MASK, card_fields, card_number
+from tracepanel.core.masking import MASK, card_fields, card_number, counted
 from tracepanel.core.model import Attrs
 
 # A response's JSON larger than this isn't parsed to mask its secrets, so isn't kept: its size is.
@@ -238,7 +238,8 @@ def _masked(value: object, parent: str | None = None) -> object:
         beside_card = card_fields(value)
         return {
             key: MASK
-            if sensitive(str(key)) or card_number(key, item, parent, beside_card=beside_card)
+            if (sensitive(str(key)) and not counted(key, item))
+            or card_number(key, item, parent, beside_card=beside_card)
             else _masked(item, str(key))
             for key, item in value.items()
         }

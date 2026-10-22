@@ -13,7 +13,7 @@ from tracepanel._compat import override
 from tracepanel.core import conf, errors
 from tracepanel.core.context import current_span, current_trace
 from tracepanel.core.frames import relative, safe_repr
-from tracepanel.core.masking import MASK, sensitive
+from tracepanel.core.masking import MASK, counted, sensitive
 from tracepanel.core.model import Attrs, Log
 from tracepanel.core.patching import patch, patched
 
@@ -73,7 +73,7 @@ def record_attrs(record: logging.LogRecord) -> Attrs:
         if name in STANDARD or name.startswith("_"):
             continue
         key = f"extra.{_KEY.sub('_', name.lower()).strip('_') or 'value'}"
-        if sensitive(name):
+        if sensitive(name) and not counted(name, value):
             attrs[key] = MASK
         elif isinstance(value, (str, int, float, bool)) or value is None:
             attrs[key] = value
