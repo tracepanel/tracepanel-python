@@ -140,18 +140,36 @@ def template_place(skip: int = 2) -> tuple[str | None, int] | None:
     return None
 
 
+def _waiting(below: object) -> tuple[FrameType | None, object]:
+    """Where the code that started a greenlet (`below`, or the current one when None) waits for it, and its greenlet.
+
+    A greenlet's stack ends where the greenlet began. SQLAlchemy's asyncio runs the statement's sync work in one
+    (greenlet_spawn): the coroutine that awaits it, the app's handler and its callers, wait in the greenlet above.
+    Looked at only once a stack has no project frame: never when greenlet isn't imported.
+    """
+    greenlet = sys.modules.get("greenlet")
+    if greenlet is None:
+        return None, None
+    parent = (below if below is not None else greenlet.getcurrent()).parent  # pyrefly: ignore[missing-attribute]
+    return (None, None) if parent is None else (parent.gr_frame, parent)
+
+
 def origin(skip: int = 2) -> str | None:
     """`path:line in function` of the innermost project frame calling into the current code."""
     frame: FrameType | None = sys._getframe(skip)  # noqa: SLF001
-    while frame is not None:
-        if _code_in_app(frame):
-            code = frame.f_code
-            return f"{relative(code.co_filename)}:{frame.f_lineno} in {code.co_name}"
-        if awaited_from.get() is not None and frame.f_globals.get("__name__") == "asgiref.sync":
-            # The thread sync_to_async() runs in: what lies further up belongs to whoever waits, not to this call.
+    below: object = None
+    while True:
+        while frame is not None:
+            if _code_in_app(frame):
+                code = frame.f_code
+                return f"{relative(code.co_filename)}:{frame.f_lineno} in {code.co_name}"
+            if awaited_from.get() is not None and frame.f_globals.get("__name__") == "asgiref.sync":
+                # The thread sync_to_async() runs in: what lies further up belongs to whoever waits, not to this call.
+                return awaited_from.get()
+            frame = frame.f_back
+        frame, below = _waiting(below)
+        if frame is None:
             return awaited_from.get()
-        frame = frame.f_back
-    return awaited_from.get()
 
 
 # What makes a query rather than asks for one: the ORM and drivers, the helpers around their calls, Tracepanel itself.
@@ -192,12 +210,16 @@ def library_caller(skip: int = 2) -> str | None:
     The first frame past the ORM and the driver: django/contrib/admin/views/main.py:… in get_results.
     """
     frame: FrameType | None = sys._getframe(skip)  # noqa: SLF001
-    while frame is not None:
-        if not _in_query_layer(str(frame.f_globals.get("__name__", ""))):
-            code = frame.f_code
-            return f"{library_path(code.co_filename)}:{frame.f_lineno} in {code.co_qualname}"
-        frame = frame.f_back
-    return None
+    below: object = None
+    while True:
+        while frame is not None:
+            if not _in_query_layer(str(frame.f_globals.get("__name__", ""))):
+                code = frame.f_code
+                return f"{library_path(code.co_filename)}:{frame.f_lineno} in {code.co_qualname}"
+            frame = frame.f_back
+        frame, below = _waiting(below)
+        if frame is None:
+            return None
 
 
 def safe_repr(name: str, value: object) -> str:

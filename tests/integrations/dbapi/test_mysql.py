@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from dirty_equals import IsPartialDict, IsStr
 
-from tests.integrations.dbapi.conftest import my, my_url, mysql, sql_spans, statements, traced
+from tests.integrations.dbapi.conftest import explained_meanwhile, my, my_url, mysql, sql_spans, statements, traced
 from tracepanel.integrations import dbapi
 
 pytestmark = mysql
@@ -191,3 +191,32 @@ def test_async_sqlalchemy_on_aiomysql_is_recorded_by_sqlalchemy_only() -> None:
         await engine.dispose()
 
     assert sql_spans(traced(lambda: asyncio.run(work()))) == [("sqlalchemy", "SELECT")]
+
+
+@pytest.mark.parametrize("dialect", ["aiomysql", "asyncmy"])
+def test_async_sqlalchemy_statement_can_be_explained_and_names_its_caller(dialect: str) -> None:
+    pytest.importorskip(dialect)
+    pytest.importorskip("greenlet")  # SQLAlchemy's asyncio
+    from sqlalchemy import text  # noqa: PLC0415
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: PLC0415
+
+    plan: dict[str, object] = {}
+
+    async def work() -> None:
+        engine = create_async_engine(my_url(dialect))
+        async with AsyncSession(engine) as session:
+            await session.execute(text("SELECT :n + 1"), {"n": 1})
+            plan.update(await explained_meanwhile())
+            await session.execute(text("SELECT 1"))
+        await engine.dispose()
+
+    trace = traced(lambda: asyncio.run(work()))
+
+    assert plan == {
+        "vendor": "mysql",
+        "alias": statements(trace)[0].attrs["db.alias"],
+        "analyzed": False,
+        "lines": [{"depth": 0, "text": IsStr(regex=r"id=1  select_type=SIMPLE.*No tables used"), "warning": None}],
+    }
+
+    assert [(span.status, span.attrs["code.origin"]) for span in statements(trace)] == [("ok", ORIGIN), ("ok", ORIGIN)]

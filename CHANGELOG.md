@@ -283,6 +283,19 @@
   context. It was masked only under a `card`. A `number`, `num` or `account`
   holding a card's digits (13 to 19, passing the Luhn check) is masked wherever
   it is.
+- A query made through SQLAlchemy's asyncio (an `AsyncSession` in a FastAPI
+  endpoint, a FastStream handler or any coroutine) has the line of project
+  code that awaited it as its `code.origin`, and so has its transaction. The
+  console said no caller was recorded: SQLAlchemy runs the query in a
+  greenlet of its own, whose stack holds none of the app's frames. The
+  stack of the greenlet that awaits it is read too.
+- EXPLAIN works for a query made through SQLAlchemy's asyncio, on aiosqlite,
+  asyncpg, psycopg, aiomysql and asyncmy. It failed with "greenlet_spawn has
+  not been called". The plan is read on a connection made for it, in an
+  event loop of its own, with the engine's URL, connect arguments and
+  connect events. The app's pool and event loop are left alone: asyncpg's
+  connections belong to the loop they were made on. An in-memory SQLite
+  database is explained on its one connection.
 
 ## 0.4.1 (2026-10-21)
 

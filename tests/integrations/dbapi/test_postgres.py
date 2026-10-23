@@ -3,7 +3,7 @@ import asyncio
 import pytest
 from dirty_equals import IsPartialDict, IsStr
 
-from tests.integrations.dbapi.conftest import pg, pg_url, postgres, sql_spans, statements, traced
+from tests.integrations.dbapi.conftest import explained_meanwhile, pg, pg_url, postgres, sql_spans, statements, traced
 from tracepanel.core.model import Trace
 from tracepanel.integrations import dbapi
 
@@ -254,6 +254,39 @@ def test_async_sqlalchemy_on_a_postgres_driver_is_recorded_by_sqlalchemy_only(di
         await engine.dispose()
 
     assert sql_spans(traced(lambda: asyncio.run(work()))) == [("sqlalchemy", "SELECT")]
+
+
+@pytest.mark.parametrize("dialect", ["asyncpg", "psycopg"])
+def test_async_sqlalchemy_statement_can_be_explained_and_names_its_caller(dialect: str) -> None:
+    pytest.importorskip(dialect)
+    pytest.importorskip("greenlet")  # SQLAlchemy's asyncio
+    from sqlalchemy import text  # noqa: PLC0415
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: PLC0415
+
+    plan: dict[str, object] = {}
+
+    async def work() -> None:
+        engine = create_async_engine(pg_url(dialect))
+        async with AsyncSession(engine) as session:
+            await session.execute(text("SELECT oid FROM pg_type WHERE typname = :name"), {"name": "int4"})
+            # asyncpg's connections belong to the loop they were made on: EXPLAIN makes its own.
+            plan.update(await explained_meanwhile())
+            await session.execute(text("SELECT 1"))
+        await engine.dispose()
+
+    trace = traced(lambda: asyncio.run(work()))
+
+    assert plan == {
+        "vendor": "postgresql",
+        "alias": statements(trace)[0].attrs["db.alias"],
+        "analyzed": False,
+        "lines": [
+            {"depth": 0, "text": IsStr(regex=r"Index Scan using \w+ on pg_type .*"), "warning": None},
+            {"depth": 1, "text": "Index Cond: (typname = 'int4'::name)", "warning": None},
+        ],
+    }
+
+    assert [(span.status, span.attrs["code.origin"]) for span in statements(trace)] == [("ok", ORIGIN), ("ok", ORIGIN)]
 
 
 # ---------- the rows a statement returned ----------

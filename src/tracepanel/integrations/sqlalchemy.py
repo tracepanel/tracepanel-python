@@ -6,9 +6,10 @@ runs on it is covered (sqlakit, SQLModel, Flask-SQLAlchemy). Turned on when SQLA
 
 Several databases: each engine gets its own `db.alias`: its `logging_name` when set (`create_engine(url,
 logging_name="replica")`), else the database's name, made unique with the host (or a number) when another engine
-already has it. EXPLAIN runs on the engine of that alias.
+already has it. EXPLAIN runs on the engine of that alias (an async engine's on a connection of its own).
 """
 
+import asyncio
 import time
 import weakref
 from collections.abc import Mapping, Sequence
@@ -76,18 +77,58 @@ def explain(
         raise plans.ExplainError(msg)
 
     def execute(sql_text: str, values: plans.Values, session: plans.Session) -> tuple[plans.Rows, list[str]]:
-        connection = engine.raw_connection()
         try:
-            return plans.cursor_rows(connection.cursor(), sql_text, values, session)
+            if engine.dialect.is_async:
+                return _explain_async(engine, sql_text, values, session)
+            connection = engine.raw_connection()
+            try:
+                return plans.cursor_rows(connection.cursor(), sql_text, values, session)
+            finally:
+                connection.close()
         except Exception as exc:
             msg = f"The database could not explain this query: {exc}"
             raise plans.ExplainError(msg) from exc
-        finally:
-            connection.close()
 
     return plans.explain(
         statement, params, vendor=str(engine.dialect.name), alias=alias, execute=execute, analyze=analyze
     )
+
+
+def _explain_async(
+    engine: Any,  # noqa: ANN401 (sqlalchemy.engine.Engine: an AsyncEngine's sync_engine)
+    sql_text: str,
+    values: plans.Values,
+    session: plans.Session,
+) -> tuple[plans.Rows, list[str]]:
+    """EXPLAIN on an async driver (aiosqlite, asyncpg, asyncmy...): on a connection of its own, in a loop of its own.
+
+    The driver's calls only run inside greenlet_spawn, on an event loop. The console's thread has none: the statement
+    runs in a new one (asyncio.run), on a connection made for it by a copy of the engine's pool (the same URL, connect
+    arguments and connect events) and closed after. Never the app's pool or loop: asyncpg's connections belong to the
+    loop they were made on, and the app's loop may be busy or gone. An in-memory SQLite database is the connection
+    its pool keeps (StaticPool): that one is borrowed, as aiosqlite's connections belong to no loop.
+    """
+    from sqlalchemy.pool import StaticPool  # noqa: PLC0415 (optional dependency)
+    from sqlalchemy.util import greenlet_spawn  # noqa: PLC0415
+
+    shared = engine.dialect.name == "sqlite" and isinstance(engine.pool, StaticPool)
+    pool = engine.pool if shared else engine.pool.recreate()
+
+    def run() -> tuple[plans.Rows, list[str]]:
+        try:
+            connection = pool.connect()
+            try:
+                return plans.cursor_rows(connection.cursor(), sql_text, values, session)
+            finally:
+                connection.close()
+        finally:
+            if not shared:
+                pool.dispose()
+
+    async def explain() -> tuple[plans.Rows, list[str]]:
+        return await greenlet_spawn(run)
+
+    return asyncio.run(explain())
 
 
 def _before(conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool) -> None:  # noqa: ANN401, ARG001, FBT001, PLR0913, PLR0917 (SQLAlchemy's signature)
