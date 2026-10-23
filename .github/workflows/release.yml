@@ -114,7 +114,7 @@ jobs:
           UV_NO_SYNC: "1"
         run: |
           uv run --no-sync poe lint
-          TRACEPANEL_AGENT_BIN=$PWD/.venv/bin/tracepanel-agent uv run --no-sync pytest
+          TRACEPANEL_AGENT_BIN=$PWD/.venv/bin/tracepanel-agent uv run --no-sync poe test
 
       - name: Build
         run: uv build && uv run --no-project python scripts/check_dist.py

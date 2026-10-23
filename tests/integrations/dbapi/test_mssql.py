@@ -10,6 +10,9 @@ from tracepanel.integrations import dbapi
 from tracepanel.integrations import sqlalchemy as sqlalchemy_integration
 from tracepanel.integrations.dbapi import mssql as mssql_driver
 
+# One pytest-xdist worker runs them all: the module's fixture creates the database and its table, which the plans name.
+pytestmark = pytest.mark.xdist_group("mssql")
+
 ORIGIN = IsStr(regex=r"tests/integrations/dbapi/test_mssql\.py:\d+ in work")
 
 
