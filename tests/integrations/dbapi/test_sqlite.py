@@ -6,7 +6,7 @@ from types import FrameType
 import pytest
 from dirty_equals import IsPartialDict, IsStr
 
-from tests.integrations.dbapi.conftest import sql_spans, statements, traced
+from tests.integrations.dbapi.conftest import explained_meanwhile, sql_spans, statements, traced
 from tracepanel.core.explain import ExplainError
 from tracepanel.core.model import Trace
 from tracepanel.integrations import dbapi
@@ -239,6 +239,39 @@ def test_async_sqlalchemy_names_the_library_code_that_awaited_it(monkeypatch: py
 
     assert span.attrs["code.origin"] is None
     assert span.attrs["code.caller"] == IsStr(regex=r".*test_sqlite\.py:\d+ in .*work")
+
+
+@pytest.mark.parametrize("database", ["file", "memory"])
+def test_async_sqlalchemy_statement_can_be_explained(tmp_path: Path, database: str) -> None:
+    pytest.importorskip("aiosqlite")
+    pytest.importorskip("greenlet")  # SQLAlchemy's asyncio
+    from sqlalchemy import text  # noqa: PLC0415
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: PLC0415
+
+    url = f"sqlite+aiosqlite:///{tmp_path / 'shop.sqlite3'}" if database == "file" else "sqlite+aiosqlite://"
+    plan: dict[str, object] = {}
+
+    async def work() -> None:
+        engine = create_async_engine(url)
+        async with AsyncSession(engine) as session:
+            await session.execute(text("CREATE TABLE item (id INTEGER PRIMARY KEY, name TEXT)"))
+            await session.execute(text("SELECT name FROM item WHERE id = :id"), {"id": 1})
+            plan.update(await explained_meanwhile())
+            # The app's own connection goes on.
+            await session.execute(text("SELECT name FROM item"))
+            await session.commit()
+        await engine.dispose()
+
+    trace = traced(lambda: asyncio.run(work()))
+
+    assert plan == {
+        "vendor": "sqlite",
+        "alias": statements(trace)[1].attrs["db.alias"],
+        "analyzed": False,
+        "lines": [{"depth": 0, "text": "SEARCH item USING INTEGER PRIMARY KEY (rowid=?)", "warning": None}],
+    }
+
+    assert [span.status for span in statements(trace)] == ["ok", "ok", "ok"]
 
 
 # ---------- the rows a statement returned ----------

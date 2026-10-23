@@ -310,7 +310,9 @@ def test_a_transaction_opened_in_a_dependency_holds_the_endpoint_calls(traces: l
     assert [issue.kind for issue in issues(trace)] == ["in-transaction"]
 
 
-def test_an_async_session_in_an_async_endpoint_names_the_endpoint(traces: list[Trace], tmp_path: Path) -> None:
+def test_an_async_session_in_an_async_endpoint_names_the_endpoint_and_explains(
+    traces: list[Trace], store: AgentStore, tmp_path: Path
+) -> None:
     pytest.importorskip("aiosqlite")
     pytest.importorskip("greenlet")  # SQLAlchemy's asyncio
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: PLC0415
@@ -321,25 +323,33 @@ def test_an_async_session_in_an_async_endpoint_names_the_endpoint(traces: list[T
     @app.get("/tables")
     async def tables() -> int:
         async with AsyncSession(async_engine) as db:
-            return int(
-                (
-                    await db.execute(text("SELECT count(*) FROM sqlite_master WHERE type = :type"), {"type": "table"})
-                ).scalar_one()
-            )
+            result = await db.execute(text("SELECT name FROM sqlite_master WHERE type = :type"), {"type": "table"})
+            return len(result.all())
 
     previous = conf._framework  # noqa: SLF001
     tracepanel.fastapi.install(app)
     with TestClient(app) as test_client:
         test_client.get("/tables")
+        store.write(traces)
+        (trace,) = traces
+        _, _, transaction, statement = trace.spans
+        plan = test_client.get("/__tracepanel__/api/explain", params={"trace": trace.id, "span": statement.id})
     conf.use_source(previous)
-    (trace,) = traces
 
-    assert [
-        (span.kind, span.attrs.get("code.origin")) for span in trace.spans if span.kind in {"sql", "transaction"}
-    ] == [
-        ("transaction", IsStr(regex=r"tests/fastapi/test_fastapi\.py:\d+ in tables")),
-        ("sql", IsStr(regex=r"tests/fastapi/test_fastapi\.py:\d+ in tables")),
+    in_tables = IsStr(regex=r"tests/fastapi/test_fastapi\.py:\d+ in tables")
+    assert [(span.kind, span.attrs["code.origin"]) for span in (transaction, statement)] == [
+        ("transaction", in_tables),
+        ("sql", in_tables),
     ]
+
+    assert plan.json() == {
+        "vendor": "sqlite",
+        "alias": "shop.sqlite3",
+        "analyzed": False,
+        "lines": [
+            {"depth": 0, "text": "SCAN sqlite_master", "warning": "Full scan of sqlite_master: no index is used"}
+        ],
+    }
 
 
 def test_a_body_the_endpoint_read_is_recorded_masked(client: TestClient, traces: list[Trace]) -> None:

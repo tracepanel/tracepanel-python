@@ -9,12 +9,14 @@ TRACEPANEL_TEST_MYSQL / TRACEPANEL_TEST_ORACLE / TRACEPANEL_TEST_MSSQL for the M
 (MYSQL_* / ORACLE_* / MSSQL_* variables; pyodbc also needs Microsoft's ODBC driver).
 """
 
+import asyncio
 import os
 from collections.abc import Callable
 
 import pytest
 
-from tracepanel.core.context import start_trace
+from tracepanel.core.context import current_trace, start_trace
+from tracepanel.core.explain import params_from
 from tracepanel.core.model import Span, Trace
 from tracepanel.integrations import dbapi
 from tracepanel.integrations import sqlalchemy as sqlalchemy_integration
@@ -37,6 +39,20 @@ def traced(work: Callable[[], object]) -> Trace:
 
 def statements(trace: Trace) -> list[Span]:
     return [span for span in trace.spans if span.kind == "sql"]
+
+
+async def explained_meanwhile() -> dict[str, object]:
+    """EXPLAIN of the current trace's last statement, asked as the console asks, from a thread with no event loop.
+
+    The app's loop runs on meanwhile, its connections open.
+    """
+    trace = current_trace()
+    assert trace is not None
+    attrs = statements(trace)[-1].attrs
+    plan = await asyncio.to_thread(
+        sqlalchemy_integration.explain, str(attrs["db.statement"]), params_from(attrs), str(attrs["db.alias"])
+    )
+    return plan.to_dict()
 
 
 def sql_spans(trace: Trace) -> list[tuple[str, str]]:
