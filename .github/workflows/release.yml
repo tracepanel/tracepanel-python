@@ -19,7 +19,7 @@ jobs:
   # Nothing is published before CI has passed on the tagged commit: the run that main's push made, not a new one.
   ci:
     name: CI passed on this commit
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 60
     permissions:
       actions: read
@@ -43,7 +43,7 @@ jobs:
   release:
     name: Publish to PyPI
     needs: ci
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     environment:
       name: pypi
@@ -55,7 +55,7 @@ jobs:
       run:
         working-directory: tracepanel-python
     steps:
-      - uses: actions/checkout@v7
+      - uses: useblacksmith/checkout@v1
         with:
           path: tracepanel-python
 
@@ -99,7 +99,7 @@ jobs:
           echo "version=$(uv run --no-sync python -c "from importlib.metadata import version; print(version('tracepanel-agent'))")" >> "$GITHUB_OUTPUT"
 
       # The schemas of that agent's release.
-      - uses: actions/checkout@v7
+      - uses: useblacksmith/checkout@v1
         with:
           repository: tracepanel/tracepanel
           ref: ${{ steps.agent.outputs.version }}
@@ -126,12 +126,12 @@ jobs:
   github:
     name: GitHub release
     needs: release
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: useblacksmith/checkout@v1
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |

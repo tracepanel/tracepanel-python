@@ -18,10 +18,10 @@ permissions:
 
 jobs:
   benchmarks:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       # At the workspace's root: CodSpeed reads the commit from the repository there.
-      - uses: actions/checkout@v7
+      - uses: useblacksmith/checkout@v1
       # tracepanel requires tracepanel-agent, built from the tracepanel repository next to this one (../tracepanel,
       # outside the workspace, where actions/checkout can't put it).
       - run: git clone --depth 1 https://github.com/tracepanel/tracepanel.git ../tracepanel

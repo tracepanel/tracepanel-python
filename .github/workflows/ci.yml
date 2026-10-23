@@ -30,7 +30,7 @@ env:
 jobs:
   plan:
     name: plan
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
       # paths-filter lists a pull request's files through the API.
@@ -101,11 +101,11 @@ jobs:
 
   agent:
     name: tracepanel-agent wheel
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: useblacksmith/checkout@v1
         with:
           repository: tracepanel/tracepanel
           path: tracepanel
@@ -130,15 +130,15 @@ jobs:
 
   lint:
     needs: agent
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     defaults:
       run:
         working-directory: tracepanel-python
     steps:
-      - uses: actions/checkout@v7
+      - uses: useblacksmith/checkout@v1
         with:
           path: tracepanel-python
-      - uses: actions/checkout@v7
+      - uses: useblacksmith/checkout@v1
         with:
           repository: tracepanel/tracepanel
           ref: ${{ needs.agent.outputs.sha }}
@@ -162,7 +162,7 @@ jobs:
   test:
     needs: [agent, plan]
     name: test (python ${{ matrix.python }}, django ${{ matrix.django }}, ${{ matrix.db }})
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
@@ -183,10 +183,10 @@ jobs:
       run:
         working-directory: tracepanel-python
     steps:
-      - uses: actions/checkout@v7
+      - uses: useblacksmith/checkout@v1
         with:
           path: tracepanel-python
-      - uses: actions/checkout@v7
+      - uses: useblacksmith/checkout@v1
         with:
           repository: tracepanel/tracepanel
           ref: ${{ needs.agent.outputs.sha }}
@@ -218,7 +218,7 @@ jobs:
     # Graphene needs graphql-core < 3.3, Strawberry 3.3: the same groups with graphene in strawberry's place.
     needs: [agent, plan]
     name: graphene (python ${{ matrix.python }}, django ${{ matrix.django }})
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
@@ -227,10 +227,10 @@ jobs:
       run:
         working-directory: tracepanel-python
     steps:
-      - uses: actions/checkout@v7
+      - uses: useblacksmith/checkout@v1
         with:
           path: tracepanel-python
-      - uses: actions/checkout@v7
+      - uses: useblacksmith/checkout@v1
         with:
           repository: tracepanel/tracepanel
           ref: ${{ needs.agent.outputs.sha }}
@@ -261,7 +261,7 @@ jobs:
     name: drivers (PostgreSQL, MySQL, SQL Server, ${{ github.event_name != 'pull_request' && 'Oracle, ' || '' }}MongoDB)
     needs: [agent, plan]
     if: needs.plan.outputs.drivers == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     services:
       postgres:
         image: postgres:17
@@ -320,10 +320,10 @@ jobs:
       run:
         working-directory: tracepanel-python
     steps:
-      - uses: actions/checkout@v7
+      - uses: useblacksmith/checkout@v1
         with:
           path: tracepanel-python
-      - uses: actions/checkout@v7
+      - uses: useblacksmith/checkout@v1
         with:
           repository: tracepanel/tracepanel
           ref: ${{ needs.agent.outputs.sha }}
