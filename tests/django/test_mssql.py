@@ -38,7 +38,8 @@ def test_queries_are_recorded_once_and_repeats_found() -> None:
             "db.alias": "mssql",
             "db.vendor": "microsoft",
             "db.system": "mssql",
-            "db.namespace": IsStr(regex=r".*tracepanel"),
+            # The test database: test_tracepanel, with a pytest-xdist worker's suffix (test_tracepanel_gw0).
+            "db.namespace": connections["mssql"].settings_dict["NAME"],
             "db.statement": IsStr(regex=r"^SELECT .* FROM \[auth_group\] WHERE \[auth_group\]\.\[name\] = %s"),
             "db.params": ["group 0"],
             "db.response.returned_rows": 1,

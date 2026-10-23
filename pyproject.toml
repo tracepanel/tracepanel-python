@@ -90,6 +90,8 @@ dev = [
     "django>=5.2",
     "pytest",
     "pytest-django",
+    # The suite runs in parallel, a process per core (poe test).
+    "pytest-xdist>=3.8",
     "jsonschema",
     "types-jsonschema",
     "ruff>=0.16",
@@ -258,8 +260,10 @@ help = "Overhead per request, memory over many requests (scripts/bench.py)"
 cmd = "python scripts/bench.py"
 
 [tool.poe.tasks.test]
-help = "Run the test suite"
-cmd = "pytest"
+# loadgroup: the tests marked xdist_group("name") run in one worker, in order (they share a server's table). Arguments
+# after it go to pytest: `poe test -n 0` runs in this process alone.
+help = "Run the test suite, a worker per core (pytest-xdist; -n 0 runs it in one process)"
+cmd = "pytest -n auto --dist loadgroup"
 
 [tool.poe.tasks.fmt]
 help = "Fix lint issues and format code"

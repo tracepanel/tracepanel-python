@@ -16,6 +16,11 @@ uv run poe lint                           # ruff, pyrefly (strict), import-linte
 uv run poe fmt                            # ruff check --fix and ruff format
 ```
 
+`poe test` runs the tests in parallel, a worker per core (pytest-xdist).
+`uv run poe test -n 0` runs them in one process, and plain `uv run pytest`
+does too. Tests that share a server's table carry `xdist_group`, and one
+worker runs each group.
+
 Graphene needs graphql-core older than Strawberry's, so the `graphene` group
 has an environment of its own: `uv run poe test-matrix graphene` runs the
 tests there, as CI's graphene job does.

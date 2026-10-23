@@ -1,12 +1,18 @@
 name: CI
 
+# A pull request runs a few of the jobs: the oldest and the newest Python and Django, PostgreSQL, Graphene, and the
+# drivers when what they test changed. main, each night and a manual run run them all (plan, below).
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
 
+# A pull request's new push cancels its run before. main's runs all finish: a release waits for its commit's.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -22,6 +28,77 @@ env:
     --group faststream
 
 jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # paths-filter lists a pull request's files through the API.
+      pull-requests: read
+    outputs:
+      test: ${{ steps.matrix.outputs.test }}
+      graphene: ${{ steps.matrix.outputs.graphene }}
+      drivers: ${{ github.event_name != 'pull_request' || steps.changes.outputs.drivers == 'true' }}
+    steps:
+      # The drivers' job on a pull request: when the SQL and driver code, its tests or the environment changed.
+      - if: github.event_name == 'pull_request'
+        id: changes
+        uses: dorny/paths-filter@v4.0.3
+        with:
+          filters: |
+            drivers:
+              - "src/tracepanel/integrations/dbapi/**"
+              - "src/tracepanel/integrations/sqlalchemy.py"
+              - "src/tracepanel/integrations/mongodb.py"
+              - "src/tracepanel/core/sql.py"
+              - "src/tracepanel/core/explain.py"
+              - "src/tracepanel/django/sql.py"
+              - "src/tracepanel/django/explain.py"
+              - "src/tracepanel/django/transactions.py"
+              - "tests/integrations/dbapi/**"
+              - "tests/integrations/test_mongodb.py"
+              - "tests/integrations/test_sqlalchemy.py"
+              - "tests/django/test_mssql.py"
+              - "tests/django/test_explain.py"
+              - "tests/django/test_transactions.py"
+              - "tests/project/settings.py"
+              - "pyproject.toml"
+              - "uv.lock"
+              - ".github/workflows/ci.yml"
+      # Every supported Python x Django pair on SQLite, and two on PostgreSQL (scripts/test_matrix.py has the same
+      # pairs). A pull request: the oldest pair, the newest, and PostgreSQL on the newest Django.
+      - id: matrix
+        env:
+          PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
+        run: |
+          if [ "$PULL_REQUEST" = true ]; then
+            test='[
+              {"python": "3.11", "django": "5.2", "db": "sqlite"},
+              {"python": "3.15", "django": "6.1", "db": "sqlite"},
+              {"python": "3.14", "django": "6.1", "db": "postgres"}
+            ]'
+            graphene='[{"python": "3.14", "django": "6.1"}]'
+          else
+            test='[
+              {"python": "3.11", "django": "5.2", "db": "sqlite"},
+              {"python": "3.12", "django": "5.2", "db": "sqlite"},
+              {"python": "3.12", "django": "6.0", "db": "sqlite"},
+              {"python": "3.12", "django": "6.1", "db": "sqlite"},
+              {"python": "3.13", "django": "5.2", "db": "sqlite"},
+              {"python": "3.13", "django": "6.0", "db": "sqlite"},
+              {"python": "3.13", "django": "6.1", "db": "sqlite"},
+              {"python": "3.14", "django": "5.2", "db": "sqlite"},
+              {"python": "3.14", "django": "6.0", "db": "sqlite"},
+              {"python": "3.14", "django": "6.1", "db": "sqlite"},
+              {"python": "3.15", "django": "6.1", "db": "sqlite"},
+              {"python": "3.11", "django": "5.2", "db": "postgres"},
+              {"python": "3.14", "django": "6.1", "db": "postgres"}
+            ]'
+            graphene='[{"python": "3.11", "django": "5.2"}, {"python": "3.14", "django": "6.1"}]'
+          fi
+          echo "test=$(jq -c . <<< "$test")" >> "$GITHUB_OUTPUT"
+          echo "graphene=$(jq -c . <<< "$graphene")" >> "$GITHUB_OUTPUT"
+
   agent:
     name: tracepanel-agent wheel
     runs-on: ubuntu-latest
@@ -83,25 +160,13 @@ jobs:
           UV_NO_SYNC: "1"
 
   test:
-    needs: agent
+    needs: [agent, plan]
     name: test (python ${{ matrix.python }}, django ${{ matrix.django }}, ${{ matrix.db }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12", "3.13", "3.14", "3.15"]
-        django: ["5.2", "6.0", "6.1"]
-        db: [sqlite]
-        exclude:
-          # Django 6.x requires Python 3.12+.
-          - { python: "3.11", django: "6.0" }
-          - { python: "3.11", django: "6.1" }
-          # Python 3.15 came after Django 5.2 and 6.0: only 6.1 runs on it.
-          - { python: "3.15", django: "5.2" }
-          - { python: "3.15", django: "6.0" }
-        include:
-          - { python: "3.11", django: "5.2", db: postgres }
-          - { python: "3.14", django: "6.1", db: postgres }
+        include: ${{ fromJSON(needs.plan.outputs.test) }}
     services:
       postgres:
         image: ${{ matrix.db == 'postgres' && 'postgres:17' || '' }}
@@ -130,31 +195,34 @@ jobs:
         with:
           name: tracepanel-agent
           path: agent
+      # A uv cache per Python and set of groups (cache-suffix): with one per Python, the first job to save it would
+      # leave the others' packages out.
       - uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: ${{ matrix.python }}
           working-directory: tracepanel-python
+          cache-suffix: ${{ matrix.db }}
       - run: uv sync --locked $GROUPS ${{ matrix.db == 'postgres' && '--group postgres' || '' }} --no-install-package tracepanel-agent
       - run: uv pip install --no-deps ../agent/*.whl
       - name: Pin Django ${{ matrix.django }}
         run: uv pip install "django~=${{ matrix.django }}.0"
       - run: uv run --no-sync python -c "import django, sys; print('django', django.get_version(), 'python', sys.version)"
-      # The agent installed from the wheel is the one the tests compare with (tests/storage/test_agent.py).
-      - run: uv run --no-sync pytest
+      # The agent installed from the wheel is the one the tests compare with (tests/storage/test_agent.py). poe runs
+      # pytest with a worker per core, through `uv run`: UV_NO_SYNC keeps the environment synced above.
+      - run: uv run --no-sync poe test
         env:
           TRACEPANEL_AGENT_BIN: ${{ github.workspace }}/tracepanel-python/.venv/bin/tracepanel-agent
+          UV_NO_SYNC: "1"
 
   graphene:
     # Graphene needs graphql-core < 3.3, Strawberry 3.3: the same groups with graphene in strawberry's place.
-    needs: agent
+    needs: [agent, plan]
     name: graphene (python ${{ matrix.python }}, django ${{ matrix.django }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { python: "3.11", django: "5.2" }
-          - { python: "3.14", django: "6.1" }
+        include: ${{ fromJSON(needs.plan.outputs.graphene) }}
     defaults:
       run:
         working-directory: tracepanel-python
@@ -175,20 +243,24 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           working-directory: tracepanel-python
+          cache-suffix: graphene
       - run: uv sync --locked ${GROUPS/--group strawberry/--group graphene} --no-install-package tracepanel-agent
       - run: uv pip install --no-deps ../agent/*.whl
       - name: Pin Django ${{ matrix.django }}
         run: uv pip install "django~=${{ matrix.django }}.0"
-      - run: uv run --no-sync pytest
+      - run: uv run --no-sync poe test
         env:
           TRACEPANEL_AGENT_BIN: ${{ github.workspace }}/tracepanel-python/.venv/bin/tracepanel-agent
+          UV_NO_SYNC: "1"
 
   drivers:
     # The database drivers on their servers, with Django and SQLAlchemy on the same drivers: each statement once; and
     # MongoDB's commands.
-    # Oracle's image takes over a minute to start: it runs on main only, not on each pull request.
-    name: drivers (PostgreSQL, MySQL, SQL Server, ${{ github.event_name == 'push' && 'Oracle, ' || '' }}MongoDB)
-    needs: agent
+    # Oracle's image takes over a minute to start: it runs on main only, not on each pull request. A pull request runs
+    # the job only when what it tests changed (plan).
+    name: drivers (PostgreSQL, MySQL, SQL Server, ${{ github.event_name != 'pull_request' && 'Oracle, ' || '' }}MongoDB)
+    needs: [agent, plan]
+    if: needs.plan.outputs.drivers == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -218,7 +290,7 @@ jobs:
           --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P Tracepanel-1 -Q 'SELECT 1'"
           --health-interval 5s --health-timeout 5s --health-retries 30
       oracle:
-        image: ${{ github.event_name == 'push' && 'gvenzl/oracle-free:23-slim-faststart' || '' }}
+        image: ${{ github.event_name != 'pull_request' && 'gvenzl/oracle-free:23-slim-faststart' || '' }}
         env:
           ORACLE_PASSWORD: oracle
           APP_USER: tracepanel
@@ -241,7 +313,7 @@ jobs:
       PGHOST: localhost
       TRACEPANEL_TEST_MYSQL: "1"
       TRACEPANEL_TEST_MSSQL: "1"
-      TRACEPANEL_TEST_ORACLE: ${{ github.event_name == 'push' && '1' || '' }}
+      TRACEPANEL_TEST_ORACLE: ${{ github.event_name != 'pull_request' && '1' || '' }}
       ORACLE_DSN: localhost:1521/FREEPDB1
       TRACEPANEL_TEST_MONGO: mongodb://localhost:27017
     defaults:
@@ -264,6 +336,7 @@ jobs:
         with:
           python-version: "3.14"
           working-directory: tracepanel-python
+          cache-suffix: drivers
       - run: sudo apt-get install -y --no-install-recommends pkg-config default-libmysqlclient-dev
       # pyodbc (and mssql-django on it) talks to SQL Server through Microsoft's ODBC driver: installed when missing.
       - name: Microsoft ODBC Driver 18 for SQL Server
@@ -278,6 +351,7 @@ jobs:
           fi
       - run: uv sync --locked $GROUPS --group postgres --group drivers --no-install-package tracepanel-agent
       - run: uv pip install --no-deps ../agent/*.whl
-      - run: uv run --no-sync pytest
+      - run: uv run --no-sync poe test
         env:
           TRACEPANEL_AGENT_BIN: ${{ github.workspace }}/tracepanel-python/.venv/bin/tracepanel-agent
+          UV_NO_SYNC: "1"

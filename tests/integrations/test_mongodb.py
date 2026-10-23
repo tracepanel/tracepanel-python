@@ -17,6 +17,9 @@ from tracepanel.integrations import mongodb as integration  # noqa: E402
 from tracepanel.storage.transport import complete  # noqa: E402
 
 URL = os.environ.get("TRACEPANEL_TEST_MONGO", "")
+# A database of each pytest-xdist worker's own: the tests drop and fill their collections.
+WORKER = os.environ.get("PYTEST_XDIST_WORKER")
+DATABASE = f"tracepanel_test_{WORKER}" if WORKER else "tracepanel_test"
 pytestmark = pytest.mark.skipif(not URL, reason="needs MongoDB")
 
 integration.install()
@@ -25,7 +28,7 @@ integration.install()
 @pytest.fixture
 def users() -> Iterator[pymongo.collection.Collection]:
     client = pymongo.MongoClient(URL)
-    collection = client["tracepanel_test"]["users"]
+    collection = client[DATABASE]["users"]
     collection.drop()
     collection.insert_many([{"_id": n, "name": f"user {n}"} for n in range(5)])
     yield collection
@@ -51,7 +54,7 @@ def test_a_command_is_a_span_with_its_shape_and_its_values_apart(users: pymongo.
     assert span.attrs == {
         "db.system": "mongodb",
         "db.operation": "find",
-        "db.namespace": "tracepanel_test",
+        "db.namespace": DATABASE,
         "db.collection.name": "users",
         "db.statement": '{"find": "users", "filter": {"name": "?"}, "limit": 1, "singleBatch": true}',
         "db.params": ["user 3"],
@@ -104,8 +107,8 @@ def test_the_async_client() -> None:
     async def work() -> None:
         client = pymongo.AsyncMongoClient(URL)
         try:
-            await client["tracepanel_test"]["things"].insert_one({"n": 1})
-            await client["tracepanel_test"]["things"].drop()
+            await client[DATABASE]["things"].insert_one({"n": 1})
+            await client[DATABASE]["things"].drop()
         finally:
             await client.close()
 

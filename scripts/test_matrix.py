@@ -51,7 +51,10 @@ def run(pair: tuple[str, str], pytest_args: list[str], *, graphql: str = "strawb
     steps = [
         ["uv", "sync", "--quiet", "--locked", "--python", python, *groups],
         ["uv", "pip", "install", "--quiet", "--python", env["UV_PROJECT_ENVIRONMENT"], f"django~={django}.0"],
-        ["uv", "run", "--no-sync", "--python", python, "pytest", "-q", "-p", "no:cacheprovider", *pytest_args],
+        [
+            *("uv", "run", "--no-sync", "--python", python, "pytest", "-q", "-p", "no:cacheprovider"),
+            *("-n", "auto", "--dist", "loadgroup", *pytest_args),
+        ],
     ]
     print(f"== python {python}, django {django}{f', {graphql}' if suffix else ''}", flush=True)
     # Stops at the first failing step.
