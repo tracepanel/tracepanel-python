@@ -202,6 +202,45 @@ def test_sqlalchemy_on_aiosqlite_is_recorded_by_sqlalchemy_only() -> None:
     assert sql_spans(trace) == [("sqlalchemy", "SELECT")]
 
 
+AWAITED = IsStr(regex=r"tests/integrations/dbapi/test_sqlite\.py:\d+ in work")
+
+
+def async_session_trace() -> Trace:
+    pytest.importorskip("aiosqlite")
+    pytest.importorskip("greenlet")  # SQLAlchemy's asyncio
+    from sqlalchemy import text  # noqa: PLC0415
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: PLC0415
+
+    async def work() -> None:
+        engine = create_async_engine("sqlite+aiosqlite://")
+        async with AsyncSession(engine) as session:
+            await session.execute(text("SELECT 1"))
+            await session.commit()
+        await engine.dispose()
+
+    return traced(lambda: asyncio.run(work()))
+
+
+def test_async_sqlalchemy_names_the_code_that_awaited_the_statement() -> None:
+    trace = async_session_trace()
+
+    # SQLAlchemy runs the statement in a greenlet of its own: the code that awaits it waits in the greenlet above.
+    assert [(span.kind, span.attrs["code.origin"]) for span in trace.spans[1:]] == [
+        ("transaction", AWAITED),
+        ("sql", AWAITED),
+    ]
+
+
+def test_async_sqlalchemy_names_the_library_code_that_awaited_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    # As in Django's admin: no frame of the project's own on the stack.
+    monkeypatch.setattr("tracepanel.core.frames._code_in_app", outside_the_project)
+
+    (span,) = statements(async_session_trace())
+
+    assert span.attrs["code.origin"] is None
+    assert span.attrs["code.caller"] == IsStr(regex=r".*test_sqlite\.py:\d+ in .*work")
+
+
 # ---------- the rows a statement returned ----------
 
 

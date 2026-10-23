@@ -2,6 +2,7 @@ import threading
 import time
 from collections.abc import Generator, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Annotated, Any
 
 import pytest
@@ -307,6 +308,38 @@ def test_a_transaction_opened_in_a_dependency_holds_the_endpoint_calls(traces: l
     ]
 
     assert [issue.kind for issue in issues(trace)] == ["in-transaction"]
+
+
+def test_an_async_session_in_an_async_endpoint_names_the_endpoint(traces: list[Trace], tmp_path: Path) -> None:
+    pytest.importorskip("aiosqlite")
+    pytest.importorskip("greenlet")  # SQLAlchemy's asyncio
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: PLC0415
+
+    async_engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'shop.sqlite3'}")
+    app = FastAPI(debug=True)
+
+    @app.get("/tables")
+    async def tables() -> int:
+        async with AsyncSession(async_engine) as db:
+            return int(
+                (
+                    await db.execute(text("SELECT count(*) FROM sqlite_master WHERE type = :type"), {"type": "table"})
+                ).scalar_one()
+            )
+
+    previous = conf._framework  # noqa: SLF001
+    tracepanel.fastapi.install(app)
+    with TestClient(app) as test_client:
+        test_client.get("/tables")
+    conf.use_source(previous)
+    (trace,) = traces
+
+    assert [
+        (span.kind, span.attrs.get("code.origin")) for span in trace.spans if span.kind in {"sql", "transaction"}
+    ] == [
+        ("transaction", IsStr(regex=r"tests/fastapi/test_fastapi\.py:\d+ in tables")),
+        ("sql", IsStr(regex=r"tests/fastapi/test_fastapi\.py:\d+ in tables")),
+    ]
 
 
 def test_a_body_the_endpoint_read_is_recorded_masked(client: TestClient, traces: list[Trace]) -> None:
