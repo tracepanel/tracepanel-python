@@ -334,10 +334,11 @@ def test_a_worker_stopped_by_ctrl_c_says_so(recorder: Recorder) -> None:
     finally:
         signal.signal(signal.SIGINT, handler)
 
-    assert [event["event"] for event in recorder.events if event.get("worker") == WORKER] == [
-        "heartbeat",
-        "worker_stopped",
-    ]
+    # It beats as it starts (and again if the interrupt is slow to come, on a busy machine), then says it stopped, last.
+    said = [event["event"] for event in recorder.events if event.get("worker") == WORKER]
+    assert said[0] == "heartbeat"
+    assert said[-1] == "worker_stopped"
+    assert set(said[:-1]) == {"heartbeat"}
     assert stopped(recorder.events, WORKER) == [
         {"event": "worker_stopped", "system": "channels", "id": "", "time": IsPositiveInt, "worker": WORKER}
     ]
