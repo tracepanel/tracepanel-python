@@ -185,6 +185,17 @@
   This covers uvicorn, gunicorn, hypercorn, granian, daphne, and the Django
   and Flask development servers. `quiet_access_log = false` keeps them.
 
+- A profile counts memory, with Python's tracemalloc, while a profiled trace
+  runs: its `peak` above the level at the start, its `net` at the end, and
+  the 50 `sites` that held the most, as the profile's frames down to the
+  project's line, with the library's line it called. The sites are the
+  picture at the peak when the sampler took one near it (`sites_at`), else at
+  the end. `shared` says another trace ran in the process meanwhile.
+  tracemalloc starts with the first profiled trace and stops once none has
+  run for a while. An app's own tracemalloc is left as it is. The profile's
+  `gc` has the garbage collections during the trace, their pause and when
+  each began. Traces that aren't profiled pay nothing.
+
 ### Changed
 
 - A signal's span is named `post_save`, not `signal post_save`, and a model
@@ -199,6 +210,8 @@
 
 ### Fixed
 
+- The profiler no longer keeps the frames it samples alive until the next
+  garbage collection. A request's locals, its rows, outlived it until then.
 - A task worker that stops leaves the Tasks page's Now at once instead of
   staying there as an idle worker. It says so in a `worker_stopped` event
   as it stops cleanly: a Celery worker at `worker_shutdown`, an RQ worker as

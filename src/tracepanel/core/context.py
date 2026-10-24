@@ -91,12 +91,16 @@ class TraceBlock:
             _trace.set(trace)
             _outer.set(saved.outer)
             _span.set(root)
+            profiling.LIVE.add(self)
+            if profiling.SAMPLER.running:
+                profiling.SAMPLER.overlap()
             self._recording = (
                 profiling.SAMPLER.start(asked=self.profile) if profiling.wanted(asked=self.profile) else None
             )
             profiling.current.set(self._recording)
         except BaseException:
             saved.put_back()
+            profiling.LIVE.discard(self)
             if self._recording is not None:
                 profiling.SAMPLER.stop(self._recording)
             raise
@@ -107,6 +111,7 @@ class TraceBlock:
         saved, trace = self._saved, self.trace
         if saved is None or trace is None:
             return
+        profiling.LIVE.discard(self)
         root = trace.spans[0]
         if exc_type is not None:
             trace.status = root.status = "error"

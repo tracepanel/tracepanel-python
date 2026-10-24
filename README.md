@@ -125,6 +125,18 @@ instead of the idle event loop, so requests sharing a loop each get their
 samples. A moment the profiler can't tell between two traces on one thread
 is counted as dropped.
 
+A profile also counts memory, with Python's tracemalloc: the peak above the
+level at the trace's start, what is still allocated at its end (`net`), and
+the 50 sites that held the most at the peak, each the project's line that
+allocated or called the library that did. tracemalloc starts with the first
+profiled trace and stops once none has run for a while. It slows down every
+allocation the process makes meanwhile, so a profiled request takes longer
+than it would. An app that runs tracemalloc itself keeps it as it is, and its
+peak is not reset. tracemalloc counts the whole process: a trace that ran
+beside others says its numbers are shared. Garbage collections are counted
+too, with how long each one stopped the trace and when. A trace that isn't
+profiled pays for none of this.
+
 ## Trace your own code
 
 To add your own steps to a request or a task, or to trace a script or a

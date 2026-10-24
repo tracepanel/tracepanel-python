@@ -7,7 +7,7 @@ from types import FrameType
 
 import django
 import pytest
-from dirty_equals import IsInt, IsPartialDict
+from dirty_equals import IsInt, IsList, IsPartialDict
 
 from tests.profiles import share
 from tracepanel.core import conf, frames, profile
@@ -65,6 +65,7 @@ def test_the_profile_names_each_function_once_and_counts_each_stack() -> None:
             {"frames": [0, 1], "count": 2, "at": [[0, 1], [2, 1]]},
             {"frames": [0], "count": 1, "at": [[2, 1]]},
         ],
+        "gc": {"collections": 0, "pause_us": 0, "pauses": []},
     }
 
 
@@ -358,7 +359,9 @@ def test_an_awaiting_task_is_sampled_down_to_what_it_awaits(monkeypatch: pytest.
         {"function": "sleep", "module": "asyncio.tasks", "waiting": True}
     )
     # The line it awaits at, beside the line the function begins at.
-    (awaiting,) = [frame for frame in frames if frame["function"] == "build_report" and "at_line" in frame]
+    indexes = waiting[0]["frames"]
+    assert isinstance(indexes, list)
+    awaiting = frames[indexes[-2]]
     assert awaiting == {
         "function": "build_report",
         "module": "tests.core.test_profile",
@@ -399,10 +402,19 @@ def test_ticks_that_cant_be_told_apart_are_counted_as_dropped(monkeypatch: pytes
     busy(0.1)
     documents = [sampler.stop(second), sampler.stop(first)]
 
-    assert documents == [
-        {"interval_us": 1000, "samples": 0, "dropped": IsInt(gt=0), "bucket_us": 10_000, "frames": [], "stacks": []},
-        {"interval_us": 1000, "samples": 0, "dropped": IsInt(gt=0), "bucket_us": 10_000, "frames": [], "stacks": []},
-    ]
+    dropped: dict[str, object] = {
+        "interval_us": 1000,
+        "samples": 0,
+        "dropped": IsInt(gt=0),
+        "bucket_us": 10_000,
+        # The frames of the memory's sites alone: no stack.
+        "frames": IsList(length=(0, ...)),
+        "stacks": [],
+        "memory": IsPartialDict({"shared": True}),
+        "gc": {"collections": IsInt(ge=0), "pause_us": IsInt(ge=0), "pauses": IsList(length=(0, ...))},
+    }
+    # The first runs alone while the second's memory is measured: those ticks are its own.
+    assert documents == [dropped, IsPartialDict({"dropped": IsInt(gt=0), "memory": IsPartialDict({"shared": True})})]
 
 
 def buckets(stack: dict[str, object]) -> list[tuple[int, int]]:
