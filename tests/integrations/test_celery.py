@@ -1056,6 +1056,20 @@ def test_a_task_a_profiled_request_queues_is_profiled_too(traces: list[Trace]) -
     assert profiled(traces) == {"('asked',)": True, "('plain',)": False}
 
 
+def test_a_task_a_request_asking_for_memory_queues_counts_memory_too(traces: list[Trace]) -> None:
+    with start_trace("http", "POST /reports", profile="memory"):
+        memory = jobs.crunch.delay("memory")
+    with start_trace("http", "POST /reports", profile=True):
+        time_only = jobs.crunch.delay("time")
+    run_all(memory, time_only)
+    runs = {str(trace.attrs["task.args"]): trace.profile or {} for trace in by_kind(traces, "task")}
+
+    assert {args: ("memory" in found, "gc" in found) for args, found in runs.items()} == {
+        "('memory',)": (True, True),
+        "('time',)": (False, True),
+    }
+
+
 def test_an_eager_task_is_in_its_profiled_callers_profile(traces: list[Trace]) -> None:
     with start_trace("http", "POST /reports", profile=True) as request:
         jobs.crunch.apply(("eager",))

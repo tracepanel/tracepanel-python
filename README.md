@@ -125,17 +125,21 @@ instead of the idle event loop, so requests sharing a loop each get their
 samples. A moment the profiler can't tell between two traces on one thread
 is counted as dropped.
 
-A profile also counts memory, with Python's tracemalloc: the peak above the
-level at the trace's start, what is still allocated at its end (`net`), and
-the 50 sites that held the most at the peak, each the project's line that
-allocated or called the library that did. tracemalloc starts with the first
-profiled trace and stops once none has run for a while. It slows down every
-allocation the process makes meanwhile, so a profiled request takes longer
-than it would. An app that runs tracemalloc itself keeps it as it is, and its
-peak is not reset. tracemalloc counts the whole process: a trace that ran
-beside others says its numbers are shared. Garbage collections are counted
-too, with how long each one stopped the trace and when. A trace that isn't
-profiled pays for none of this.
+Every profile counts garbage collections, with how long each one stopped
+the trace and when. A profile counts memory too when asked: an
+`X-Tracepanel-Profile: memory` header, a `tracepanel_profile=memory` cookie,
+or `profile_memory = true` for every profiled trace. Tasks a request asking
+for memory queues count theirs too. Memory is counted with Python's
+tracemalloc: the peak above the level at the trace's start, what is still
+allocated at its end (`net`), and the 50 sites that held the most at the
+peak, each the project's line that allocated or called the library that did.
+tracemalloc starts with the first trace that asks and stops once none has
+run for a while. It slows down every allocation the whole process makes
+meanwhile: a short request can take several times longer, and the requests
+running beside it slow down too. An app that runs tracemalloc itself keeps
+it as it is, and its peak is not reset. tracemalloc counts the whole
+process: a trace that ran beside others says its numbers are shared. A trace
+that isn't profiled pays for none of this.
 
 ## Trace your own code
 

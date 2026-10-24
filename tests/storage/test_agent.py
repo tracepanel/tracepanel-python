@@ -272,7 +272,7 @@ def test_the_hello_says_what_the_app_offers_the_console(tmp_path: Path, monkeypa
         {
             "protocol": agent.PROTOCOL,
             "service": "shop",
-            "capabilities": ["profile", "request", "live_tasks"],
+            "capabilities": ["profile", "profile_memory", "request", "live_tasks"],
             "console": ["explain"],
         }
     )

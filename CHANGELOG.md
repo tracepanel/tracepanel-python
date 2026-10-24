@@ -198,6 +198,13 @@
 
 ### Changed
 
+- A profile counts memory only when asked: an `X-Tracepanel-Profile: memory`
+  header, a `tracepanel_profile=memory` cookie, or `profile_memory = true`
+  for every profiled trace. "1" profiles time alone, with the GC pauses.
+  tracemalloc slowed the whole process down while any trace was profiled, a
+  short request several times over. Tasks carry `memory` instead of `1` when
+  their request asked for it, and a worker reads both. The hello offers
+  `profile_memory` next to `profile`, so the panel can ask for it.
 - A signal's span is named `post_save`, not `signal post_save`, and a model
   sender reads `auth.Group`, not `django.contrib.auth.models.Group`.
 - The Redis commands channels-redis sends for itself are no longer `redis`

@@ -86,6 +86,9 @@ class Config:
     # Sample where each trace's time goes in code (a flame graph in the console): every trace when on; one request
     # with an X-Tracepanel-Profile: 1 header or a tracepanel_profile=1 cookie either way.
     profile: bool = False
+    # Count every profiled trace's memory too (tracemalloc), not only a request's that asks with "memory" in the
+    # header or cookie. It slows down the whole process while a trace is counted, a short request several times over.
+    profile_memory: bool = False
     # Whether profiling is possible at all: off, neither the setting nor a request's header or cookie profiles.
     profile_enabled: bool = True
     # How often the profiler samples a profiled trace's stack: each millisecond, so a request of a few milliseconds
@@ -180,6 +183,7 @@ class Settings(TypedDict, total=False):
     capture_settings: bool
     capture_template_context: bool
     profile: bool
+    profile_memory: bool
     profile_enabled: bool
     profile_interval_ms: int
     celery_enabled: bool

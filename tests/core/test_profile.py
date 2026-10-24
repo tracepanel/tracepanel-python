@@ -84,13 +84,19 @@ def test_nothing_sampled_is_no_profile() -> None:
 
 
 def test_a_request_asks_by_header_or_by_the_panels_cookie() -> None:
-    assert profile.requested("1", None)
-    assert profile.requested(None, "theme=dark; tracepanel_profile=1")
-    assert profile.by_cookie("tracepanel_profile=1")
+    assert profile.requested("1", None) == "1"
+    assert profile.requested(" memory ", None) == "memory"
+    assert profile.requested(None, "theme=dark; tracepanel_profile=1") == "1"
+    assert profile.requested(None, "tracepanel_profile=memory") == "memory"
+    assert profile.requested("1", "tracepanel_profile=memory") == "1"
+    assert profile.requested("yes", "tracepanel_profile=memory") == "memory"
+    assert profile.by_cookie("tracepanel_profile=1") == "1"
 
-    assert not profile.requested(None, None)
-    assert not profile.requested("0", "tracepanel_profile=0")
-    assert not profile.by_cookie("not_tracepanel_profile=1; =broken")
+    assert profile.requested(None, None) is None
+    assert profile.requested("0", "tracepanel_profile=0") is None
+    assert profile.requested("Memory", "tracepanel_profile=memory,1") is None
+    assert profile.requested("true", "tracepanel_profile=2") is None
+    assert profile.by_cookie("not_tracepanel_profile=1; =broken") is None
 
 
 def test_profiling_follows_the_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,6 +130,13 @@ def test_work_a_profiled_trace_hands_off_asks_to_be_profiled_too() -> None:
     assert carried() == {}
 
 
+def test_work_a_trace_asking_for_memory_hands_off_asks_for_memory_too() -> None:
+    with start_trace("http", "POST /reports", profile="memory"):
+        asked = carried()
+
+    assert asked == {"tracepanel_profile": "memory"}
+
+
 def test_a_trace_the_setting_profiles_hands_nothing_on(monkeypatch: pytest.MonkeyPatch) -> None:
     # Every trace is profiled anyway: the worker's setting decides for its runs.
     monkeypatch.setenv("TRACEPANEL_PROFILE", "1")
@@ -142,12 +155,17 @@ def test_nothing_is_handed_on_while_profiling_is_off(monkeypatch: pytest.MonkeyP
 
 
 def test_a_run_asks_when_its_work_carries_the_flag_unless_it_runs_inside_a_profiled_trace() -> None:
-    assert profile.asked_by_parent("1")
-    assert profile.asked_by_parent(b"1")
+    assert profile.asked_by_parent("1") == "1"
+    assert profile.asked_by_parent(b"1") == "1"
+    assert profile.asked_by_parent("memory") == "memory"
+    assert profile.asked_by_parent(b"memory") == "memory"
 
-    assert not profile.asked_by_parent(None)
-    assert not profile.asked_by_parent("0")
-    assert not profile.asked_by_parent(1)
+    assert profile.asked_by_parent(None) is None
+    assert profile.asked_by_parent("0") is None
+    assert profile.asked_by_parent("MEMORY") is None
+    assert profile.asked_by_parent(b"\xff") is None
+    assert profile.asked_by_parent(1) is None
+    assert profile.asked_by_parent(flag=True) is None
 
     # An eager run, inside its caller: the caller's profile has its frames.
     with start_trace("http", "POST /reports", profile=True):
@@ -159,8 +177,11 @@ def test_a_run_asks_when_its_work_carries_the_flag_unless_it_runs_inside_a_profi
 def test_a_run_that_followed_its_parent_hands_the_request_on_again() -> None:
     with start_trace("task", "build_report", profile=profile.asked_by_parent("1")):
         sent = carried()
+    with start_trace("task", "build_report", profile=profile.asked_by_parent("memory")):
+        sent_memory = carried()
 
     assert sent == {"tracepanel_profile": "1"}
+    assert sent_memory == {"tracepanel_profile": "memory"}
 
 
 def spin() -> None:
@@ -398,7 +419,7 @@ def test_ticks_that_cant_be_told_apart_are_counted_as_dropped(monkeypatch: pytes
     conf.reset()
     sampler = profile.Sampler()
 
-    first, second = sampler.start(), sampler.start()
+    first, second = sampler.start(asked="memory"), sampler.start(asked="memory")
     busy(0.1)
     documents = [sampler.stop(second), sampler.stop(first)]
 

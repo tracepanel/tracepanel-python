@@ -17,13 +17,14 @@ through run_in_threadpool, in a worker thread, while the event loop's thread wai
 (`followed()`): the worker thread is sampled for the trace until the call returns, and the thread it came from is not.
 
 A trace that asked to be profiled (a request's header or cookie) hands the request on with the work it starts: a
-task's message, a job's meta, a worker channel's message carries a flag next to its link (`carry()`), and the run
-that reads it (`asked_by_parent()`) is profiled too, and so are the tasks it sends in turn. The `profile` setting
-profiles every trace anyway: its traces carry nothing. Calls to other apps over HTTP don't carry it: they may not be
-the app's own.
+task's message, a job's meta, a worker channel's message carries what it asked for next to its link (`carry()`), and
+the run that reads it (`asked_by_parent()`) is profiled the same way, and so are the tasks it sends in turn. The
+`profile` setting profiles every trace anyway: its traces carry nothing. Calls to other apps over HTTP don't carry
+it: they may not be the app's own.
 
-A profiled trace's memory (core.memory) and garbage collections are counted while it runs: each collection's pause,
-from gc.callbacks, goes to every profiled trace running then.
+A profiled trace's garbage collections are counted while it runs: each collection's pause, from gc.callbacks, goes
+to every profiled trace running then. Its memory (core.memory) only when asked for: a request's "memory" rather than
+"1", or the `profile_memory` setting. tracemalloc slows down the whole process while it traces.
 """
 
 import asyncio
@@ -38,15 +39,18 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from http.cookies import CookieError, SimpleCookie
 from types import CodeType, FrameType
-from typing import ParamSpec, TypeVar
+from typing import Literal, ParamSpec, TypeVar
 
 from tracepanel.core import conf, forks, memory, waits
 from tracepanel.core.frames import is_in_app, library_path, relative
 
 HEADER = "x-tracepanel-profile"
 COOKIE = "tracepanel_profile"
-# What the work a profiled trace hands off carries under each queue's own key: its run is profiled too.
-CARRIED = "1"
+# What a request asks for, and what the work a trace that asked hands off carries under each queue's own key: the
+# profile ("1"), or the profile with its memory ("memory"). Anything else asks for nothing.
+TIME = "1"
+MEMORY = "memory"
+Asked = Literal["1", "memory"]
 # How deep a stack is walked: a recursion beyond it is cut, outermost frames kept.
 MAX_DEPTH = 128
 # Distinct stacks one trace keeps; the rest are counted as one "(other)" frame, so a profile stays small.
@@ -81,8 +85,8 @@ class Recording:
     samples: int = 0
     # Calls running its work in other threads: meanwhile its own thread only waits for them, and is not sampled.
     away: int = 0
-    # The trace asked to be profiled (not only the setting): the work it hands off asks too (carry()).
-    asked: bool = False
+    # What the trace asked for (not only the setting): the work it hands off asks the same (carry()).
+    asked: Asked | None = None
     # When it began (perf_counter_ns): a sample's stretch counts from it.
     started: int = 0
     # The event loop and Task a trace begun in async code runs in: what the Task awaits is the trace's while it waits.
@@ -90,7 +94,7 @@ class Recording:
     task: "asyncio.Task[object] | None" = None
     # Ticks whose stack couldn't be told apart from another trace's on the same thread.
     dropped: int = 0
-    # What it allocated (core.memory); None when tracemalloc couldn't trace.
+    # What it allocated (core.memory); None when memory wasn't asked for, or tracemalloc couldn't trace.
     heap: memory.Memory | None = None
     # Another trace ran in the process meanwhile: its allocations and pauses are in this one's too.
     shared: bool = False
@@ -124,15 +128,20 @@ class Sampler:
         self.running: tuple[Recording, ...] = ()
         self._collecting = 0
 
-    def start(self, *, asked: bool = False) -> Recording:
-        """Begin recording the calling thread's stacks for a trace it starts; `asked`: the trace asked for it."""
-        interval_ms = max(conf.get_config().profile_interval_ms, 1)
+    def start(self, *, asked: bool | str | None = None) -> Recording:
+        """Begin recording the calling thread's stacks for a trace it starts; `asked`: what the trace asked for.
+
+        Its memory too when it asked for it, or the `profile_memory` setting says so for every profiled trace.
+        """
+        config = conf.get_config()
+        interval_ms = max(config.profile_interval_ms, 1)
+        mode = asking(asked)
         loop, task = _running_task()
-        traced = self._tracer.begin()
+        traced = self._tracer.begin() if config.profile_memory or mode == MEMORY else None
         recording = Recording(
             thread_id=threading.get_ident(),
             interval_us=interval_ms * 1000,
-            asked=asked,
+            asked=mode,
             started=time.perf_counter_ns(),
             loop=loop,
             task=task,
@@ -561,46 +570,65 @@ def _place(filename: str, line: int) -> dict[str, object]:
     }
 
 
-def requested(header: str | None, cookies: str | None) -> bool:
-    """Whether a request asks to be profiled: the X-Tracepanel-Profile header, or the cookie a browser sends."""
-    return (header is not None and header.strip() == "1") or by_cookie(cookies)
+def asking(value: object) -> Asked | None:
+    """What a value asks for: TIME or MEMORY as they are, True (code that profiles a trace) TIME; else nothing."""
+    if value is True or value == TIME:
+        return TIME
+    if value == MEMORY:
+        return MEMORY
+    return None
 
 
-def by_cookie(cookies: str | None) -> bool:
-    """Whether the request carries the panel's cookie: it profiles every request while the panel's toggle is on."""
+def requested(header: str | None, cookies: str | None) -> Asked | None:
+    """What a request asks for: the X-Tracepanel-Profile header's, else the cookie's a browser sends; None if neither.
+
+    "1" is the profile, "memory" the profile with its memory; any other value asks for nothing.
+    """
+    asked = asking(header.strip()) if header is not None else None
+    return asked or by_cookie(cookies)
+
+
+def by_cookie(cookies: str | None) -> Asked | None:
+    """What the panel's cookie asks for: it profiles every request while the panel's toggle is on."""
     if not cookies or COOKIE not in cookies:
-        return False
+        return None
     try:
         jar = SimpleCookie(cookies)
     except CookieError:
-        return False
+        return None
     morsel = jar.get(COOKIE)
-    return morsel is not None and morsel.value == "1"
+    return asking(morsel.value) if morsel is not None else None
 
 
 def carry(carrier: MutableMapping[str, object], key: str) -> None:
-    """Mark the work the current trace hands off (a message's headers, a job's meta) if it asked to be profiled.
+    """Mark the work the current trace hands off (a message's headers, a job's meta) with what it asked for.
 
     Under `key`, the queue's own name for it, next to the link the integration puts there. Nothing otherwise: a
     trace the setting profiles, or one not profiled, or any while profiling is off, hands nothing on.
     """
     recording = current.get()
-    if recording is not None and recording.asked:
-        carrier[key] = CARRIED
+    if recording is not None and recording.asked is not None:
+        carrier[key] = recording.asked
 
 
-def asked_by_parent(flag: object) -> bool:
-    """Whether a run asks to be profiled: the work it runs carries the flag a profiled trace put there (carry()).
+def asked_by_parent(flag: object) -> Asked | None:
+    """What a run asks for: what the work it runs carries, as a profiled trace put it there (carry()).
 
-    Not a run inline in a profiled trace (an eager task, run inside its caller): that trace's profile has its frames.
+    "1" is the profile, as an older SDK sends it too, "memory" the profile with its memory. Not a run inline in a
+    profiled trace (an eager task, run inside its caller): that trace's profile has its frames.
     """
-    return (flag == CARRIED or flag == CARRIED.encode()) and current.get() is None
+    if isinstance(flag, bytes):
+        try:
+            flag = flag.decode()
+        except UnicodeDecodeError:
+            return None
+    return asking(flag) if isinstance(flag, str) and current.get() is None else None
 
 
-def wanted(*, asked: bool) -> bool:
+def wanted(*, asked: bool | str | None) -> bool:
     """Whether to profile a trace: the setting profiles every one, a request may ask; nothing when profiling is off."""
     config = conf.get_config()
-    return config.profile_enabled and (config.profile or asked)
+    return config.profile_enabled and (config.profile or asking(asked) is not None)
 
 
 SAMPLER = Sampler()
