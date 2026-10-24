@@ -789,4 +789,5 @@ def test_a_handler_awaiting_a_sleep_is_profiled_down_to_it(recorder: Recorder) -
     ]
     assert frames[waiting["frames"][-1]] == IsPartialDict({"module": "asyncio.tasks", "waiting": True})
     assert frames[waiting["frames"][-2]] == IsPartialDict({"in_app": True, "at_line": IsInt(gt=0)})
-    assert not any("select" in frame["function"] for frame in frames)
+    # The memory's sites may name the selector: no stack does.
+    assert not any("select" in frames[index]["function"] for stack in stacks for index in stack["frames"])

@@ -21,9 +21,13 @@ task's message, a job's meta, a worker channel's message carries a flag next to 
 that reads it (`asked_by_parent()`) is profiled too, and so are the tasks it sends in turn. The `profile` setting
 profiles every trace anyway: its traces carry nothing. Calls to other apps over HTTP don't carry it: they may not be
 the app's own.
+
+A profiled trace's memory (core.memory) and garbage collections are counted while it runs: each collection's pause,
+from gc.callbacks, goes to every profiled trace running then.
 """
 
 import asyncio
+import gc
 import sys
 import threading
 import time
@@ -36,7 +40,7 @@ from http.cookies import CookieError, SimpleCookie
 from types import CodeType, FrameType
 from typing import ParamSpec, TypeVar
 
-from tracepanel.core import conf, forks, waits
+from tracepanel.core import conf, forks, memory, waits
 from tracepanel.core.frames import is_in_app, library_path, relative
 
 HEADER = "x-tracepanel-profile"
@@ -53,6 +57,8 @@ IDLE_TICKS = 400
 BUCKET_US = 10_000
 # This package's own frames say nothing about the app.
 _OWN = "tracepanel"
+# GC pauses a trace lists, each with when it began; past it they're only counted.
+MAX_PAUSES = 1000
 
 # A function as the stacks name it: its code (None for a C call that waits, named by the module), the module it runs
 # in, the line it awaits at (the project's coroutines a Task waits in), and whether it waits though core.waits doesn't
@@ -84,10 +90,23 @@ class Recording:
     task: "asyncio.Task[object] | None" = None
     # Ticks whose stack couldn't be told apart from another trace's on the same thread.
     dropped: int = 0
+    # What it allocated (core.memory); None when tracemalloc couldn't trace.
+    heap: memory.Memory | None = None
+    # Another trace ran in the process meanwhile: its allocations and pauses are in this one's too.
+    shared: bool = False
+    # Garbage collections during the trace: how many, the time they stopped it, and each [began, lasted, generation]
+    # in microseconds from the trace's start.
+    collections: int = 0
+    pause_ns: int = 0
+    pauses: list[list[int]] = field(default_factory=list)
 
 
 # The recording of the trace running in this context: the work a worker thread does for it is sampled for it too.
 current: ContextVar[Recording | None] = ContextVar("tracepanel_profile", default=None)
+
+# The traces running in the process, profiled or not (core.context): a profiled one beside others is `shared`.
+LIVE: set[object] = set()
+forks.after_fork(LIVE.clear)
 
 
 class Sampler:
@@ -99,11 +118,17 @@ class Sampler:
         self._thread: threading.Thread | None = None
         # The interpreter's GIL switch interval before the first profiled trace, put back after the last one.
         self._switch: float | None = None
+        self._tracer = memory.TRACER
+        # The profiled traces running, each once: read without the lock where taking it could deadlock (a collection
+        # can begin in any allocation, the lock's holder's too), replaced whole under it.
+        self.running: tuple[Recording, ...] = ()
+        self._collecting = 0
 
     def start(self, *, asked: bool = False) -> Recording:
         """Begin recording the calling thread's stacks for a trace it starts; `asked`: the trace asked for it."""
         interval_ms = max(conf.get_config().profile_interval_ms, 1)
         loop, task = _running_task()
+        traced = self._tracer.begin()
         recording = Recording(
             thread_id=threading.get_ident(),
             interval_us=interval_ms * 1000,
@@ -111,11 +136,18 @@ class Sampler:
             started=time.perf_counter_ns(),
             loop=loop,
             task=task,
+            heap=traced,
         )
         with self._lock:
             if not self._threads:
                 self._quicken(interval_ms / 1000)
+                gc.callbacks.append(self._collected)
             self._threads.setdefault(recording.thread_id, []).append(recording)
+            self.running = (*self.running, recording)
+            # Another trace runs already, profiled or not (LIVE has this one's too); the ones beginning later say so
+            # (overlap()).
+            if len(LIVE) > 1 or len(self.running) > 1:
+                self.overlap()
             if self._thread is None or not self._thread.is_alive():
                 self._thread = threading.Thread(
                     target=self._run, args=(interval_ms / 1000,), name="tracepanel-profiler", daemon=True
@@ -131,9 +163,39 @@ class Sampler:
                 running.remove(recording)
             if not running:
                 self._threads.pop(recording.thread_id, None)
+            self.running = tuple(other for other in self.running if other is not recording)
             if not self._threads:
                 self._slow_down()
-        return document(recording)
+        heap, recording.heap = recording.heap, None
+        measured = None
+        if heap is not None:
+            # No profile, nothing to measure for (document()): the trace's memory only stops being watched.
+            if recording.samples or recording.dropped:
+                measured = memory.measure(heap, self._tracer)
+            else:
+                self._tracer.end(heap)
+        return document(recording, measured)
+
+    def overlap(self) -> None:
+        """A trace begins: the profiled ones running share the process with it."""
+        for recording in self.running:
+            recording.shared = True
+
+    def _collected(self, phase: str, info: dict[str, int]) -> None:
+        """A garbage collection's start or stop (gc.callbacks): its pause, for each profiled trace running."""
+        if phase == "start":
+            self._collecting = time.perf_counter_ns()
+            return
+        began, self._collecting = self._collecting, 0
+        if not began:
+            return
+        lasted = time.perf_counter_ns() - began
+        for recording in self.running:
+            recording.collections += 1
+            recording.pause_ns += lasted
+            if len(recording.pauses) < MAX_PAUSES:
+                at = max(began - recording.started, 0) // 1000
+                recording.pauses.append([at, lasted // 1000, info.get("generation", 0)])
 
     @contextmanager
     def follow(self, recording: Recording) -> Generator[None, None, None]:
@@ -174,6 +236,8 @@ class Sampler:
             sys.setswitchinterval(interval_s)
 
     def _slow_down(self) -> None:
+        if self._collected in gc.callbacks:
+            gc.callbacks.remove(self._collected)
         if self._switch is not None:
             sys.setswitchinterval(self._switch)
             self._switch = None
@@ -189,12 +253,14 @@ class Sampler:
                         # Decided under the lock that start() takes: a trace starting now finds no thread and starts
                         # one, rather than counting on this one, which is leaving.
                         self._thread = None
+                        self._tracer.idle()
                         return
                     continue
                 present = _present(self._threads)
             idle = 0
             if present:
                 _sample(present)
+            self._tracer.watch()
 
 
 def _running_task() -> "tuple[asyncio.AbstractEventLoop | None, asyncio.Task[object] | None]":
@@ -223,15 +289,20 @@ def _present(threads: dict[int, list[Recording]]) -> list[tuple[int, list[Record
 def _sample(present: list[tuple[int, list[Recording]]]) -> None:
     frames = sys._current_frames()  # noqa: SLF001
     now = time.perf_counter_ns()
-    for thread_id, recordings in present:
-        frame = frames.get(thread_id)
-        if frame is None:
-            continue
-        try:
-            _attribute(thread_id, frame, recordings, now)
-        # A thread can change its frames under the walk: that sample is skipped, the sampler goes on.
-        except (AttributeError, ValueError, RuntimeError, TypeError):
-            continue
+    try:
+        for thread_id, recordings in present:
+            frame = frames.get(thread_id)
+            if frame is None:
+                continue
+            try:
+                _attribute(thread_id, frame, recordings, now)
+            # A thread can change its frames under the walk: that sample is skipped, the sampler goes on.
+            except (AttributeError, ValueError, RuntimeError, TypeError):
+                continue
+    finally:
+        # The frames hold this one, which holds them: a cycle that would keep every sampled frame, and its locals
+        # (a request's rows), until the next garbage collection.
+        frames.clear()
 
 
 def _attribute(thread_id: int, frame: FrameType, recordings: list[Recording], now: int) -> None:
@@ -388,35 +459,66 @@ def count(recording: Recording, keys: tuple[Key, ...], now: int | None = None) -
     seen[at] += 1
 
 
-def document(recording: Recording) -> dict[str, object] | None:
+def document(recording: Recording, measured: memory.Measured | None = None) -> dict[str, object] | None:
     """The trace's `profile`: the functions the stacks name, each once, and each stack as indexes into them.
 
-    None when nothing was seen; a trace whose ticks were all dropped has a profile that says so.
+    With what it allocated (`measured`, core.memory), its sites' frames in the same table, and its GC pauses. None
+    when nothing was seen; a trace whose ticks were all dropped has a profile that says so.
     """
     if not recording.samples and not recording.dropped:
         return None
-    index: dict[Key, int] = {}
-    frames: list[dict[str, object]] = []
+    table = _Table()
     stacks: list[dict[str, object]] = []
     seen = sorted(recording.stacks.items(), key=lambda item: -sum(item[1].values()))
     for keys, at in seen:
-        indexes = []
-        for key in keys:
-            if key not in index:
-                index[key] = len(frames)
-                frames.append(_frame(key))
-            indexes.append(index[key])
         stacks.append(
-            {"frames": indexes, "count": sum(at.values()), "at": [[bucket, at[bucket]] for bucket in sorted(at)]}
+            {
+                "frames": [table.of(key) for key in keys],
+                "count": sum(at.values()),
+                "at": [[bucket, at[bucket]] for bucket in sorted(at)],
+            }
         )
-    return {
+    profile: dict[str, object] = {
         "interval_us": recording.interval_us,
         "samples": recording.samples,
         "dropped": recording.dropped,
         "bucket_us": BUCKET_US,
-        "frames": frames,
+        "frames": table.frames,
         "stacks": stacks,
     }
+    if measured is not None:
+        totals, sites = measured
+        named = [
+            {"frames": [table.of(key) for key in keys], "bytes": size, "count": blocks} for keys, size, blocks in sites
+        ]
+        profile["memory"] = {**totals, "sites": named, "shared": recording.shared}
+    profile["gc"] = {
+        "collections": recording.collections,
+        "pause_us": recording.pause_ns // 1000,
+        "pauses": recording.pauses,
+    }
+    return profile
+
+
+class _Table:
+    """A profile's `frames`: each function its stacks and its memory's sites name, once."""
+
+    def __init__(self) -> None:
+        self.frames: list[dict[str, object]] = []
+        self._index: dict[memory.SiteKey, int] = {}
+
+    def of(self, key: memory.SiteKey) -> int:
+        """The frame's index, added if new."""
+        found = self._index.get(key)
+        if found is None:
+            found = self._index[key] = len(self.frames)
+            match key:
+                # A site's frame named by its file and line (memory.Place), not by a function.
+                case (str() as filename, int() as line):
+                    self.frames.append(_place(filename, line))
+                case (code, module, at_line, waiting):
+                    self.frames.append(_frame((code, module, at_line, waiting)))
+        return found
 
 
 def _frame(key: Key) -> dict[str, object]:
@@ -445,6 +547,18 @@ def _frame(key: Key) -> dict[str, object]:
     if waiting or waits.waits(module, code.co_qualname):
         frame["waiting"] = True
     return frame
+
+
+def _place(filename: str, line: int) -> dict[str, object]:
+    """A site's frame where no function has the line: a module's top level."""
+    in_app = is_in_app(filename, "")
+    return {
+        "function": "<module>",
+        "module": None,
+        "file": relative(filename) if in_app else library_path(filename),
+        "line": line,
+        "in_app": in_app,
+    }
 
 
 def requested(header: str | None, cookies: str | None) -> bool:
