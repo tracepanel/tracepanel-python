@@ -306,6 +306,17 @@
   profiled anyway. A task run inside its caller is in the caller's profile.
   Django Tasks carry nothing to the worker, so their runs aren't profiled,
   and calls to other apps over HTTP don't carry the flag.
+- An async trace's profile shows what its code awaits, not the idle event
+  loop. A FastStream task that awaited `asyncio.sleep` read as 99% in
+  `selectors`, and traces sharing an event loop lost their samples to each
+  other. A trace begun in an asyncio task is that task's: while the task
+  waits, its sample is the task's coroutines down to what it awaits, the
+  app's innermost coroutine with the line of its `await` (`at_line`). Frames
+  that wait (a sleep, a socket read, a lock, select, `time.sleep` and other
+  C calls) say `waiting`. Each stack says when in the trace it was seen, in
+  10 ms buckets (`at`, `bucket_us`), and ticks the profiler can't tell
+  between traces on one thread are counted (`dropped`). The agent needs the
+  profile fields of its next release to accept these profiles.
 
 ## 0.4.1 (2026-10-21)
 

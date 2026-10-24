@@ -761,3 +761,32 @@ def test_a_handler_whose_message_asks_for_a_profile_is_profiled(recorder: Record
         "({'label': 'asked'},)": True,
         "({'label': 'plain'},)": False,
     }
+
+
+def test_a_handler_awaiting_a_sleep_is_profiled_down_to_it(recorder: Recorder) -> None:
+    broker = KafkaBroker()
+
+    @broker.subscriber("reports")
+    async def build_sales_report(body: dict[str, str]) -> None:
+        await asyncio.sleep(0.15)
+
+    async def send(tested: KafkaBroker) -> None:
+        await tested.publish({"label": "asked"}, "reports", headers={"tracepanel-profile": "1"})
+
+    handle(broker, TestKafkaBroker, send)
+    (task,) = tasks(recorder)
+    profile = task.profile
+    assert profile is not None
+    frames = profile["frames"]
+    stacks = profile["stacks"]
+    assert isinstance(frames, list)
+    assert isinstance(stacks, list)
+    waiting = max(stacks, key=lambda stack: stack["count"])
+
+    assert [frames[index]["function"] for index in waiting["frames"]][-2:] == [
+        "test_a_handler_awaiting_a_sleep_is_profiled_down_to_it.<locals>.build_sales_report",
+        "sleep",
+    ]
+    assert frames[waiting["frames"][-1]] == IsPartialDict({"module": "asyncio.tasks", "waiting": True})
+    assert frames[waiting["frames"][-2]] == IsPartialDict({"in_app": True, "at_line": IsInt(gt=0)})
+    assert not any("select" in frame["function"] for frame in frames)

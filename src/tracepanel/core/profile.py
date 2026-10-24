@@ -1,9 +1,16 @@
 """Where a trace's time goes in code: a sampling profiler (the trace's `profile`, a flame graph in the console).
 
 One daemon thread looks at the stacks of the threads running a profiled trace every `profile_interval_ms`, and counts
-each stack it sees. It starts with the first profiled trace and stops once none has run for a while. A thread is
-sampled only while it runs exactly one profiled trace: an event loop running several at once can't tell from outside
-which one a frame belongs to, so their samples are dropped for that time.
+each stack it sees, with the 10 ms stretch of the trace it was seen in (`bucket_us`, a stack's `at`). It starts with
+the first profiled trace and stops once none has run for a while. A frame that waits rather than computes (the event
+loop's select, a sleep, a socket read, a lock: core.waits) says so (`waiting`).
+
+Async code: a trace begun in an asyncio Task is that Task's. While the loop runs the Task, the thread's stack is the
+trace's, from the Task's coroutine on. While the Task waits, whatever the thread does (sits in select, runs another
+request), the trace's stack is the Task's coroutines down to the one that waits (`asyncio.sleep`), the innermost of
+the project's own with the line of its `await` (`at_line`). So traces sharing an event loop each get their samples.
+A tick whose stack can't be told apart between traces (two sync traces on one thread, a Task running two) is counted
+as `dropped` for each.
 
 A trace's work can hop to another thread: an ASGI server runs a sync view through sync_to_async, a sync endpoint
 through run_in_threadpool, in a worker thread, while the event loop's thread waits in its selector. The hop follows it
@@ -16,6 +23,7 @@ profiles every trace anyway: its traces carry nothing. Calls to other apps over 
 the app's own.
 """
 
+import asyncio
 import sys
 import threading
 import time
@@ -28,7 +36,7 @@ from http.cookies import CookieError, SimpleCookie
 from types import CodeType, FrameType
 from typing import ParamSpec, TypeVar
 
-from tracepanel.core import conf, forks
+from tracepanel.core import conf, forks, waits
 from tracepanel.core.frames import is_in_app, library_path, relative
 
 HEADER = "x-tracepanel-profile"
@@ -41,12 +49,16 @@ MAX_DEPTH = 128
 MAX_STACKS = 2000
 # Ticks without a profiled trace before the sampler thread ends (it starts again with the next one).
 IDLE_TICKS = 400
+# The stretch of a trace a sample's time is counted in, from the trace's start.
+BUCKET_US = 10_000
 # This package's own frames say nothing about the app.
 _OWN = "tracepanel"
 
-# A function as the stacks name it: its code and the module it runs in.
-Key = tuple[CodeType | None, str | None]
-OTHER: Key = (None, "(other)")
+# A function as the stacks name it: its code (None for a C call that waits, named by the module), the module it runs
+# in, the line it awaits at (the project's coroutines a Task waits in), and whether it waits though core.waits doesn't
+# list it (what a waiting Task awaits last, a C call that waits).
+Key = tuple[CodeType | None, str | None, int | None, bool]
+OTHER: Key = (None, "(other)", None, False)
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -58,12 +70,20 @@ class Recording:
 
     thread_id: int
     interval_us: int
-    stacks: Counter[tuple[Key, ...]] = field(default_factory=Counter)
+    # Each stack seen, with how many samples saw it in each BUCKET_US stretch of the trace.
+    stacks: dict[tuple[Key, ...], Counter[int]] = field(default_factory=dict)
     samples: int = 0
     # Calls running its work in other threads: meanwhile its own thread only waits for them, and is not sampled.
     away: int = 0
     # The trace asked to be profiled (not only the setting): the work it hands off asks too (carry()).
     asked: bool = False
+    # When it began (perf_counter_ns): a sample's stretch counts from it.
+    started: int = 0
+    # The event loop and Task a trace begun in async code runs in: what the Task awaits is the trace's while it waits.
+    loop: asyncio.AbstractEventLoop | None = None
+    task: "asyncio.Task[object] | None" = None
+    # Ticks whose stack couldn't be told apart from another trace's on the same thread.
+    dropped: int = 0
 
 
 # The recording of the trace running in this context: the work a worker thread does for it is sampled for it too.
@@ -83,7 +103,15 @@ class Sampler:
     def start(self, *, asked: bool = False) -> Recording:
         """Begin recording the calling thread's stacks for a trace it starts; `asked`: the trace asked for it."""
         interval_ms = max(conf.get_config().profile_interval_ms, 1)
-        recording = Recording(thread_id=threading.get_ident(), interval_us=interval_ms * 1000, asked=asked)
+        loop, task = _running_task()
+        recording = Recording(
+            thread_id=threading.get_ident(),
+            interval_us=interval_ms * 1000,
+            asked=asked,
+            started=time.perf_counter_ns(),
+            loop=loop,
+            task=task,
+        )
         with self._lock:
             if not self._threads:
                 self._quicken(interval_ms / 1000)
@@ -163,37 +191,97 @@ class Sampler:
                         self._thread = None
                         return
                     continue
-                alone = _alone(self._threads)
+                present = _present(self._threads)
             idle = 0
-            if alone:
-                self._sample(alone)
-
-    @staticmethod
-    def _sample(recordings: list[tuple[int, Recording]]) -> None:
-        frames = sys._current_frames()  # noqa: SLF001
-        for thread_id, recording in recordings:
-            frame = frames.get(thread_id)
-            if frame is None:
-                continue
-            try:
-                keys = stack(frame)
-            # A thread can change its frames under the walk: that sample is skipped, the sampler goes on.
-            except (AttributeError, ValueError, RuntimeError):
-                continue
-            count(recording, keys)
+            if present:
+                _sample(present)
 
 
-def _alone(threads: dict[int, list[Recording]]) -> list[tuple[int, Recording]]:
-    """Each thread running one profiled trace's work, and that trace: its stack is that trace's.
+def _running_task() -> "tuple[asyncio.AbstractEventLoop | None, asyncio.Task[object] | None]":
+    """The event loop and Task the calling code runs in; (None, None) outside a Task."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None, None
+    task = asyncio.current_task(loop)
+    return (loop, task) if task is not None else (None, None)
+
+
+def _present(threads: dict[int, list[Recording]]) -> list[tuple[int, list[Recording]]]:
+    """Each thread running profiled traces' work, and those traces.
 
     A trace's own thread does not run its work while the work is away in another thread (that thread does).
     """
-    alone: list[tuple[int, Recording]] = []
+    present: list[tuple[int, list[Recording]]] = []
     for thread_id, running in threads.items():
-        present = [recording for recording in running if not (recording.away and recording.thread_id == thread_id)]
-        if len(present) == 1:
-            alone.append((thread_id, present[0]))
-    return alone
+        here = [recording for recording in running if not (recording.away and recording.thread_id == thread_id)]
+        if here:
+            present.append((thread_id, here))
+    return present
+
+
+def _sample(present: list[tuple[int, list[Recording]]]) -> None:
+    frames = sys._current_frames()  # noqa: SLF001
+    now = time.perf_counter_ns()
+    for thread_id, recordings in present:
+        frame = frames.get(thread_id)
+        if frame is None:
+            continue
+        try:
+            _attribute(thread_id, frame, recordings, now)
+        # A thread can change its frames under the walk: that sample is skipped, the sampler goes on.
+        except (AttributeError, ValueError, RuntimeError, TypeError):
+            continue
+
+
+def _attribute(thread_id: int, frame: FrameType, recordings: list[Recording], now: int) -> None:
+    """Count one tick of a thread: its stack for the trace running there, what it awaits for each async one waiting.
+
+    Several traces whose stack can't be told apart each count the tick as dropped.
+    """
+    in_tasks = [
+        recording for recording in recordings if recording.task is not None and recording.thread_id == thread_id
+    ]
+    if not in_tasks:
+        if len(recordings) == 1:
+            count(recordings[0], thread_stack(frame), now)
+        else:
+            for recording in recordings:
+                recording.dropped += 1
+        return
+    running = asyncio.current_task(in_tasks[0].loop)
+    if running is None:
+        # The loop sits in select or runs a callback: the thread's stack is a sync trace's, if any.
+        owners = [recording for recording in recordings if recording not in in_tasks]
+    else:
+        owners = _owners(running, in_tasks)
+    if len(owners) == 1:
+        count(owners[0], thread_stack(frame, running), now)
+    else:
+        for recording in owners:
+            recording.dropped += 1
+    for recording in in_tasks:
+        if recording in owners:
+            continue
+        if recording.task is running:
+            # Its Task runs what another trace started inside it, not profiled on its own.
+            recording.dropped += 1
+            continue
+        count(recording, awaiting(recording.task), now)
+
+
+def _owners(running: "asyncio.Task[object]", recordings: list[Recording]) -> list[Recording]:
+    """The traces whose work the running Task does: the one current in its context, else the ones begun in it.
+
+    A Task the trace started (gather, create_task) has its context, so its work is the trace's too; Python 3.11's Task
+    doesn't show its context.
+    """
+    get_context = getattr(running, "get_context", None)
+    if get_context is not None:
+        found = get_context().get(current)
+        if any(recording is found for recording in recordings):
+            return [found]
+    return [recording for recording in recordings if recording.task is running]
 
 
 def followed(func: Callable[P, R]) -> Callable[P, R]:
@@ -212,60 +300,151 @@ def followed(func: Callable[P, R]) -> Callable[P, R]:
     return call
 
 
-def stack(frame: FrameType | None) -> tuple[Key, ...]:
-    """A thread's stack, outermost frame first, without this package's frames."""
+def stack(frame: FrameType | None, root: CodeType | None = None) -> tuple[Key, ...]:
+    """A thread's stack, outermost frame first, without this package's frames; from `root`'s frame on, if given."""
     keys: list[Key] = []
     while frame is not None and len(keys) < MAX_DEPTH:
-        module = frame.f_globals.get("__name__")
-        name = module if isinstance(module, str) else None
+        name = _module(frame)
+        code = frame.f_code
         if not (name or "").startswith(_OWN):
-            keys.append((frame.f_code, name))
+            keys.append((code, name, None, False))
+        if code is root:
+            break
         frame = frame.f_back
     keys.reverse()
     return tuple(keys)
 
 
-def count(recording: Recording, keys: tuple[Key, ...]) -> None:
-    """Count one sample of a stack; past MAX_STACKS distinct ones, a new stack counts as "(other)"."""
+def thread_stack(frame: FrameType, task: "asyncio.Task[object] | None" = None) -> tuple[Key, ...]:
+    """What a thread runs: its stack, from the running Task's coroutine on, and the C call that waits, if any."""
+    keys = stack(frame, _code(task.get_coro()) if task is not None else None)
+    waited = waits.calling(frame) if keys else None
+    return (*keys, (None, waited, None, True)) if waited is not None else keys
+
+
+def awaiting(task: "asyncio.Task[object] | None") -> tuple[Key, ...]:
+    """What a waiting Task awaits: its coroutines, outermost first, down to the one that waits, which says so.
+
+    The innermost of the project's own coroutines says the line of its `await` (`at_line`): where the app waits. The
+    others read as the same frames as in the stacks of the Task running.
+    """
+    keys: list[Key] = []
+    awaits_at: tuple[int, int] | None = None
+    awaited: object = task.get_coro() if task is not None else None
+    while awaited is not None and len(keys) < MAX_DEPTH:
+        frame = (
+            getattr(awaited, "cr_frame", None)
+            or getattr(awaited, "gi_frame", None)
+            or getattr(awaited, "ag_frame", None)
+        )
+        if not isinstance(frame, FrameType):
+            break
+        name = _module(frame)
+        code = frame.f_code
+        if not (name or "").startswith(_OWN):
+            if is_in_app(code.co_filename, name or ""):
+                awaits_at = (len(keys), frame.f_lineno)
+            keys.append((code, name, None, False))
+        awaited = (
+            getattr(awaited, "cr_await", None)
+            or getattr(awaited, "gi_yieldfrom", None)
+            or getattr(awaited, "ag_await", None)
+        )
+    if awaits_at is not None:
+        position, line = awaits_at
+        code, name, _, _ = keys[position]
+        keys[position] = (code, name, line, False)
+    if keys:
+        code, name, line, _ = keys[-1]
+        if code is not None and not waits.waits(name, code.co_qualname):
+            keys[-1] = (code, name, line, True)
+    return tuple(keys)
+
+
+def _module(frame: FrameType) -> str | None:
+    module = frame.f_globals.get("__name__")
+    return module if isinstance(module, str) else None
+
+
+def _code(awaitable: object) -> CodeType | None:
+    code = getattr(awaitable, "cr_code", None) or getattr(awaitable, "gi_code", None)
+    return code if isinstance(code, CodeType) else None
+
+
+def count(recording: Recording, keys: tuple[Key, ...], now: int | None = None) -> None:
+    """Count one sample of a stack, seen `now` (perf_counter_ns; the trace's start if not given).
+
+    Past MAX_STACKS distinct ones, a new stack counts as "(other)".
+    """
     if not keys:
         return
     recording.samples += 1
-    if keys in recording.stacks or len(recording.stacks) < MAX_STACKS:
-        recording.stacks[keys] += 1
-    else:
-        recording.stacks[(OTHER,)] += 1
+    at = max(now - recording.started, 0) // (BUCKET_US * 1000) if now is not None else 0
+    seen = recording.stacks.get(keys)
+    if seen is None:
+        if len(recording.stacks) >= MAX_STACKS:
+            keys = (OTHER,)
+        seen = recording.stacks.setdefault(keys, Counter())
+    seen[at] += 1
 
 
 def document(recording: Recording) -> dict[str, object] | None:
-    """The trace's `profile`: the functions the stacks name, each once, and each stack as indexes into them."""
-    if not recording.samples:
+    """The trace's `profile`: the functions the stacks name, each once, and each stack as indexes into them.
+
+    None when nothing was seen; a trace whose ticks were all dropped has a profile that says so.
+    """
+    if not recording.samples and not recording.dropped:
         return None
     index: dict[Key, int] = {}
     frames: list[dict[str, object]] = []
     stacks: list[dict[str, object]] = []
-    for keys, samples in recording.stacks.most_common():
+    seen = sorted(recording.stacks.items(), key=lambda item: -sum(item[1].values()))
+    for keys, at in seen:
         indexes = []
         for key in keys:
             if key not in index:
                 index[key] = len(frames)
                 frames.append(_frame(key))
             indexes.append(index[key])
-        stacks.append({"frames": indexes, "count": samples})
-    return {"interval_us": recording.interval_us, "samples": recording.samples, "frames": frames, "stacks": stacks}
+        stacks.append(
+            {"frames": indexes, "count": sum(at.values()), "at": [[bucket, at[bucket]] for bucket in sorted(at)]}
+        )
+    return {
+        "interval_us": recording.interval_us,
+        "samples": recording.samples,
+        "dropped": recording.dropped,
+        "bucket_us": BUCKET_US,
+        "frames": frames,
+        "stacks": stacks,
+    }
 
 
 def _frame(key: Key) -> dict[str, object]:
-    code, module = key
+    code, module, at_line, waiting = key
     if code is None:
-        return {"function": module or "(other)", "module": None, "file": "", "line": 0, "in_app": False}
+        named: dict[str, object] = {
+            "function": module or "(other)",
+            "module": None,
+            "file": "",
+            "line": 0,
+            "in_app": False,
+        }
+        if waiting:
+            named["waiting"] = True
+        return named
     in_app = is_in_app(code.co_filename, module or "")
-    return {
+    frame: dict[str, object] = {
         "function": code.co_qualname,
         "module": module,
         "file": relative(code.co_filename) if in_app else library_path(code.co_filename),
         "line": code.co_firstlineno,
         "in_app": in_app,
     }
+    if at_line is not None:
+        frame["at_line"] = at_line
+    if waiting or waits.waits(module, code.co_qualname):
+        frame["waiting"] = True
+    return frame
 
 
 def requested(header: str | None, cookies: str | None) -> bool:
