@@ -35,6 +35,9 @@ class Config:
     widget: bool = True
     # URL prefix for the UI, widget.min.js and the JSON API.
     prefix: str = "/__tracepanel__/"
+    # Leave the requests under `prefix` (the widget's polling, the console) out of the server's access log: uvicorn,
+    # gunicorn, hypercorn, granian, daphne, Django's and Flask's development servers.
+    quiet_access_log: bool = True
     # The project's store directory (the agent's), relative to `root`.
     dir: str = ".tracepanel"
     # Where traces go: "auto" to the project's agent (started on demand), the address of one elsewhere
@@ -155,6 +158,7 @@ class Settings(TypedDict, total=False):
     service: str
     widget: bool
     prefix: str
+    quiet_access_log: bool
     dir: str
     agent: str
     console_url: str

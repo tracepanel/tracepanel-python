@@ -99,6 +99,8 @@ ignore_paths = ["/health*", "/static/*"]
 ```
 
 `tracepanel config` prints each setting, its value and where it comes from.
+The server's access log leaves out tracepanel's own requests (the panel polls
+several times a second): `quiet_access_log = false` keeps them.
 
 ## Profile a request
 

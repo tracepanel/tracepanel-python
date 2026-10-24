@@ -180,6 +180,10 @@
   query loads, and `class_prepared`, sent for every model class built (each
   historical model a `migrate` renders): they keep Django's own send and
   cost nothing.
+- The server's access log leaves out the requests under `prefix`: the panel's
+  polling no longer floods the terminal, and the app's own requests stay.
+  This covers uvicorn, gunicorn, hypercorn, granian, daphne, and the Django
+  and Flask development servers. `quiet_access_log = false` keeps them.
 
 ### Changed
 

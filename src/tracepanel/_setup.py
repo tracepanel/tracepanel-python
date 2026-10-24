@@ -23,10 +23,11 @@ def started(framework: str, *, debug: str = "debug mode", django: bool = False, 
     """The framework is set up: install the integrations, register EXPLAIN, and say so in the terminal."""
     from tracepanel.console import app as app_console  # noqa: PLC0415 (only once an app installs tracepanel)
     from tracepanel.console import terminal  # noqa: PLC0415
-    from tracepanel.core import registry, runtime  # noqa: PLC0415
+    from tracepanel.core import accesslog, registry, runtime  # noqa: PLC0415
     from tracepanel.integrations import dbapi, sqlalchemy  # noqa: PLC0415
 
     runtime.set_framework(framework)
+    accesslog.install()
     registry.install(django=django)
     # EXPLAIN in the console runs where a query came from: a driver's database, else the SQLAlchemy engine (Django's own
     # runs on its connection).
