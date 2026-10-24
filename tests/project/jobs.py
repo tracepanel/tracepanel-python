@@ -7,6 +7,7 @@ from celery import Celery
 from celery.backends.cache import CacheBackend
 from django.contrib.auth.models import Group, User
 
+from tests.profiles import busy
 from tracepanel._compat import override
 
 if TYPE_CHECKING:
@@ -14,6 +15,13 @@ if TYPE_CHECKING:
 
 app = Celery("tests", broker="memory://", backend="cache+memory://")
 app.conf.update(task_store_eager_result=True)
+
+
+@app.task
+def crunch(label: str) -> str:
+    """Busy long enough for a profile."""
+    busy()
+    return label
 
 
 @app.task

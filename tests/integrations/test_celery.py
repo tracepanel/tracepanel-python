@@ -17,6 +17,7 @@ from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
 from tests.agentstore import AgentStore, issues, newer
+from tests.profiles import share
 from tests.tasklive import Recorder, live, live_when, named, without_worker_events
 from tracepanel.core import profile
 from tracepanel.core.context import current_trace, start_trace
@@ -1038,3 +1039,26 @@ def test_django_signals_inside_a_task_once_and_celery_s_own_not_at_all(traces: l
     ]
 
     assert task.attrs["signal.unreceived"] == ["pre_save auth.Group: 1"]
+
+
+def profiled(traces: list[Trace]) -> dict[str, bool]:
+    """Each run, by its arguments: whether it has a profile."""
+    return {str(trace.attrs["task.args"]): trace.profile is not None for trace in by_kind(traces, "task")}
+
+
+def test_a_task_a_profiled_request_queues_is_profiled_too(traces: list[Trace]) -> None:
+    with start_trace("http", "POST /reports", profile=True):
+        asked = jobs.crunch.delay("asked")
+    with start_trace("http", "GET /reports"):
+        plain = jobs.crunch.delay("plain")
+    run_all(asked, plain)
+
+    assert profiled(traces) == {"('asked',)": True, "('plain',)": False}
+
+
+def test_an_eager_task_is_in_its_profiled_callers_profile(traces: list[Trace]) -> None:
+    with start_trace("http", "POST /reports", profile=True) as request:
+        jobs.crunch.apply(("eager",))
+
+    assert profiled(traces) == {"('eager',)": False}
+    assert share(request, "busy") > 0

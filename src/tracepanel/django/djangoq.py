@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from tracepanel.core import conf, errors, forks, registry
+from tracepanel.core import conf, errors, forks, profile, registry
 from tracepanel.core.context import current_trace, now_us, record_span, start_span, start_trace
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
@@ -66,6 +66,8 @@ PARENT = "tracepanel_parent"
 TRIGGER = "tracepanel_trigger"
 PARENT_TASK = "tracepanel_parent_task"
 ROOT_TASK = "tracepanel_root_task"
+# Enqueued by a trace that asked to be profiled: the run is profiled too.
+PROFILE = "tracepanel_profile"
 # Added in the worker: the run's trace and root span, and the worker, for the hook and the chain's next step.
 RUN = "tracepanel_run"
 WORKER = "tracepanel_worker"
@@ -173,6 +175,7 @@ def on_enqueue(sender: object = None, task: Any = None, **kwargs: object) -> Non
         task[TRIGGER] = "task" if saving is not None and trace is None else trigger(trace)
     if trace is not None:
         task[PARENT] = f"{trace.id}:{span_id}"
+        profile.carry(task, PROFILE)
     elif saving is not None and saving.get(RUN):
         # A chain's next step, enqueued by the monitor: it links to the step before.
         task[PARENT] = saving[RUN]
@@ -352,7 +355,8 @@ def on_execute(sender: object = None, func: object = None, task: Any = None, **k
     worker = None if eager else _worker()
     attrs = _run_attrs(task, eager=eager, worker=worker)
     name = str(attrs["task.name"])
-    context = start_trace("task", name, attrs, root_kind="task.run")
+    asked = profile.asked_by_parent(task.get(PROFILE))
+    context = start_trace("task", name, attrs, root_kind="task.run", profile=asked)
     trace = context.__enter__()
     parent = task.get(PARENT)
     if isinstance(parent, str) and ":" in parent:

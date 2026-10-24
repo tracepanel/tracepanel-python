@@ -27,6 +27,7 @@ from django_q.worker import worker
 from jsonschema import Draft202012Validator
 
 from tests.agentstore import AgentStore, issues
+from tests.profiles import busy, share
 from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, stopped, without_worker_events
 from tracepanel.core import patching
 from tracepanel.core.context import start_trace
@@ -41,6 +42,11 @@ NAME = "tests.django.test_django_q"
 def count_users(label: str) -> str:
     logger.warning("counting for %s", label)
     return f"{label}: {User.objects.count()}"
+
+
+def crunch(label: str) -> str:
+    busy()
+    return label
 
 
 def sync_crm() -> None:
@@ -612,3 +618,28 @@ def test_tasks_listing_and_links(store: AgentStore) -> None:
         check_order=False,
     )
     assert store.related(str(runs[0]["id"]))["enqueued_by"] == IsPartialDict(id=request.id)
+
+
+def profiled(traces: list[Trace]) -> dict[str, bool]:
+    """Each run, by its arguments: whether it has a profile."""
+    return {str(trace.attrs["task.args"]): trace.profile is not None for trace in tasks(traces)}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_task_a_profiled_request_enqueues_is_profiled_too(traces: list[Trace]) -> None:
+    with start_trace("http", "POST /reports", profile=True):
+        async_task(crunch, "asked")
+    with start_trace("http", "GET /reports"):
+        async_task(crunch, "plain")
+    work()
+
+    assert profiled(traces) == {"('asked',)": True, "('plain',)": False}
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_sync_task_is_in_its_profiled_callers_profile(traces: list[Trace]) -> None:
+    with start_trace("http", "POST /reports", profile=True) as request:
+        async_task(crunch, "sync", sync=True)
+
+    assert profiled(traces) == {"('sync',)": False}
+    assert share(request, "busy") > 0

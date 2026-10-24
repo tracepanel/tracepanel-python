@@ -27,7 +27,7 @@ import socket
 from contextvars import ContextVar
 from typing import Any
 
-from tracepanel.core import conf, errors, forks, services
+from tracepanel.core import conf, errors, forks, profile, services
 from tracepanel.core.context import current_trace, now_us, record_span, start_span, start_trace
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
@@ -276,6 +276,8 @@ async def _enqueue(send: Any, layer: Attrs, channel: str, message: dict[str, Any
     task: dict[str, object] = {"id": task_id, "published": now_us(), "trigger": trigger(trace)}
     if workflow.parent_id:
         task.update(parent_id=workflow.parent_id, root_id=workflow.root_id)
+    # Sent by a trace that asked to be profiled: the worker's run is profiled too.
+    profile.carry(task, "profile")
     message = {**message, TASK: task}
     parent: dict[str, str] = {}
     if trace is None:
@@ -331,7 +333,8 @@ async def _run(consumer: Any, handler: Any, message: dict[str, Any]) -> None:  #
     _heart.start(_heart.worker or _worker_name())
     attrs = _task_attrs(consumer, message, name, task_id, task)
     raised: BaseException | None = None
-    with start_trace("task", name, attrs, root_kind="task.run") as trace:
+    asked = profile.asked_by_parent(task.get("profile"))
+    with start_trace("task", name, attrs, root_kind="task.run", profile=asked) as trace:
         _link_parent(trace.links, message, "enqueued_by")
         with _lock:
             _handling.add(task_id)

@@ -21,6 +21,7 @@ from dramatiq.results.backends import StubBackend as StubResults  # noqa: E402
 from dramatiq.worker import Worker  # noqa: E402
 
 from tests.agentstore import AgentStore  # noqa: E402
+from tests.profiles import busy  # noqa: E402
 from tests.tasklive import (  # noqa: E402
     GOODBYE,
     Recorder,
@@ -600,3 +601,21 @@ def test_tasks_listing_and_links(broker: StubBroker, store: AgentStore) -> None:
         check_order=False,
     )
     assert store.related(str(counted["id"]))["enqueued_by"] == IsPartialDict(id=request.id)
+
+
+def test_a_message_a_profiled_request_sends_is_profiled_too(broker: StubBroker, traces: list[Trace]) -> None:
+    @dramatiq.actor
+    def crunch(label: str) -> str:
+        busy()
+        return label
+
+    with start_trace("http", "POST /reports", profile=True):
+        crunch.send("asked")
+    with start_trace("http", "GET /reports"):
+        crunch.send("plain")
+    run(broker)
+
+    assert {str(trace.attrs["task.args"]): trace.profile is not None for trace in tasks(traces)} == {
+        "('asked',)": True,
+        "('plain',)": False,
+    }

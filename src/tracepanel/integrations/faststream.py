@@ -27,7 +27,7 @@ import socket
 from collections import OrderedDict
 from typing import Any
 
-from tracepanel.core import conf, errors, forks, registry, w3c
+from tracepanel.core import conf, errors, forks, profile, registry, w3c
 from tracepanel.core.context import current_trace, start_span, start_trace
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
@@ -55,6 +55,8 @@ TASK_ID = "tracepanel-task-id"
 # A message published from inside a handler's run: that run's task is its parent, the run's root its root.
 PARENT_TASK = "tracepanel-parent-task"
 ROOT_TASK = "tracepanel-root-task"
+# Published by a trace that asked to be profiled: the handler's run is profiled too.
+PROFILE = "tracepanel-profile"
 # Messages whose last delivery was nacked, by system and task id, with how many times: a broker that doesn't count
 # deliveries gets its count from here. The oldest go past a bound (a message nacked once may never come back).
 FAILURES_KEPT = 1000
@@ -282,6 +284,7 @@ class TracepanelHooks:
             # The app's own traceparent stays: it propagates its trace context itself.
             headers.setdefault(w3c.HEADER, w3c.outgoing(trace, span.id))
             headers[SENT_BY] = f"{trace.id}:{span.id}"
+            profile.carry(headers, PROFILE)
             if task_id is not None:
                 headers[TASK_ID] = task_id
             workflow = sent_from(trace, task_id or "")
@@ -361,7 +364,8 @@ class TracepanelHooks:
             called = arguments((body,), None)
             attrs.update(called.attrs())
             shown = called.event()
-        context = start_trace("task", name, _known(attrs), root_kind="task.run")
+        asked = profile.asked_by_parent(_text(headers.get(PROFILE)))
+        context = start_trace("task", name, _known(attrs), root_kind="task.run", profile=asked)
         trace = context.__enter__()
         if linked:
             trace.links.append(Link(kind="sent_by", trace_id=sender[0], span_id=sender[1]))

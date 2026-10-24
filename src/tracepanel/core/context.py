@@ -91,7 +91,9 @@ class TraceBlock:
             _trace.set(trace)
             _outer.set(saved.outer)
             _span.set(root)
-            self._recording = profiling.SAMPLER.start() if profiling.wanted(asked=self.profile) else None
+            self._recording = (
+                profiling.SAMPLER.start(asked=self.profile) if profiling.wanted(asked=self.profile) else None
+            )
             profiling.current.set(self._recording)
         except BaseException:
             saved.put_back()
@@ -138,7 +140,8 @@ def start_trace(
 ) -> TraceBlock:
     """Run the block as a new trace whose root span has the same name (and kind, unless `root_kind` says).
 
-    `profile`: the request asked to be profiled (the setting profiles every trace anyway).
+    `profile`: the request asked to be profiled, or the work it runs carries a profiled trace's request
+    (profile.asked_by_parent); the setting profiles every trace anyway.
     """
     return TraceBlock(kind, name, attrs, root_kind=root_kind, profile=profile)
 

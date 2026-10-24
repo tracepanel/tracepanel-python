@@ -26,6 +26,7 @@ from faststream.rabbit.annotations import RabbitMessage
 from faststream.redis import RedisBroker, TestRedisBroker
 
 from tests.agentstore import AgentStore
+from tests.profiles import busy
 from tests.tasklive import Recorder, live, live_when, named, setenv, without_worker_events
 from tracepanel.core import conf
 from tracepanel.core.context import start_trace
@@ -716,3 +717,76 @@ def test_rpc_responses_are_no_task(recorder: Recorder) -> None:
     handle(broker, TestNatsBroker, send)
 
     assert [trace.name for trace in tasks(recorder)] == [HANDLER]
+
+
+def test_a_message_a_profiled_request_publishes_asks_its_handler_to_profile(recorder: Recorder) -> None:
+    broker = RabbitBroker()
+    seen: list[dict[str, Any]] = []
+
+    @broker.subscriber("reports")
+    async def headers_of(body: dict[str, str], message: RabbitMessage) -> None:
+        seen.append(dict(message.headers))
+
+    async def send(tested: RabbitBroker) -> None:
+        with start_trace("http", "POST /reports", profile=True):
+            await tested.publish({"label": "asked"}, "reports")
+        with start_trace("http", "GET /reports"):
+            await tested.publish({"label": "plain"}, "reports")
+
+    handle(broker, TestRabbitBroker, send)
+
+    assert seen == [
+        IsPartialDict({"tracepanel-profile": "1"}),
+        IsPartialDict({"tracepanel-sent-by": IsStr}),
+    ]
+    assert "tracepanel-profile" not in seen[1]
+
+
+def test_a_handler_whose_message_asks_for_a_profile_is_profiled(recorder: Recorder) -> None:
+    # The in-memory broker runs the handler inside the publish, in the publisher's profile: here the message comes
+    # from outside any trace, as a broker delivers it to a worker.
+    broker = KafkaBroker()
+
+    @broker.subscriber("reports")
+    async def crunch(body: dict[str, str]) -> None:
+        busy()
+
+    async def send(tested: KafkaBroker) -> None:
+        await tested.publish({"label": "asked"}, "reports", headers={"tracepanel-profile": "1"})
+        await tested.publish({"label": "plain"}, "reports")
+
+    handle(broker, TestKafkaBroker, send)
+
+    assert {str(trace.attrs["task.args"]): trace.profile is not None for trace in tasks(recorder)} == {
+        "({'label': 'asked'},)": True,
+        "({'label': 'plain'},)": False,
+    }
+
+
+def test_a_handler_awaiting_a_sleep_is_profiled_down_to_it(recorder: Recorder) -> None:
+    broker = KafkaBroker()
+
+    @broker.subscriber("reports")
+    async def build_sales_report(body: dict[str, str]) -> None:
+        await asyncio.sleep(0.15)
+
+    async def send(tested: KafkaBroker) -> None:
+        await tested.publish({"label": "asked"}, "reports", headers={"tracepanel-profile": "1"})
+
+    handle(broker, TestKafkaBroker, send)
+    (task,) = tasks(recorder)
+    profile = task.profile
+    assert profile is not None
+    frames = profile["frames"]
+    stacks = profile["stacks"]
+    assert isinstance(frames, list)
+    assert isinstance(stacks, list)
+    waiting = max(stacks, key=lambda stack: stack["count"])
+
+    assert [frames[index]["function"] for index in waiting["frames"]][-2:] == [
+        "test_a_handler_awaiting_a_sleep_is_profiled_down_to_it.<locals>.build_sales_report",
+        "sleep",
+    ]
+    assert frames[waiting["frames"][-1]] == IsPartialDict({"module": "asyncio.tasks", "waiting": True})
+    assert frames[waiting["frames"][-2]] == IsPartialDict({"in_app": True, "at_line": IsInt(gt=0)})
+    assert not any("select" in frame["function"] for frame in frames)

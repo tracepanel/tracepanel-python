@@ -29,7 +29,7 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
-from tracepanel.core import conf, errors, forks, registry, services
+from tracepanel.core import conf, errors, forks, profile, registry, services
 from tracepanel.core.context import adopt, current_span, current_trace, now_us, record_span, recorded, start_trace
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
@@ -53,6 +53,8 @@ SYSTEM = "rq"
 # job.meta keys tracepanel adds: they are saved with the job and read in the worker.
 PARENT = "tracepanel_parent"
 TRIGGER = "tracepanel_trigger"
+# Enqueued by a trace that asked to be profiled: the run is profiled too.
+PROFILE = "tracepanel_profile"
 MAX_RETRIES = "tracepanel_max_retries"
 # When a scheduled job is due, and the workflow it belongs to: the job whose run enqueued it, and that one's root.
 ETA = "tracepanel_eta"
@@ -92,6 +94,7 @@ def _meta(trace: Trace | None, span_id: str, job_id: str = "") -> dict[str, Any]
     meta: dict[str, Any] = {TRIGGER: trigger(trace)}
     if trace is not None:
         meta[PARENT] = f"{trace.id}:{span_id}"
+        profile.carry(meta, PROFILE)
     workflow = sent_from(trace, job_id)
     if workflow.parent_id:
         meta[PARENT_TASK] = workflow.parent_id
@@ -339,7 +342,8 @@ def _perform(original: Any) -> Any:  # noqa: ANN401
             _started(self)
         failure: Exception | None = None
         result: Any = None
-        with start_trace("task", str(self.func_name), attrs, root_kind="task.run") as trace:
+        asked = profile.asked_by_parent(self.meta.get(PROFILE))
+        with start_trace("task", str(self.func_name), attrs, root_kind="task.run", profile=asked) as trace:
             if link is not None:
                 trace.links.append(link)
             try:

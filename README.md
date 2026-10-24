@@ -108,12 +108,20 @@ console. The SDK samples the request's stack every `profile_interval_ms`
 profile to read) while it runs. It profiles a request that sends an
 `X-Tracepanel-Profile: 1` header, and every request that carries the
 `tracepanel_profile=1` cookie, which the panel's Profile toggle sets while it
-is on. `profile = true` profiles every trace, tasks included, and
-`profile_enabled = false` turns profiling off.
+is on. The tasks a profiled request queues are profiled too, on the worker
+(Django Tasks aside: they carry nothing to it). `profile = true` profiles
+every trace, tasks included, and `profile_enabled = false` turns profiling
+off.
 
 Code that keeps the CPU busy holds Python's GIL, so the sampler runs less
-often than the interval asks. An event loop running several requests at once
-gives no samples for that time: a stack can't be told apart by request.
+often than the interval asks. A frame that waits rather than computes (a
+sleep, a socket read, a lock, the event loop's select) is marked as waiting,
+and each stack says in which 10 ms of the trace it was seen. An async trace
+is its asyncio task's: while the task awaits, the profile shows what it
+awaits (`build_report` → `asyncio.sleep`, with the line of the `await`)
+instead of the idle event loop, so requests sharing a loop each get their
+samples. A moment the profiler can't tell between two traces on one thread
+is counted as dropped.
 
 ## Trace your own code
 

@@ -39,7 +39,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
-from tracepanel.core import conf, errors, forks, registry, services
+from tracepanel.core import conf, errors, forks, profile, registry, services
 from tracepanel.core.context import adopt, current_span, current_trace, now_us, record_span, recorded, start_trace
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
@@ -175,6 +175,8 @@ def _meta(task: Any, trace: Trace | None, span_id: str) -> dict[str, Any]:  # no
     }
     if trace is not None:
         meta["parent"] = f"{trace.id}:{span_id}"
+        # Enqueued by a trace that asked to be profiled: the run is profiled too.
+        profile.carry(meta, "profile")
     workflow = sent_from(trace, task.id)
     if workflow.parent_id:
         meta["parent_task"] = workflow.parent_id
@@ -405,7 +407,8 @@ def _start(huey: Any, task: Any) -> None:  # noqa: ANN401
     if conf.get_config().capture_task_args:
         attrs.update(arguments(task.args, task.kwargs).attrs())
     link = _link(meta, caller, caller_span, eager=eager)
-    context = start_trace("task", name, attrs, root_kind="task.run")
+    asked = profile.asked_by_parent(meta.get("profile"))
+    context = start_trace("task", name, attrs, root_kind="task.run", profile=asked)
     trace = context.__enter__()
     if link is not None:
         trace.links.append(link)
