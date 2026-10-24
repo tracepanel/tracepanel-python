@@ -99,6 +99,63 @@ def test_profiling_follows_the_settings(monkeypatch: pytest.MonkeyPatch) -> None
     assert not profile.wanted(asked=True)
 
 
+def carried() -> dict[str, object]:
+    """What a message sent now carries."""
+    headers: dict[str, object] = {}
+    profile.carry(headers, "tracepanel_profile")
+    return headers
+
+
+def test_work_a_profiled_trace_hands_off_asks_to_be_profiled_too() -> None:
+    with start_trace("http", "POST /reports", profile=True):
+        asked = carried()
+    with start_trace("http", "GET /"):
+        plain = carried()
+
+    assert asked == {"tracepanel_profile": "1"}
+    assert plain == {}
+    assert carried() == {}
+
+
+def test_a_trace_the_setting_profiles_hands_nothing_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Every trace is profiled anyway: the worker's setting decides for its runs.
+    monkeypatch.setenv("TRACEPANEL_PROFILE", "1")
+    conf.reset()
+
+    with start_trace("http", "GET /"):
+        assert carried() == {}
+
+
+def test_nothing_is_handed_on_while_profiling_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRACEPANEL_PROFILE_ENABLED", "0")
+    conf.reset()
+
+    with start_trace("http", "POST /reports", profile=True):
+        assert carried() == {}
+
+
+def test_a_run_asks_when_its_work_carries_the_flag_unless_it_runs_inside_a_profiled_trace() -> None:
+    assert profile.asked_by_parent("1")
+    assert profile.asked_by_parent(b"1")
+
+    assert not profile.asked_by_parent(None)
+    assert not profile.asked_by_parent("0")
+    assert not profile.asked_by_parent(1)
+
+    # An eager run, inside its caller: the caller's profile has its frames.
+    with start_trace("http", "POST /reports", profile=True):
+        assert not profile.asked_by_parent("1")
+    with start_trace("http", "GET /"):
+        assert profile.asked_by_parent("1")
+
+
+def test_a_run_that_followed_its_parent_hands_the_request_on_again() -> None:
+    with start_trace("task", "build_report", profile=profile.asked_by_parent("1")):
+        sent = carried()
+
+    assert sent == {"tracepanel_profile": "1"}
+
+
 def spin() -> None:
     event = threading.Event()
     event.wait(0.08)

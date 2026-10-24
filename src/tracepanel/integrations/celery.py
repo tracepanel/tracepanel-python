@@ -38,7 +38,7 @@ import sys
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from tracepanel.core import conf, errors, forks, registry, services
+from tracepanel.core import conf, errors, forks, profile, registry, services
 from tracepanel.core.context import (
     TraceBlock,
     adopt,
@@ -76,6 +76,8 @@ SYSTEM = "celery"
 PARENT = "tracepanel_parent"
 PUBLISHED = "tracepanel_published"
 TRIGGER = "tracepanel_trigger"
+# Sent by a trace that asked to be profiled: the run is profiled too.
+PROFILE = "tracepanel_profile"
 _runs: dict[str, TaskRun] = {}
 # Task id -> (when publishing started, the id the enqueue span will get, the trace's span count then, the message's
 # priority): known before the message leaves, so the worker's link can point at that span, and what publishing
@@ -129,6 +131,7 @@ def before_publish(sender: str | None = None, headers: dict[str, Any] | None = N
     if trace is not None:
         span_id = new_id()
         headers[PARENT] = f"{trace.id}:{span_id}"
+        profile.carry(headers, PROFILE)
         properties = kwargs.get("properties")
         priority = properties.get("priority") if isinstance(properties, Mapping) else None
         with _lock:
@@ -303,7 +306,8 @@ def _prerun(task_id: str, task: "Task[Any, Any]", kwargs: Mapping[str, object]) 
         )
         links.append(Link(kind="enqueued_by", trace_id=caller.id, span_id=span.id if span else caller_span.id))
 
-    _begin(task_id, start_trace("task", task.name, attrs, root_kind="task.run"), links)
+    asked = profile.asked_by_parent(_header(request, PROFILE))
+    _begin(task_id, start_trace("task", task.name, attrs, root_kind="task.run", profile=asked), links)
 
 
 def _identity(task_id: str, task: Any) -> Attrs:  # noqa: ANN401 (a Celery task)

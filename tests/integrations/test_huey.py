@@ -22,6 +22,7 @@ from huey.exceptions import CancelExecution
 from pytest_django.fixtures import Settings
 
 from tests.agentstore import AgentStore
+from tests.profiles import busy, share
 from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, stopped, without_worker_events
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Link, Span, Trace
@@ -40,6 +41,12 @@ WORKER = f"huey@{socket.gethostname()}:{os.getpid()}"
 def count_users(limit: int) -> int:
     logger.warning("counting up to %s", limit)
     return limit
+
+
+@huey.task()
+def crunch(label: str) -> str:
+    busy()
+    return label
 
 
 @huey.task(retries=1)
@@ -687,3 +694,27 @@ def test_tasks_listing_and_links(store: AgentStore) -> None:
         check_order=False,
     )
     assert store.related(str(runs[0]["id"]))["enqueued_by"] == IsPartialDict(id=request.id)
+
+
+def profiled(traces: list[Trace]) -> dict[str, bool]:
+    """Each run, by its arguments: whether it has a profile."""
+    return {str(trace.attrs["task.args"]): trace.profile is not None for trace in tasks(traces)}
+
+
+def test_a_task_a_profiled_request_enqueues_is_profiled_too(traces: list[Trace]) -> None:
+    with start_trace("http", "POST /reports", profile=True):
+        crunch("asked")
+    with start_trace("http", "GET /reports"):
+        crunch("plain")
+    work()
+
+    assert profiled(traces) == {"('asked',)": True, "('plain',)": False}
+
+
+def test_an_immediate_task_is_in_its_profiled_callers_profile(traces: list[Trace]) -> None:
+    huey.immediate = True
+    with start_trace("http", "POST /reports", profile=True) as request:
+        crunch("immediate")
+
+    assert profiled(traces) == {"('immediate',)": False}
+    assert share(request, "busy") > 0

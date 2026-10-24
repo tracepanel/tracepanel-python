@@ -22,6 +22,7 @@ from rq.job import Job  # noqa: E402
 from rq.scheduler import RQScheduler  # noqa: E402
 
 from tests.agentstore import AgentStore  # noqa: E402
+from tests.profiles import busy, share  # noqa: E402
 from tests.tasklive import (  # noqa: E402
     GOODBYE,
     Recorder,
@@ -47,6 +48,11 @@ logger = logging.getLogger("tests.jobs")
 def count_users(limit: int) -> int:
     logger.warning("counting up to %s", limit)
     return limit
+
+
+def crunch(label: str) -> str:
+    busy()
+    return label
 
 
 def sync_crm() -> None:
@@ -545,3 +551,27 @@ def test_tasks_listing_and_links(queue: Queue, store: AgentStore) -> None:
         check_order=False,
     )
     assert store.related(str(runs[0]["id"]))["enqueued_by"] == IsPartialDict(id=request.id)
+
+
+def profiled(traces: list[Trace]) -> dict[str, bool]:
+    """Each run, by its arguments: whether it has a profile."""
+    return {str(trace.attrs["task.args"]): trace.profile is not None for trace in tasks(traces)}
+
+
+def test_a_job_a_profiled_request_enqueues_is_profiled_too(queue: Queue, traces: list[Trace]) -> None:
+    with start_trace("http", "POST /reports", profile=True):
+        queue.enqueue(crunch, "asked")
+    with start_trace("http", "GET /reports"):
+        queue.enqueue(crunch, "plain")
+    work(queue)
+
+    assert profiled(traces) == {"('asked',)": True, "('plain',)": False}
+
+
+def test_a_job_run_inline_is_in_its_profiled_callers_profile(traces: list[Trace]) -> None:
+    inline = Queue("default", connection=fakeredis.FakeRedis(), is_async=False)
+    with start_trace("http", "POST /reports", profile=True) as request:
+        inline.enqueue(crunch, "inline")
+
+    assert profiled(traces) == {"('inline',)": False}
+    assert share(request, "busy") > 0

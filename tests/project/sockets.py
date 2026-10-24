@@ -9,6 +9,7 @@ from channels.routing import ChannelNameRouter, ProtocolTypeRouter, URLRouter
 from django.contrib.auth.models import User
 from django.urls import path
 
+from tests.profiles import busy
 from tracepanel._compat import override
 
 
@@ -62,6 +63,9 @@ class ThumbnailConsumer(AsyncConsumer):
             raise ValueError(msg)
         members = await User.objects.acount()
         await self.channel_layer.send("reports", {"type": "report.build", "members": members})
+
+    async def thumbnails_crunch(self, message: dict[str, object]) -> None:
+        busy()
 
     async def thumbnails_wait(self, message: dict[str, object]) -> None:
         await asyncio.to_thread(release.wait, 10)

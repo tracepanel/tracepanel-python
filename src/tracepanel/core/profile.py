@@ -8,13 +8,19 @@ which one a frame belongs to, so their samples are dropped for that time.
 A trace's work can hop to another thread: an ASGI server runs a sync view through sync_to_async, a sync endpoint
 through run_in_threadpool, in a worker thread, while the event loop's thread waits in its selector. The hop follows it
 (`followed()`): the worker thread is sampled for the trace until the call returns, and the thread it came from is not.
+
+A trace that asked to be profiled (a request's header or cookie) hands the request on with the work it starts: a
+task's message, a job's meta, a worker channel's message carries a flag next to its link (`carry()`), and the run
+that reads it (`asked_by_parent()`) is profiled too, and so are the tasks it sends in turn. The `profile` setting
+profiles every trace anyway: its traces carry nothing. Calls to other apps over HTTP don't carry it: they may not be
+the app's own.
 """
 
 import sys
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, MutableMapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -27,6 +33,8 @@ from tracepanel.core.frames import is_in_app, library_path, relative
 
 HEADER = "x-tracepanel-profile"
 COOKIE = "tracepanel_profile"
+# What the work a profiled trace hands off carries under each queue's own key: its run is profiled too.
+CARRIED = "1"
 # How deep a stack is walked: a recursion beyond it is cut, outermost frames kept.
 MAX_DEPTH = 128
 # Distinct stacks one trace keeps; the rest are counted as one "(other)" frame, so a profile stays small.
@@ -54,6 +62,8 @@ class Recording:
     samples: int = 0
     # Calls running its work in other threads: meanwhile its own thread only waits for them, and is not sampled.
     away: int = 0
+    # The trace asked to be profiled (not only the setting): the work it hands off asks too (carry()).
+    asked: bool = False
 
 
 # The recording of the trace running in this context: the work a worker thread does for it is sampled for it too.
@@ -70,10 +80,10 @@ class Sampler:
         # The interpreter's GIL switch interval before the first profiled trace, put back after the last one.
         self._switch: float | None = None
 
-    def start(self) -> Recording:
-        """Begin recording the calling thread's stacks for a trace it starts."""
+    def start(self, *, asked: bool = False) -> Recording:
+        """Begin recording the calling thread's stacks for a trace it starts; `asked`: the trace asked for it."""
         interval_ms = max(conf.get_config().profile_interval_ms, 1)
-        recording = Recording(thread_id=threading.get_ident(), interval_us=interval_ms * 1000)
+        recording = Recording(thread_id=threading.get_ident(), interval_us=interval_ms * 1000, asked=asked)
         with self._lock:
             if not self._threads:
                 self._quicken(interval_ms / 1000)
@@ -273,6 +283,25 @@ def by_cookie(cookies: str | None) -> bool:
         return False
     morsel = jar.get(COOKIE)
     return morsel is not None and morsel.value == "1"
+
+
+def carry(carrier: MutableMapping[str, object], key: str) -> None:
+    """Mark the work the current trace hands off (a message's headers, a job's meta) if it asked to be profiled.
+
+    Under `key`, the queue's own name for it, next to the link the integration puts there. Nothing otherwise: a
+    trace the setting profiles, or one not profiled, or any while profiling is off, hands nothing on.
+    """
+    recording = current.get()
+    if recording is not None and recording.asked:
+        carrier[key] = CARRIED
+
+
+def asked_by_parent(flag: object) -> bool:
+    """Whether a run asks to be profiled: the work it runs carries the flag a profiled trace put there (carry()).
+
+    Not a run inline in a profiled trace (an eager task, run inside its caller): that trace's profile has its frames.
+    """
+    return (flag == CARRIED or flag == CARRIED.encode()) and current.get() is None
 
 
 def wanted(*, asked: bool) -> bool:

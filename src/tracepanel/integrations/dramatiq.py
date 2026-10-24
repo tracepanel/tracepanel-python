@@ -33,7 +33,7 @@ import sys
 from contextvars import ContextVar
 from typing import Any
 
-from tracepanel.core import conf, errors, forks, registry, services
+from tracepanel.core import conf, errors, forks, profile, registry, services
 from tracepanel.core.context import adopt, current_trace, now_us, record_span, recorded, start_trace
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
@@ -59,6 +59,8 @@ SYSTEM = "dramatiq"
 PARENT = "tracepanel_parent"
 PUBLISHED = "tracepanel_published"
 TRIGGER = "tracepanel_trigger"
+# Sent by a trace that asked to be profiled: the run is profiled too.
+PROFILE = "tracepanel_profile"
 # Set on a message's first send: a send of a message that has it is Retries' requeue or a delayed message moved on.
 SENT = "tracepanel_sent"
 # The workflow a message belongs to: the message whose run sent it, the first of that line, its group.
@@ -147,6 +149,7 @@ class TracepanelHooks:
             return
         span_id = new_id()
         options[PARENT] = f"{trace.id}:{span_id}"
+        profile.carry(options, PROFILE)
         with _lock:
             _sending[message.message_id] = (now_us(), span_id, recorded())
 
@@ -251,7 +254,8 @@ class TracepanelHooks:
             attrs["task.queue_wait"] = max(started - published, 0)
         if conf.get_config().capture_task_args:
             attrs.update(arguments(message.args, message.kwargs).attrs())
-        context = start_trace("task", name, attrs, root_kind="task.run")
+        asked = profile.asked_by_parent(options.get(PROFILE))
+        context = start_trace("task", name, attrs, root_kind="task.run", profile=asked)
         run: TaskRun | None = None
         try:
             trace = context.__enter__()

@@ -570,3 +570,17 @@ def test_a_redis_layer_s_own_commands_are_not_redis_spans(traces: list[Trace], u
 
     # Its sorted sets, their expiry and capacity checks, and each receive's blocking pop are the transport's.
     assert [span.name for trace in traces for span in trace.spans if span.kind == "redis"] == []
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_message_a_profiled_request_sends_to_a_worker_is_profiled_too(traces: list[Trace]) -> None:
+    with start_trace("http", "POST /images/", profile=True):
+        send("thumbnails", {"type": "thumbnails.crunch", "label": "asked"})
+    with start_trace("http", "GET /images/"):
+        send("thumbnails", {"type": "thumbnails.crunch", "label": "plain"})
+    work(lambda: len(tasks(traces)) == 2)
+
+    assert {str(trace.attrs["task.kwargs"]): trace.profile is not None for trace in tasks(traces)} == {
+        "{'label': 'asked'}": True,
+        "{'label': 'plain'}": False,
+    }

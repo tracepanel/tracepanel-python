@@ -296,6 +296,16 @@
   connect events. The app's pool and event loop are left alone: asyncpg's
   connections belong to the loop they were made on. An in-memory SQLite
   database is explained on its one connection.
+- A task that a profiled request starts is profiled too. The Profile toggle
+  profiled the request but not the Celery, Dramatiq, RQ, Huey, django-q2,
+  FastStream or Channels task it queued, often where its time goes. The
+  message carries a `tracepanel_profile` flag next to its link to the
+  enqueue (`tracepanel-profile` in FastStream's headers), and the worker
+  profiles the run, and the tasks that run sends in turn. Only a trace that
+  asked to be profiled hands it on: with `profile = true` every trace is
+  profiled anyway. A task run inside its caller is in the caller's profile.
+  Django Tasks carry nothing to the worker, so their runs aren't profiled,
+  and calls to other apps over HTTP don't carry the flag.
 
 ## 0.4.1 (2026-10-21)
 
