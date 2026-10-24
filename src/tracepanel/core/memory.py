@@ -1,9 +1,10 @@
 """Where a profiled trace's memory goes: tracemalloc's count of what Python allocates (the profile's `memory`).
 
-tracemalloc starts with the first profiled trace, unless the app traces already, and stops with the sampler, once
-no profiled trace has run for a while. It slows down every allocation the process makes meanwhile: only while traces
-are profiled. It counts the whole process: a trace that ran beside others (`shared`) has their allocations in its
-numbers too.
+Only for a trace that asks for it (a request's "memory", or the `profile_memory` setting): tracemalloc slows down
+every allocation the process makes, a short request several times over, and the requests beside it too. It starts
+with the first such trace, unless the app traces already, and stops once none has run for a while, even while other
+traces are still profiled. It counts the whole process: a trace that ran beside others (`shared`) has their
+allocations in its numbers too.
 
 - `peak`: the highest level of Python's memory during the trace, above the level at its start. Exact while
   tracemalloc is ours: its peak is set back at each profiled trace's start, and the peak reached until then goes to
@@ -41,6 +42,8 @@ STEP = 1 << 20
 SNAPSHOT_SHARE = 0.25
 # The sites a profile keeps, largest first.
 MAX_SITES = 50
+# Sampler ticks without a trace whose memory is counted before tracemalloc stops (it starts again with the next one).
+IDLE_TICKS = 400
 # This package's own allocations are its own business: made in its code, or in the standard library's on its behalf.
 _OWN = str(Path(__file__).resolve().parents[1])
 _STDLIB = tuple({str(Path(sysconfig.get_paths()[key]).resolve()) for key in ("stdlib", "platstdlib")})
@@ -93,10 +96,13 @@ class Tracer:
         self._live: list[Memory] = []
         # Whether this package started tracemalloc: it stops it again, and may set its peak back.
         self._owned = False
+        # Sampler ticks since the last trace whose memory is counted ended.
+        self._idle = 0
 
     def begin(self) -> Memory | None:
         """A trace's memory from now; tracemalloc starts if nothing traces yet. None if it couldn't trace."""
         with self._lock:
+            self._idle = 0
             if not tracemalloc.is_tracing():
                 tracemalloc.start(FRAMES)
                 self._owned = True
@@ -135,9 +141,17 @@ class Tracer:
             return max(memory.high, level), level
 
     def watch(self) -> None:
-        """A sampler tick: each trace's highest level, and a snapshot for those that grew by a step since theirs."""
+        """A sampler tick: each trace's highest level, and a snapshot for those that grew by a step since theirs.
+
+        tracemalloc stops after IDLE_TICKS without a trace to count for, while time-only traces keep the sampler on.
+        """
         if not self._live:
+            if self._owned:
+                self._idle += 1
+                if self._idle >= IDLE_TICKS:
+                    self.idle()
             return
+        self._idle = 0
         now = time.perf_counter_ns()
         # Under the lock: a trace beginning hands the running ones the peak it sets back.
         with self._lock:
@@ -158,11 +172,12 @@ class Tracer:
             memory.snapshot_ns += took
 
     def idle(self) -> None:
-        """No profiled trace runs: tracemalloc stops, if this package started it."""
+        """No trace whose memory is counted runs: tracemalloc stops, if this package started it."""
         with self._lock:
             if self._owned and not self._live:
                 tracemalloc.stop()
                 self._owned = False
+                self._idle = 0
 
 
 # One for the process: tracemalloc is the process's.

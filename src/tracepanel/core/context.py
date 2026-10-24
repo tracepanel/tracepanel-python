@@ -73,7 +73,9 @@ class TraceBlock:
     one exited already, does nothing.
     """
 
-    def __init__(self, kind: str, name: str, attrs: Attrs | None, *, root_kind: str | None, profile: bool) -> None:
+    def __init__(
+        self, kind: str, name: str, attrs: Attrs | None, *, root_kind: str | None, profile: bool | str | None
+    ) -> None:
         self.kind, self.name, self.attrs, self.root_kind, self.profile = kind, name, attrs, root_kind, profile
         self.trace: Trace | None = None
         self._started = 0
@@ -141,12 +143,18 @@ class _Saved:
 
 
 def start_trace(
-    kind: str, name: str, attrs: Attrs | None = None, *, root_kind: str | None = None, profile: bool = False
+    kind: str,
+    name: str,
+    attrs: Attrs | None = None,
+    *,
+    root_kind: str | None = None,
+    profile: bool | str | None = False,
 ) -> TraceBlock:
     """Run the block as a new trace whose root span has the same name (and kind, unless `root_kind` says).
 
-    `profile`: the request asked to be profiled, or the work it runs carries a profiled trace's request
-    (profile.asked_by_parent); the setting profiles every trace anyway.
+    `profile`: what the request asked for (profile.requested: "1", or "memory" with its memory; True is "1"), or what
+    the work it runs carries from a profiled trace's request (profile.asked_by_parent); the setting profiles every
+    trace anyway.
     """
     return TraceBlock(kind, name, attrs, root_kind=root_kind, profile=profile)
 

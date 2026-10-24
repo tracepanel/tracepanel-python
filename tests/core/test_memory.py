@@ -11,6 +11,7 @@ from tests.profiles import busy
 from tracepanel.core import conf, memory
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Trace
+from tracepanel.core.profile import MEMORY
 
 # A list of 5 million items: 40 MB of pointers.
 COUNT = 5_000_000
@@ -66,7 +67,7 @@ def hold() -> list[int]:
 
 
 def test_a_profiled_trace_has_its_peak_and_where_the_memory_went() -> None:
-    with start_trace("command", "build", profile=True) as trace:
+    with start_trace("command", "build", profile=MEMORY) as trace:
         numbers = hold()
     del numbers
     line = hold.__code__.co_firstlineno
@@ -93,7 +94,7 @@ def test_a_profiled_trace_has_its_peak_and_where_the_memory_went() -> None:
 
 
 def test_memory_freed_before_the_end_is_in_the_peak_not_the_net() -> None:
-    with start_trace("command", "build", profile=True) as trace:
+    with start_trace("command", "build", profile=MEMORY) as trace:
         hold()
         busy(0.02)
 
@@ -117,7 +118,7 @@ def copied() -> list[dict[str, int]]:
 
 
 def test_a_library_that_allocates_is_named_after_the_projects_line_that_called_it() -> None:
-    with start_trace("command", "copy", profile=True) as trace:
+    with start_trace("command", "copy", profile=MEMORY) as trace:
         copies = copied()
     line = copied.__code__.co_firstlineno
     sites = memory_of(trace)["sites"]
@@ -150,6 +151,56 @@ def test_an_unprofiled_trace_has_no_memory_or_gc() -> None:
     assert "profile" not in trace.to_dict()
 
 
+@pytest.mark.usefixtures("untraced")
+def test_a_profiled_trace_counts_memory_only_when_asked() -> None:
+    with start_trace("command", "build", profile=True) as trace:
+        hold()
+        gc.collect()
+    tracing = tracemalloc.is_tracing()
+
+    assert profile_of(trace) == IsPartialDict(
+        {
+            "samples": IsInt(gt=0),
+            "gc": {"collections": IsInt(ge=1), "pause_us": IsInt(ge=0), "pauses": IsList(length=(1, ...))},
+        }
+    )
+    assert "memory" not in profile_of(trace)
+
+    assert not tracing
+
+
+@pytest.mark.usefixtures("untraced")
+def test_the_setting_counts_every_profiled_traces_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRACEPANEL_PROFILE_MEMORY", "1")
+    conf.reset()
+
+    with start_trace("command", "build", profile=True) as trace:
+        numbers = hold()
+    with start_trace("command", "plain") as plain:
+        hold()
+    del numbers
+
+    assert memory_of(trace) == IsPartialDict({"peak": IsInt(ge=SIZE), "net": IsInt(ge=SIZE)})
+
+    assert plain.profile is None
+
+
+@pytest.mark.usefixtures("untraced")
+def test_tracemalloc_stops_while_only_time_is_profiled() -> None:
+    with start_trace("command", "build", profile=MEMORY):
+        busy(0.01)
+    started = tracemalloc.is_tracing()
+    # The sampler ticks on for a trace profiled for its time alone.
+    for _ in range(memory.IDLE_TICKS - 1):
+        memory.TRACER.watch()
+    still = tracemalloc.is_tracing()
+    memory.TRACER.watch()
+
+    assert started
+    assert still
+    assert not tracemalloc.is_tracing()
+
+
 def test_garbage_collections_during_a_profiled_trace_are_its_pauses() -> None:
     with start_trace("command", "collects", profile=True) as trace:
         busy(0.01)
@@ -180,7 +231,7 @@ def test_an_app_tracing_memory_itself_is_left_as_it_was() -> None:
     del spike
     _, peak_before = tracemalloc.get_traced_memory()
 
-    with start_trace("command", "build", profile=True) as trace:
+    with start_trace("command", "build", profile=MEMORY) as trace:
         numbers = hold()
     # The sampler, idle for a while.
     memory.TRACER.idle()
@@ -208,7 +259,7 @@ def test_an_app_tracing_memory_itself_is_left_as_it_was() -> None:
 
 
 def test_a_trace_beside_others_says_its_numbers_are_shared() -> None:
-    with start_trace("command", "alone", profile=True) as alone:
+    with start_trace("command", "alone", profile=MEMORY) as alone:
         busy(0.02)
     begun, done = threading.Event(), threading.Event()
     results: list[Trace] = []
@@ -219,7 +270,7 @@ def test_a_trace_beside_others_says_its_numbers_are_shared() -> None:
             done.wait(5)
 
     def profiled(barrier: threading.Barrier) -> None:
-        with start_trace("command", "profiled", profile=True) as trace:
+        with start_trace("command", "profiled", profile=MEMORY) as trace:
             barrier.wait(5)
             busy(0.1)
             barrier.wait(5)
@@ -229,7 +280,7 @@ def test_a_trace_beside_others_says_its_numbers_are_shared() -> None:
     other = threading.Thread(target=plain)
     other.start()
     begun.wait(5)
-    with start_trace("command", "beside", profile=True) as beside:
+    with start_trace("command", "beside", profile=MEMORY) as beside:
         busy(0.02)
     done.set()
     other.join()

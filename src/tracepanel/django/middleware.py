@@ -164,8 +164,8 @@ def _session(request: HttpRequest) -> Attrs:
     return details.session(loaded.items()) if isinstance(loaded, dict) else {}
 
 
-def _profiled(request: HttpRequest) -> bool:
-    """Whether the request asks to be profiled, by header or by the cookie a browser sends."""
+def _profiled(request: HttpRequest) -> profile.Asked | None:
+    """What the request asks for, by header or by the cookie a browser sends: the profile, with its memory or not."""
     return profile.requested(request.headers.get(profile.HEADER), request.headers.get("cookie"))
 
 
