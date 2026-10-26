@@ -5,18 +5,51 @@
 [![Python](https://img.shields.io/pypi/pyversions/tracepanel)](https://pypi.org/project/tracepanel/)
 [![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/tracepanel/tracepanel-python)
 
-**See what your app does on every request.** Tracepanel records each request,
-background task and command of your Python app with its SQL queries, logs and
-errors. It points out N+1 queries, duplicate queries and slow SQL, and names the
-line of code to fix. You read it in a panel on your pages and in a console.
+**See what your Python app is really doing.** Tracepanel records each
+request, background task and command of your app with its SQL queries, Redis
+commands, outgoing HTTP calls, templates, logs and errors. It points out N+1
+queries and calls, duplicates, slow SQL and slow HTTP calls, and names the line
+of code to fix. You read it in a panel on your pages and in a console.
 
 It runs while you develop, and everything stays on your machine.
+
+[![A 40-second demo: Swagger UI's Try it out on an endpoint, and the panel docked under it with the request's call tree, an N+1 with its query plan, a background task, its profile, and the same call after the fix](https://raw.githubusercontent.com/tracepanel/tracepanel-python/main/assets/demo-video.jpg)](https://tracepanel.dev/video/demo.mp4)
+
+▶ [Watch the 40-second demo](https://tracepanel.dev/video/demo.mp4)
+
+## Works with
+
+| | Supported |
+| --- | --- |
+| **Python** | 3.11 to 3.15. With Django: 5.2 on Python 3.11 to 3.14, 6.0 on 3.12 to 3.14, 6.1 on 3.12 to 3.15, each pair tested in CI. |
+| **Frameworks** | Django 5.2, 6.0 and 6.1, FastAPI, Starlette, Flask, Falcon (WSGI and ASGI). Any other ASGI or WSGI app, such as Litestar, Quart, Bottle or Pyramid, at the request level. Under any ASGI or WSGI server, such as uvicorn or gunicorn, or the framework's own. In Django also signals, cache, email, file storages, `collectstatic`, `migrate` and management commands. |
+| **Templates** | Django's and Jinja2. |
+| **Databases** | SQLAlchemy 2 and the Django ORM, or a driver directly: sqlite3, aiosqlite, psycopg, psycopg2, asyncpg, PyMySQL, aiomysql, asyncmy, mysqlclient, MySQL Connector, oracledb, pyodbc and pymssql. EXPLAIN on SQLite, PostgreSQL, MySQL and SQL Server. MongoDB through PyMongo. |
+| **APIs** | Django REST framework, Django Ninja, Strawberry, Graphene, htmx. |
+| **Background work** | Celery, Dramatiq, RQ, Huey, Taskiq, FastStream. In Django also django-q2, Django Tasks and Channels. |
+| **Clients** | requests and urllib3, httpx, aiohttp, Redis and Valkey, AWS through boto3 and aiobotocore, the OpenAI and Anthropic SDKs. Spans from OpenTelemetry instrumentations join the trace. |
+| **Logs** | The lines you write with `logging`, each on the request, task or command that wrote it. |
+| **Profiling** | Where a request's or a task's time goes, and its memory when you ask for it. |
+| **Tests** | `pytest --tracepanel` fails a test that makes an N+1 or duplicate queries. |
+
+The libraries' versions, the settings and what each integration records are in
+the [Python docs](https://tracepanel.dev/docs/python).
 
 ## Install
 
 ```bash
 pip install tracepanel
 ```
+
+An integration turns on by itself when its library is installed. An extra
+installs the library with the lowest version Tracepanel supports, such as
+`pip install "tracepanel[fastapi,sqlalchemy]"`: `django`, `fastapi`,
+`starlette`, `flask`, `falcon`, `sqlalchemy`, `mongodb`, `drf`, `ninja`,
+`strawberry`, `channels`, `celery`, `dramatiq`, `rq`, `huey`, `taskiq`,
+`faststream`, `django-q2` and `otel`. For Django,
+`pip install django-tracepanel` is the same as `tracepanel[django]`.
+
+## Setup
 
 Tracepanel is on only in development: when `DEBUG` is on, in a debug server,
 or under `tracepanel run`. Add it to your app:
@@ -46,41 +79,25 @@ app = Flask(__name__)
 tracepanel.flask.install(app)
 ```
 
-Open a page of your app and click the badge in the corner. On a page that
-loads each post's author in its own query, the panel shows
-`SELECT auth_user ×50` marked N+1, the line of code that ran it, and the
-`select_related()` that turns 50 queries into one. The console at
-`/__tracepanel__/` holds every request, task and command the app ran.
+Open a page of your app and click the badge in the corner to open the panel.
+The console at `/__tracepanel__/` holds every request, task and command the
+app ran.
 
-Tracepanel also traces Celery, Dramatiq, RQ, Huey, Taskiq, FastStream,
-SQLAlchemy, Strawberry, Graphene, Django REST framework, Django Ninja,
-Channels, django-q2 and htmx when they are installed. SQL you run
-through a database driver without an ORM is traced too: sqlite3, psycopg,
-psycopg2, asyncpg, the MySQL drivers, oracledb, pyodbc and pymssql. So are
-the HTTP calls your app makes with requests, httpx or aiohttp, and its
-Redis commands. Each AWS call boto3 or aiobotocore makes is a span named as
-AWS names it, `S3 PutObject avatars/1.png`: S3 calls are storage calls,
-DynamoDB's are datastore commands, SQS and SNS sends are messages, and the
-N+1 and duplicate checks apply to them. A call to OpenAI or Anthropic through
-their SDKs is a span with the model, the tokens it used, why it stopped, the
-tools it called and, for a stream, the time to its first token. The messages
-themselves are kept only with `capture_llm_content = true`. The console
-estimates each call's cost from list prices: `llm_prices = "prices.json"`
-names a file of your own, in the shape of the agent's `llm-prices.json`,
-that overrides or adds models. Tracepanel reads the log
-lines you write with `logging` and attaches each one to the request, task or
-command that wrote it. Your logging configuration stays as it is.
+## What it looks like
 
-In Django it shows each signal sent, its sender, the line that sent it and
-the receivers that ran, each with its own time, queries and errors.
-Each call a file storage makes to its backend is a span, on the local disk
-or S3, and `collectstatic` shows its phases and its slowest files.
-`migrate` shows each migration it applied or unapplied, each operation in it
-with its SQL, and marks the operations that lock or rewrite a table on your
-database, such as a column type change on PostgreSQL. The console warns of
-migrations not applied yet.
+Each request shows its call tree, with the SQL queries, the calls and the
+issues in it. Here a FastAPI and SQLAlchemy store lists its products from
+Swagger UI, and loads each product's category, brand and reviews in a query of
+its own:
 
-For Django, `pip install django-tracepanel` installs the same package.
+![A FastAPI app's Swagger UI with an endpoint run with Try it out and the start of its 200 response, and the panel docked under it with the same request's call tree and its three N+1 queries](https://raw.githubusercontent.com/tracepanel/tracepanel-python/main/assets/panel-call-tree.png)
+
+The panel also lists the requests your pages and tools make with `fetch()`,
+here Swagger UI's Try it out. Each issue names the line that ran it and the fix
+in your library's terms, such as SQLAlchemy's `joinedload()` or Django's
+`select_related()`:
+
+![The same Swagger UI with the panel docked under it on that request's Issues tab: each N+1 with the line it comes from and the fix](https://raw.githubusercontent.com/tracepanel/tracepanel-python/main/assets/panel-issues.png)
 
 ## Run without changing your code
 
@@ -121,41 +138,28 @@ several times a second): `quiet_access_log = false` keeps them.
 ## Profile a request
 
 A profile shows where a request's time went in code, as a flame graph in the
-console. The SDK samples the request's stack every `profile_interval_ms`
-(1 by default, so a short request still has a
-profile to read) while it runs. It profiles a request that sends an
-`X-Tracepanel-Profile: 1` header, and every request that carries the
-`tracepanel_profile=1` cookie, which the panel's Profile toggle sets while it
-is on. The tasks a profiled request queues are profiled too, on the worker
-(Django Tasks aside: they carry nothing to it). `profile = true` profiles
-every trace, tasks included, and `profile_enabled = false` turns profiling
-off.
+console. Tracepanel profiles a request that sends an `X-Tracepanel-Profile: 1`
+header, and every request while the panel's Profile button is on (it sets the
+`tracepanel_profile=1` cookie). The tasks a profiled request queues are
+profiled too, on the worker. `profile = true` profiles every trace, and
+`profile_enabled = false` turns profiling off.
 
-Code that keeps the CPU busy holds Python's GIL, so the sampler runs less
-often than the interval asks. A frame that waits rather than computes (a
-sleep, a socket read, a lock, the event loop's select) is marked as waiting,
-and each stack says in which 10 ms of the trace it was seen. An async trace
-is its asyncio task's: while the task awaits, the profile shows what it
-awaits (`build_report` → `asyncio.sleep`, with the line of the `await`)
-instead of the idle event loop, so requests sharing a loop each get their
-samples. A moment the profiler can't tell between two traces on one thread
-is counted as dropped.
+A frame that waits rather than computes (a sleep, a socket read, a lock) is
+marked as waiting, and an async trace shows what its task awaits instead of
+the idle event loop. Every profile counts garbage collections.
 
-Every profile counts garbage collections, with how long each one stopped
-the trace and when. A profile counts memory too when asked: an
-`X-Tracepanel-Profile: memory` header, a `tracepanel_profile=memory` cookie,
-or `profile_memory = true` for every profiled trace. Tasks a request asking
-for memory queues count theirs too. Memory is counted with Python's
-tracemalloc: the peak above the level at the trace's start, what is still
-allocated at its end (`net`), and the 50 sites that held the most at the
-peak, each the project's line that allocated or called the library that did.
-tracemalloc starts with the first trace that asks and stops once none has
-run for a while. It slows down every allocation the whole process makes
-meanwhile: a short request can take several times longer, and the requests
-running beside it slow down too. An app that runs tracemalloc itself keeps
-it as it is, and its peak is not reset. tracemalloc counts the whole
-process: a trace that ran beside others says its numbers are shared. A trace
-that isn't profiled pays for none of this.
+A profile counts memory too when asked: `X-Tracepanel-Profile: memory`, the
+`tracepanel_profile=memory` cookie, or `profile_memory = true`. It uses
+Python's tracemalloc, which slows down every allocation of the whole process
+while it runs, so leave it off when you measure time. A trace that isn't
+profiled pays for none of this. It reports the peak above the level at the
+trace's start, what is still allocated at its end, and the 50 sites that held
+the most.
+
+The sampler takes the stack every `profile_interval_ms` (1 by default). Code
+that keeps the CPU busy holds Python's GIL, so it samples less often than
+that. The [Profile tab](https://tracepanel.dev/docs/panel#profile) shows what
+a profile holds.
 
 ## Trace your own code
 
@@ -262,14 +266,6 @@ same agent, and async tests under anyio or pytest-asyncio work the same way.
 | `tracepanel clear` | deletes every stored trace, log, query, email and issue |
 | `tracepanel mcp` | gives an AI coding agent your traces over MCP |
 
-## Supported versions
-
-| Python | Django |
-| --- | --- |
-| 3.11 | 5.2 |
-| 3.12, 3.13, 3.14 | 5.2, 6.0, 6.1 |
-| 3.15 | 6.1 |
-
 ## Documentation
 
 The documentation is at
@@ -289,6 +285,6 @@ own at [tracepanel.dev/docs/django](https://tracepanel.dev/docs/django).
 ## License
 
 Licensed under the [MIT License](LICENSE). The agent it installs,
-`tracepanel-agent`, is under the
+`tracepanel-agent`, is free to use under the
 [FSL-1.1-ALv2](https://github.com/tracepanel/tracepanel/blob/main/LICENSE):
 source available, and Apache-2.0 two years after each release.

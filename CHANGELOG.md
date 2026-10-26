@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The README opens with the 40-second demo video and a table of what
+  Tracepanel works with, and its screenshots show a FastAPI app's Swagger UI
+  with the panel docked under it.
+
 ## 0.5.1 (2026-10-26)
 
 ### Added
