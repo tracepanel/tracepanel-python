@@ -20,7 +20,7 @@ from tracepanel.integrations import htmx
 if TYPE_CHECKING:
     from django.contrib.auth.base_user import AbstractBaseUser
     from django.contrib.auth.models import AnonymousUser
-from tracepanel.core.context import current_trace, start_trace
+from tracepanel.core.context import start_trace, within_trace
 from tracepanel.core.model import Attrs, Trace
 from tracepanel.storage.transport import complete
 
@@ -189,7 +189,7 @@ class TracepanelMiddleware:
             return get_response(request)
         if request.path_info.startswith(config.prefix):
             return console.dispatch(request, request.path_info.removeprefix(config.prefix))
-        if conf.matches(request.path_info, config.ignore_paths) or current_trace() is not None:
+        if conf.matches(request.path_info, config.ignore_paths) or within_trace():
             return get_response(request)
 
         with start_trace(
@@ -211,7 +211,7 @@ class TracepanelMiddleware:
         if request.path_info.startswith(config.prefix):
             # The console's API reads SQLite (and user switching writes a session): off the event loop.
             return await sync_to_async(console.dispatch)(request, request.path_info.removeprefix(config.prefix))
-        if conf.matches(request.path_info, config.ignore_paths) or current_trace() is not None:
+        if conf.matches(request.path_info, config.ignore_paths) or within_trace():
             return await get_response(request)
 
         with start_trace(

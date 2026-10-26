@@ -20,7 +20,7 @@ from tracepanel.console import widget
 from tracepanel.console.messages import MAX_BODY, is_local
 from tracepanel.core import conf, errors, profile, w3c
 from tracepanel.core import request as details
-from tracepanel.core.context import current_trace, start_span, start_trace
+from tracepanel.core.context import start_span, start_trace, within_trace
 from tracepanel.core.model import Attrs, Trace
 from tracepanel.integrations import htmx
 from tracepanel.storage.transport import complete
@@ -181,7 +181,7 @@ class TracepanelMiddleware:
         if path.startswith(config.prefix):
             await self._console(scope, receive, send, path.removeprefix(config.prefix))
             return
-        if not config.enabled or conf.matches(path, config.ignore_paths) or current_trace() is not None:
+        if not config.enabled or conf.matches(path, config.ignore_paths) or within_trace():
             # Already traced by an app this one is mounted in (a Starlette app inside FastAPI): one trace per request.
             await self.app(scope, receive, send)
             return

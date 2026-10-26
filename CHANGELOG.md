@@ -4,6 +4,18 @@
 
 ### Added
 
+- A pytest plugin turns what the agent finds into test failures.
+  `pytest --tracepanel`, or `tracepanel = true` in the pytest settings, runs
+  each test as a `test` trace, and an issue of a kind in `tracepanel_fail_on`
+  (`n+1` and `duplicates` by default) fails the test with its title, query,
+  call site and a link to the trace. A request made through Django's,
+  Starlette's, FastAPI's, httpx's or Flask's test client is a trace of its
+  own, `called_by` the test's. `@pytest.mark.tracepanel` takes
+  `max_queries`, `fail_on` and `allow`, the `tracepanel_trace` fixture has
+  `.queries` and `.issues`, and `tracepanel.max_queries(n)` caps a block. It
+  works with pytest-xdist, pytest-django and async tests. The plugin starts
+  the project's agent when none runs. Without one it warns once and checks
+  query counts only.
 - Taskiq is traced like Celery, Dramatiq and Huey (`task.system` is
   `taskiq`), through a middleware tracepanel puts first on every broker. Each
   `.kiq()` in a trace is a `task.enqueue` span, and each task a worker runs is

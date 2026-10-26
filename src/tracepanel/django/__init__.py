@@ -44,7 +44,12 @@ SERVERS = frozenset({"runserver", "runserver_plus", "runworker"})
 
 
 def _serving() -> bool:
-    """Not a management command other than a server: manage.py runserver, or a WSGI/ASGI server importing the app."""
+    """Not a management command other than a server: manage.py runserver, or a WSGI/ASGI server importing the app.
+
+    Nor a test run (tracepanel's pytest plugin): the checks would read the test database from a thread of their own.
+    """
+    if "pytest" in sys.modules:
+        return False
     program = Path(sys.argv[0]).name if sys.argv else ""
     if program in {"manage.py", "django-admin"}:
         return bool(set(sys.argv[1:2]) & SERVERS)
