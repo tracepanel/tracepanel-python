@@ -52,6 +52,7 @@ PACKAGES = (
     "rq",
     "dramatiq",
     "huey",
+    "taskiq",
     "channels",
     "daphne",
     "uvicorn",

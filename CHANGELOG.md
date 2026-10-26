@@ -4,6 +4,19 @@
 
 ### Added
 
+- Taskiq is traced like Celery, Dramatiq and Huey (`task.system` is
+  `taskiq`), through a middleware tracepanel puts first on every broker. Each
+  `.kiq()` in a trace is a `task.enqueue` span, and each task a worker runs is
+  a `task` trace linked to it, with its arguments, result, retries, state,
+  worker, queue wait, the `eta` its `delay` label gives, its `priority` label
+  and the `timeout` label that stopped it. A retry middleware's retry is
+  `RETRY`, a task kicked from a task's run follows it (`task.parent_id`,
+  `task.root_id`) and the scheduler's tasks run with the trigger `schedule`.
+  The Tasks page's Live lists them while they are queued, running or waiting
+  to be retried, and lists each `taskiq worker` process. A profiled request's
+  tasks are profiled too, an async one down to what it awaits. The
+  InMemoryBroker runs a task in its caller's process: it gets a trace and no
+  Live events. `taskiq_enabled = false` turns it off.
 - Django's file storages are traced: each call a storage makes to its
   backend (save, open, delete, exists, listdir, size, the modified, accessed
   and created times) is a span, `storage save avatars/1.png`, with the
@@ -236,6 +249,11 @@
   printed an `Error in sitecustomize` about `importlib.machinery`, which the
   bootstrap used without importing it. The project's own sitecustomize still
   runs there.
+- `tracepanel run` traces the database drivers of a FastAPI, Flask or Falcon
+  app created before anything imported sqlite3. Creating the app printed
+  `could not patch sqlite3` and left every driver untraced, sqlite3,
+  psycopg and the rest.
+
 - FastAPI: a Django `atomic()` block in a sync dependency with `yield` ends
   where Django commits it, with its outcome and duration. FastAPI enters the
   block in one worker thread's copy of the request's context and leaves it in

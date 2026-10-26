@@ -30,6 +30,10 @@ IGNORED = (
     # RQ's ("default: tasks.count(3) (id)", "Job OK", "enqueued for retry").
     "rq.worker",
     "rq.job",
+    # Taskiq's ("Executing task x with ID: …", "Exception found while executing function.", "Retrying").
+    "taskiq.receiver",
+    "taskiq.retry_middleware",
+    "taskiq.smart_retry_middleware",
     # django-q's ("Processed 'tasks.count' (alpha-bravo)", "Enqueued [default] 1").
     "django-q",
     # Server access logs ("GET /items/1 200", "WebSocket CONNECT /ws/…"): the trace itself says it.

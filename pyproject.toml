@@ -47,6 +47,7 @@ dramatiq = ["dramatiq>=1.17"]
 faststream = ["faststream>=0.6"]
 rq = ["rq>=2.0"]
 huey = ["huey>=2.5"]
+taskiq = ["taskiq>=0.13"]
 django-q2 = ["django-q2>=1.9"]
 channels = ["channels>=4.2"]
 strawberry = ["strawberry-graphql>=0.250"]
@@ -191,6 +192,10 @@ faststream = [
     "faststream-fastapi>=1.4.0",
     "fastapi>=0.142.4",
     "httpx2>=2.13.1",
+]
+taskiq = [
+    "taskiq>=0.13.0",
+    "taskiq-fastapi>=0.5.0",
 ]
 
 [build-system]
