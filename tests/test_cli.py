@@ -120,6 +120,42 @@ def test_without_run_nothing_is_traced(tmp_path: Path) -> None:
     assert json.loads(result.stdout.splitlines()[-1]) == {"header": False, "names": []}
 
 
+# A virtualenv of its own, as a pyenv or system Python: no tracepanel in it.
+def bare_python(tmp_path: Path) -> str:
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(tmp_path / "bare")], check=True)  # noqa: S603
+    return str(tmp_path / "bare" / "bin" / "python")
+
+
+def test_run_with_an_interpreter_without_tracepanel_only_says_so(tmp_path: Path) -> None:
+    (tmp_path / "script.py").write_text("print('ran')\n")
+
+    result = tracepanel("run", bare_python(tmp_path), "script.py", cwd=tmp_path)
+
+    assert (result.returncode, result.stdout, result.stderr) == (
+        0,
+        "ran\n",
+        "tracepanel: not tracing this process: No module named 'tracepanel'\n",
+    )
+
+
+def test_run_still_runs_the_projects_sitecustomize(tmp_path: Path) -> None:
+    (tmp_path / "site").mkdir()
+    (tmp_path / "site" / "sitecustomize.py").write_text("import builtins\nbuiltins.customized = True\n")
+    (tmp_path / "script.py").write_text("print(customized)\n")
+    env = {"PYTHONPATH": str(tmp_path / "site")}
+
+    traced = tracepanel("run", sys.executable, "script.py", cwd=tmp_path, env=env)
+    bare = tracepanel("run", bare_python(tmp_path), "script.py", cwd=tmp_path, env=env)
+
+    assert (traced.returncode, traced.stdout, traced.stderr) == (0, "True\n", "")
+
+    assert (bare.returncode, bare.stdout, bare.stderr) == (
+        0,
+        "True\n",
+        "tracepanel: not tracing this process: No module named 'tracepanel'\n",
+    )
+
+
 def test_run_rejects_unknown_settings(tmp_path: Path) -> None:
     result = tracepanel("run", "--set", "slow_sql=5", "true", cwd=tmp_path)
 

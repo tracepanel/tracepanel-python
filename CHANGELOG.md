@@ -231,6 +231,11 @@
 
 ### Fixed
 
+- `tracepanel run` with an interpreter that has no tracepanel installed (a
+  pyenv or system Python) only says it does not trace the process. It also
+  printed an `Error in sitecustomize` about `importlib.machinery`, which the
+  bootstrap used without importing it. The project's own sitecustomize still
+  runs there.
 - FastAPI: a Django `atomic()` block in a sync dependency with `yield` ends
   where Django commits it, with its outcome and duration. FastAPI enters the
   block in one worker thread's copy of the request's context and leaves it in
