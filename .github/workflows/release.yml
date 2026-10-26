@@ -13,7 +13,7 @@ env:
   GROUPS: >-
     --group celery --group channels --group strawberry --group django-tasks --group django-q2 --group fastapi --group dramatiq
     --group rq --group huey --group ninja --group drf --group flask --group falcon --group otel --group clients
-    --group faststream --group taskiq --group llm --group postgres --group drivers --group bench
+    --group faststream --group taskiq --group llm --group aws --group postgres --group drivers --group bench
 
 jobs:
   # Nothing is published before CI has passed on the tagged commit: the run that main's push made, not a new one.

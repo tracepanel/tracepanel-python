@@ -71,6 +71,10 @@ PACKAGES = (
     "httpx",
     "requests",
     "aiohttp",
+    "boto3",
+    "botocore",
+    "aiobotocore",
+    "django-storages",
 )
 
 Version = dict[str, str]

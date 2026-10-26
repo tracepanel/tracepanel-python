@@ -102,6 +102,8 @@ class Config:
     # Integrations, each on when its library is installed; `false` leaves the library unpatched. Read at startup.
     # Anthropic's SDK: messages as LLM call spans.
     anthropic_enabled: bool = True
+    # AWS calls through botocore (boto3, aiobotocore): S3, DynamoDB, SQS, SNS and the other services.
+    boto_enabled: bool = True
     celery_enabled: bool = True
     channels_enabled: bool = True
     # Database drivers used directly, without an ORM (statements an ORM runs are the ORM's).
@@ -113,11 +115,14 @@ class Config:
     faststream_enabled: bool = True
     # graphene-django's GraphQLView.
     graphene_enabled: bool = True
-    # Outgoing HTTP calls: urllib3 (requests, boto3), httpx, aiohttp.
+    # Outgoing HTTP calls: urllib3 (requests), httpx, aiohttp. boto3's are AWS calls (boto_enabled).
     http_clients_enabled: bool = True
     huey_enabled: bool = True
     jinja_enabled: bool = True
     logging_enabled: bool = True
+    # Django's migrate: a span per migration applied or unapplied and per operation, risky operations marked. Read at
+    # startup.
+    migrations_enabled: bool = True
     mongodb_enabled: bool = True
     ninja_enabled: bool = True
     # OpenAI's SDK: chat completions, responses and embeddings as LLM call spans.
@@ -200,6 +205,7 @@ class Settings(TypedDict, total=False):
     profile_enabled: bool
     profile_interval_ms: int
     anthropic_enabled: bool
+    boto_enabled: bool
     celery_enabled: bool
     channels_enabled: bool
     dbapi_enabled: bool
@@ -213,6 +219,7 @@ class Settings(TypedDict, total=False):
     huey_enabled: bool
     jinja_enabled: bool
     logging_enabled: bool
+    migrations_enabled: bool
     mongodb_enabled: bool
     ninja_enabled: bool
     openai_enabled: bool
