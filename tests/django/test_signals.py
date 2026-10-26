@@ -460,6 +460,11 @@ def test_migrate_records_none_of_django_s_own_startup_signals(traces: list[Trace
         "command.name": "migrate",
         "command.argv": None,
         "command.options": "{'database': 'default', 'interactive': True, 'skip_checks': True}",
+        # Nothing to apply: the test database is migrated.
+        "migrate.plan": [],
+        "migrate.planned": 0,
+        "migrate.applied": 0,
+        "migrate.unapplied": 0,
         "service.name": IsStr(min_length=1),
         "service.role": "command",
         "telemetry.sdk.language": "python",

@@ -66,6 +66,10 @@ In Django it shows each signal sent, its sender, the line that sent it and
 the receivers that ran, each with its own time, queries and errors.
 Each call a file storage makes to its backend is a span, on the local disk
 or S3, and `collectstatic` shows its phases and its slowest files.
+`migrate` shows each migration it applied or unapplied, each operation in it
+with its SQL, and marks the operations that lock or rewrite a table on your
+database, such as a column type change on PostgreSQL. The console warns of
+migrations not applied yet.
 
 For Django, `pip install django-tracepanel` installs the same package.
 
