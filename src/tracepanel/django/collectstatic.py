@@ -39,7 +39,7 @@ class _Phase:
     def __init__(self, name: str) -> None:
         self.name = name
         self.files = storages.Slowest(SLOWEST)
-        self.calls = storages.Slowest(SLOWEST)
+        self.calls = storages.Slowest(SLOWEST, "storage")
         self.span: OpenSpan | None = open_span("function", f"collectstatic {name}", {"collectstatic.phase": name})
         self._outer = storages.pool.get()
         storages.pool.set(self.calls)
