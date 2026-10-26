@@ -51,9 +51,13 @@ def run_agent(argv: list[str]) -> None:
     executable = agent.binary()
     if executable is None:
         sys.exit("tracepanel-agent not found: reinstall tracepanel, or set TRACEPANEL_AGENT_BIN")
+    config = conf.get_config()
+    if argv[:1] != ["mcp"] and "--llm-prices" not in argv:
+        # The settings' agent options; the MCP server takes none.
+        argv = [*agent.options(config), *argv]
     if "--dir" not in argv:
         # tracepanel.toml, TRACEPANEL_* and the current directory.
-        argv = ["--dir", str(agent.store_dir(conf.get_config())), *argv]
+        argv = ["--dir", str(agent.store_dir(config)), *argv]
     os.execv(executable, [executable, *argv])  # noqa: S606 (replaces this process with the agent)
 
 

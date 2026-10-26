@@ -137,7 +137,7 @@ def test_a_message_is_a_span_with_its_http_call_inside(stub: Stub, validator: Dr
     assert call.to_dict() == {
         "id": call.id,
         "parent_id": trace.spans[0].id,
-        "kind": "function",
+        "kind": "llm",
         "name": "chat claude-sonnet-5-5",
         "start": IsPositiveInt,
         "duration": IsPositiveInt,

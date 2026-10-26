@@ -82,6 +82,9 @@ class Config:
     # Keep the messages of LLM calls, sent and received (development only, masked, cut at max_body_kb; they never
     # leave this machine). Off by default: they are the app's users' words.
     capture_llm_content: bool = False
+    # A JSON file of LLM prices (the agent's llm-prices.json shape), relative to `root`: the agent this process starts
+    # estimates the calls' costs with them, over its own list prices. Empty: the store's llm-prices.json, if any.
+    llm_prices: str = ""
     # Send the app's settings (Django's, Flask's app.config) to the console, masked (development only; they never
     # leave this machine).
     capture_settings: bool = True
@@ -198,6 +201,7 @@ class Settings(TypedDict, total=False):
     capture_body: bool
     max_body_kb: int
     capture_llm_content: bool
+    llm_prices: str
     capture_settings: bool
     capture_template_context: bool
     profile: bool

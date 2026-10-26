@@ -68,6 +68,11 @@ def store_dir(config: conf.Config) -> Path:
     return conf.project_root() / config.dir
 
 
+def options(config: conf.Config) -> list[str]:
+    """The agent's options the settings ask for: the LLM prices file."""
+    return ["--llm-prices", str(conf.project_root() / config.llm_prices)] if config.llm_prices else []
+
+
 def binary() -> str | None:
     """The tracepanel-agent executable: $TRACEPANEL_AGENT_BIN, the installed one, or a sibling checkout's build."""
     if explicit := os.environ.get("TRACEPANEL_AGENT_BIN"):
@@ -104,7 +109,16 @@ def start(config: conf.Config) -> subprocess.Popen[bytes] | None:
 def _spawn(executable: str, directory: Path, config: conf.Config) -> subprocess.Popen[bytes] | None:
     # An agent that didn't exit cleanly (killed, a reboot) leaves its addresses behind: the next one removes them, while
     # it holds the store's lock. Not here: they may be another process's agent's, starting this very moment.
-    command = [executable, "--dir", str(directory), "--serve", "127.0.0.1:0", "--idle-exit", str(IDLE_EXIT_S)]
+    command = [
+        executable,
+        "--dir",
+        str(directory),
+        "--serve",
+        "127.0.0.1:0",
+        "--idle-exit",
+        str(IDLE_EXIT_S),
+        *options(config),
+    ]
     # Its own session (process group on Windows): Ctrl-C and reloads of the app don't reach it.
     windows = sys.platform == "win32"
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)

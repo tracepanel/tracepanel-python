@@ -167,7 +167,7 @@ def test_a_chat_completion_is_a_span_with_its_http_call_inside(stub: Stub, valid
     assert call.to_dict() == {
         "id": call.id,
         "parent_id": trace.spans[0].id,
-        "kind": "function",
+        "kind": "llm",
         "name": "chat gpt-4o-mini",
         "start": IsPositiveInt,
         "duration": IsPositiveInt,
