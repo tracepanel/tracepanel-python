@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tracepanel.core import frames
+from tracepanel.core import conf, frames
 
 
 def test_a_script_of_the_environment_is_not_the_project_s() -> None:
@@ -60,3 +60,57 @@ def test_a_locals_tokens_are_masked_unless_they_are_a_models_counts() -> None:
     shown = frames.from_traceback(raised.value.__traceback__, with_locals=True)[-1].locals
 
     assert shown == {"tokens": "[12, 7]", "refresh_tokens": frames.MASK, "max_tokens": "1024"}
+
+
+@pytest.fixture
+def linked_python(tmp_path: Path) -> tuple[Path, Path]:
+    """A Python installed as uv installs one: its directory a symlink (cpython-3.14-… to cpython-3.14.0-…)."""
+    real = tmp_path / "cpython-3.14.0-macos" / "lib" / "python3.14"
+    real.mkdir(parents=True)
+    (real / "threading.py").write_text("")
+    (tmp_path / "cpython-3.14-macos").symlink_to(tmp_path / "cpython-3.14.0-macos")
+    return tmp_path / "cpython-3.14-macos" / "lib" / "python3.14", real
+
+
+@pytest.mark.parametrize("roots", ["link", "real"])
+def test_a_library_frame_is_named_by_its_package_path_through_a_symlinked_python(
+    linked_python: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch, roots: str
+) -> None:
+    link, real = linked_python
+    monkeypatch.setattr(frames, "_LIBRARY_PATHS", frames._library_roots([str(link if roots == "link" else real)]))  # noqa: SLF001
+    frames.library_path.cache_clear()
+
+    named = {frames.library_path(str(stdlib / "threading.py")) for stdlib in (link, real)}
+
+    assert named == {"threading.py"}
+
+
+def test_a_module_loaded_through_a_symlinked_python_is_not_the_project_s(
+    linked_python: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    link, real = linked_python
+    monkeypatch.setattr(frames, "_LIBRARY_PATHS", frames._library_roots([str(real)]))  # noqa: SLF001
+    frames.is_in_app.cache_clear()
+    frames.library_path.cache_clear()
+    code = compile("", str(link / "threading.py"), "exec")
+
+    assert (frames.is_in_app(code.co_filename, "threading"), frames.library_path(code.co_filename)) == (
+        False,
+        "threading.py",
+    )
+
+
+@pytest.mark.parametrize("root", ["link", "real"])
+def test_a_project_file_is_named_relative_to_a_symlinked_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root: str
+) -> None:
+    # /tmp is /private/tmp on macOS: the root and a code object's file may name the project either way.
+    (tmp_path / "real" / "shop").mkdir(parents=True)
+    (tmp_path / "real" / "shop" / "views.py").write_text("")
+    (tmp_path / "link").symlink_to(tmp_path / "real")
+    monkeypatch.setenv("TRACEPANEL_ROOT", str(tmp_path / root))
+    conf.reset()
+
+    named = {frames.relative(str(tmp_path / project / "shop" / "views.py")) for project in ("link", "real")}
+
+    assert named == {str(Path("shop", "views.py"))}
