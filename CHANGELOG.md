@@ -244,6 +244,11 @@
 
 ### Fixed
 
+- `tracepanel run` with an interpreter that has no tracepanel installed (a
+  pyenv or system Python) only says it does not trace the process. It also
+  printed an `Error in sitecustomize` about `importlib.machinery`, which the
+  bootstrap used without importing it. The project's own sitecustomize still
+  runs there.
 - `tracepanel run` traces the database drivers of a FastAPI, Flask or Falcon
   app created before anything imported sqlite3. Creating the app printed
   `could not patch sqlite3` and left every driver untraced, sqlite3,
