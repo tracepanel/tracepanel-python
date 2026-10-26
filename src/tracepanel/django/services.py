@@ -1,4 +1,4 @@
-"""What sits behind Django's database connections and cache backends, for the core's service attributes."""
+"""What sits behind Django's database connections, cache backends and file storages: the core's service attributes."""
 
 from typing import Any
 
@@ -48,3 +48,28 @@ def for_cache(backend: object) -> Attrs:
     if system not in {"locmem", "file", "database", "dummy"} and servers:
         attrs.update(location(str(servers[0]), system))
     return attrs
+
+
+# File storages by module: Django's own, then django-storages' backends (S3 under its old module name too).
+_STORAGE_SYSTEMS = (
+    ("django.core.files.storage.filesystem", "filesystem"),
+    ("django.contrib.staticfiles.storage", "filesystem"),
+    ("django.core.files.storage.memory", "memory"),
+    ("storages.backends.s3", "s3"),
+    ("storages.backends.s3boto3", "s3"),
+    ("storages.backends.gcloud", "gcs"),
+    ("storages.backends.azure_storage", "azure"),
+    ("storages.backends.dropbox", "dropbox"),
+    ("storages.backends.sftpstorage", "sftp"),
+    ("storages.backends.ftp", "ftp"),
+    ("storages.backends.apache_libcloud", "libcloud"),
+)
+
+
+def storage_system(storage: object) -> str:
+    """`filesystem`, `s3`, `gcs`…: the module of the storage's class or of its nearest known base, else its name."""
+    for kind in type(storage).__mro__:
+        for module, system in _STORAGE_SYSTEMS:
+            if kind.__module__ == module or kind.__module__.startswith(f"{module}."):
+                return system
+    return type(storage).__name__.lower()
