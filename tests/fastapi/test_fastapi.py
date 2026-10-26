@@ -1,5 +1,4 @@
 import threading
-import time
 from collections.abc import Generator, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,7 +23,7 @@ from strawberry.fastapi import GraphQLRouter  # noqa: E402
 
 import tracepanel.fastapi  # noqa: E402
 from tests.agentstore import AgentStore, issues  # noqa: E402
-from tests.profiles import share  # noqa: E402
+from tests.profiles import sampled, share_meanwhile  # noqa: E402
 from tracepanel._compat import override  # noqa: E402
 from tracepanel.core import conf  # noqa: E402
 from tracepanel.core.model import Trace  # noqa: E402
@@ -70,12 +69,8 @@ class Query:
 
 
 def spin(seconds: float) -> int:
-    """Busy in project code for a while: what a profile shows."""
-    end = time.perf_counter() + seconds
-    turns = 0
-    while time.perf_counter() < end:
-        turns += 1
-    return turns
+    """Busy in project code for a while, sampled: what a profile shows."""
+    return sampled(seconds)
 
 
 class Account(BaseModel):
@@ -179,7 +174,7 @@ def test_a_sync_endpoint_is_profiled_in_the_thread_that_runs_it(
     in_app = {frame["function"] for frame in trace.profile["frames"] if frame["in_app"]}  # type: ignore[union-attr]
     assert {"make_app.<locals>.busy", "spin"} <= in_app
     # The thread the endpoint runs in, not the event loop's, which waits in its selector meanwhile.
-    assert share(trace, "spin") > 0.3
+    assert share_meanwhile(trace, "spin") == 1
 
 
 def test_unhandled_error(client: TestClient, traces: list[Trace]) -> None:
