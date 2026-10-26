@@ -61,9 +61,12 @@ the HTTP calls your app makes with requests, httpx or aiohttp, and its
 Redis commands. Each AWS call boto3 or aiobotocore makes is a span named as
 AWS names it, `S3 PutObject avatars/1.png`: S3 calls are storage calls,
 DynamoDB's are datastore commands, SQS and SNS sends are messages, and the
-N+1 and duplicate checks apply to them. It reads the log lines you write
-with `logging` and attaches each one to the request, task or command that
-wrote it. Your logging configuration stays as it is.
+N+1 and duplicate checks apply to them. A call to OpenAI or Anthropic through
+their SDKs is a span with the model, the tokens it used, why it stopped, the
+tools it called and, for a stream, the time to its first token. The messages
+themselves are kept only with `capture_llm_content = true`. It reads the log
+lines you write with `logging` and attaches each one to the request, task or
+command that wrote it. Your logging configuration stays as it is.
 
 In Django it shows each signal sent, its sender, the line that sent it and
 the receivers that ran, each with its own time, queries and errors.

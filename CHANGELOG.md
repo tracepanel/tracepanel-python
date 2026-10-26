@@ -4,6 +4,21 @@
 
 ### Added
 
+- LLM calls made with the official `openai` and `anthropic` SDKs are spans,
+  sync and async, streamed or not: OpenAI's chat completions, responses and
+  embeddings, and Anthropic's messages (`messages.stream()` too). A span is
+  named `chat gpt-5` or `chat claude-sonnet-5-5` and holds OpenTelemetry's
+  GenAI attributes: the provider, the operation, the model asked for and the
+  one that answered, the request's settings, the finish reasons and the
+  tokens used, cached and reasoning ones included. The tools the model
+  called are named and counted. A stream's span lasts until it is read,
+  closed or dropped, with its time to first chunk. The HTTP calls of the
+  call, one per attempt, are inside it. A rate limit or an overloaded API is
+  an error with its exception and status. The messages are kept only with
+  `capture_llm_content = true` (off by default), masked and cut at
+  `max_body_kb`. `openai_enabled = false` and `anthropic_enabled = false`
+  turn them off. Anthropic's own OpenTelemetry spans are left out while
+  tracepanel records its calls. The spans are `function` spans for now.
 - AWS calls are spans of their own, through botocore's clients (boto3,
   aiobotocore): `S3 PutObject avatars/1.png`, `DynamoDB Query users`, with
   the service, operation, region, request id, botocore's retries and the
