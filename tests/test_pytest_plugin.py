@@ -351,7 +351,7 @@ def test_starts_the_agent(pytester: pytest.Pytester, run: Run, monkeypatch: pyte
         result = run("--tracepanel")
     finally:
         # Started as `tracepanel run` starts it, it would wait half an hour unused before it exits.
-        subprocess.run(["pkill", "-f", f"--dir {directory}"], check=False)  # noqa: S603, S607
+        subprocess.run(["pkill", "-f", "--", f"--dir {directory}"], check=False)  # noqa: S603, S607
 
     result.assert_outcomes(failed=1)
     result.stderr.fnmatch_lines([f"tracepanel ▸ agent started for {directory}"])
