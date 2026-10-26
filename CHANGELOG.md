@@ -30,7 +30,7 @@
   `capture_llm_content = true` (off by default), masked and cut at
   `max_body_kb`. `openai_enabled = false` and `anthropic_enabled = false`
   turn them off. Anthropic's own OpenTelemetry spans are left out while
-  tracepanel records its calls. The spans are `function` spans for now.
+  tracepanel records its calls. The spans are of their own kind, `llm`.
 - AWS calls are spans of their own, through botocore's clients (boto3,
   aiobotocore): `S3 PutObject avatars/1.png`, `DynamoDB Query users`, with
   the service, operation, region, request id, botocore's retries and the

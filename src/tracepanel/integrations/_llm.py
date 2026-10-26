@@ -18,7 +18,7 @@ The messages sent and received are kept only with `capture_llm_content` (off by 
 words), in the conventions' shape (`gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.system_instructions`),
 masked as a request's JSON body is and cut at `max_body_kb`.
 
-The agent has no span kind for LLM calls yet: these are `function` spans, their attributes under `gen_ai.`.
+The spans are of their own kind, `llm`, their attributes under `gen_ai.`.
 """
 
 import json
@@ -35,7 +35,7 @@ from tracepanel.core.frames import origin
 from tracepanel.core.model import Attrs, AttrValue, Scalar
 from tracepanel.core.patching import patch
 
-KIND = "function"
+KIND = "llm"
 # Where a stream's call waits for its end: on the SDK's stream object.
 MARKER = "_tracepanel_llm"
 
