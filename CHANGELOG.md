@@ -244,6 +244,15 @@
 
 ### Fixed
 
+- A profiled trace always has its profile. One that ended before the
+  profiler's first sample (a task of a few milliseconds, or one whose thread
+  the profiler couldn't get to under load) had none, as if it hadn't been
+  profiled. Its profile now says 0 samples, with its memory when that was
+  asked for.
+- The configuration a framework's install() sets is the one in use. A
+  heartbeat or the writer that read the settings in its own thread meanwhile
+  could put the configuration from before back, and leave the app's requests
+  untraced.
 - `tracepanel run` traces the database drivers of a FastAPI, Flask or Falcon
   app created before anything imported sqlite3. Creating the app printed
   `could not patch sqlite3` and left every driver untraced, sqlite3,
