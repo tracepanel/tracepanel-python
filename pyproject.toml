@@ -197,6 +197,16 @@ taskiq = [
     "taskiq>=0.13.0",
     "taskiq-fastapi>=0.5.0",
 ]
+# AWS through botocore (boto3, aiobotocore), against moto's AWS served from a thread of the test process (its
+# server's own dependencies: flask, flask-cors); django-storages' S3Storage on top.
+aws = [
+    "boto3>=1.43",
+    "aiobotocore>=3.10",
+    "moto[s3,dynamodb]>=5.2.4",
+    "flask>=3.1.3",
+    "flask-cors>=6.0.5",
+    "django-storages[s3]>=1.14.6",
+]
 
 [build-system]
 requires = ["uv_build>=0.12,<0.13"]
