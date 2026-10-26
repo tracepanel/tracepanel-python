@@ -187,14 +187,18 @@ def test_the_setting_counts_every_profiled_traces_memory(monkeypatch: pytest.Mon
 
 @pytest.mark.usefixtures("untraced")
 def test_tracemalloc_stops_while_only_time_is_profiled() -> None:
-    with start_trace("command", "build", profile=MEMORY):
-        busy(0.01)
+    # A tracer of its own, ticked here alone: the process's is ticked by the sampler thread too, which goes on for a
+    # while after the last profiled trace, and would count ticks of its own between these.
+    tracer = memory.Tracer()
+    counted = tracer.begin()
+    assert counted is not None
+    tracer.end(counted)
     started = tracemalloc.is_tracing()
     # The sampler ticks on for a trace profiled for its time alone.
     for _ in range(memory.IDLE_TICKS - 1):
-        memory.TRACER.watch()
+        tracer.watch()
     still = tracemalloc.is_tracing()
-    memory.TRACER.watch()
+    tracer.watch()
 
     assert started
     assert still
