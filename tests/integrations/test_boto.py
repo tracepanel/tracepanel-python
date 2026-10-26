@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
-from dirty_equals import IsStr
+from dirty_equals import IsPartialDict, IsStr
 from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
@@ -215,7 +215,7 @@ def test_async_clients(endpoint: str) -> None:
 # ---------- a storage's calls ----------
 
 
-def test_a_call_inside_a_storage_call_is_part_of_it(client: Callable[[str], Any]) -> None:
+def test_a_call_inside_a_storage_call_keeps_its_kind(client: Callable[[str], Any]) -> None:
     s3 = client("s3")
     s3.create_bucket(Bucket="media", CreateBucketConfiguration={"LocationConstraint": REGION})
 
@@ -225,10 +225,22 @@ def test_a_call_inside_a_storage_call_is_part_of_it(client: Callable[[str], Any]
 
     storage, call = calls(traced(work))
 
-    assert (call.kind, call.name, call.parent_id) == ("function", "S3 HeadObject media/a.png", storage.id)
+    # Its own kind and attributes: the agent counts it as the storage call's.
+    assert (call.kind, call.name, call.parent_id) == ("storage", "S3 HeadObject media/a.png", storage.id)
 
-    assert not [name for name in call.attrs if name.startswith("storage.")]
-    assert call.attrs["aws.s3.key"] == "a.png"
+    assert call.attrs == IsPartialDict(
+        {
+            "rpc.system": "aws-api",
+            "rpc.service": "S3",
+            "rpc.method": "HeadObject",
+            "cloud.region": REGION,
+            "storage.system": "s3",
+            "storage.op": "HeadObject",
+            "storage.path": "media/a.png",
+            "aws.s3.key": "a.png",
+            "error.type": "404",
+        }
+    )
 
 
 def test_django_storages_s3_calls_nest_under_its_storage_spans(endpoint: str, settings: Settings) -> None:
@@ -260,13 +272,13 @@ def test_django_storages_s3_calls_nest_under_its_storage_spans(endpoint: str, se
     trace = traced(work)
     spans = {span.id: span for span in trace.spans}
 
-    # Each storage call once, its S3 requests inside it as function spans: one N+1 is not counted twice.
+    # Each storage call, its S3 requests inside it: the agent counts them as the storage call's, one N+1 once.
     assert [(span.kind, span.name, spans[str(span.parent_id)].name) for span in calls(trace)] == [
         ("storage", "storage save invoices/7.pdf", "GET /"),
-        ("function", "S3 HeadObject uploads/invoices/7.pdf", "storage save invoices/7.pdf"),
-        ("function", "S3 PutObject uploads/invoices/7.pdf", "storage save invoices/7.pdf"),
+        ("storage", "S3 HeadObject uploads/invoices/7.pdf", "storage save invoices/7.pdf"),
+        ("storage", "S3 PutObject uploads/invoices/7.pdf", "storage save invoices/7.pdf"),
         ("storage", "storage exists invoices/7.pdf", "GET /"),
-        ("function", "S3 HeadObject uploads/invoices/7.pdf", "storage exists invoices/7.pdf"),
+        ("storage", "S3 HeadObject uploads/invoices/7.pdf", "storage exists invoices/7.pdf"),
     ]
 
 

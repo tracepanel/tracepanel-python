@@ -138,6 +138,10 @@ NEWER: list[tuple[str, int, Callable[[Data], str]]] = [
     ("/tasks/live", 200, lambda _: "tasks/live"),
     # What the app said of itself in its hello: settings and versions.
     ("/app", 200, lambda _: "app?service=shop"),
+    ("/aws", 200, lambda _: "aws"),
+    ("/aws", 400, lambda _: "aws?q=colour:red"),
+    ("/aws/calls", 200, lambda _: "aws/calls?q=aws:S3"),
+    ("/aws/calls", 400, lambda _: "aws/calls?q=colour:red"),
 ]
 CASES += [case for case in NEWER if case[0] in OPENAPI["paths"]]
 

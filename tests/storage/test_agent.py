@@ -361,7 +361,7 @@ def test_the_agent_serves_what_the_hello_said_of_the_app(store: AgentStore, djan
             "versions": appinfo.describe(config)["versions"],
         },
         answer,
-        {"checks": None, "migrations": None},
+        {"checks": None, "migrations": None, "migrate": None},
     )
 
 

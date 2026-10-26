@@ -342,7 +342,7 @@ def test_counts(client: Client, recorded: AgentStore) -> None:
         },
     }
     answer = recorded.counts()
-    counts["sections"] = newer(counts["sections"], answer["sections"], {"mails": 0})
+    counts["sections"] = newer(counts["sections"], answer["sections"], {"mails": 0, "aws": 0})
     # The app says in its hello that it sends task events: the console shows Tasks before any is stored.
     counts = newer(counts, answer, {"live_tasks": True})
 
@@ -473,7 +473,7 @@ def test_one_app_of_several(client: Client, two_apps: AgentStore) -> None:
     assert [row["service"] for row in two_apps.list_services("service:shop")["apps"]] == ["shop"]
 
     answer = two_apps.counts()
-    every["sections"] = newer(every["sections"], answer["sections"], {"mails": 0})
+    every["sections"] = newer(every["sections"], answer["sections"], {"mails": 0, "aws": 0})
     every = newer(every, answer, {"live_tasks": True})
     assert answer == every
     shop = two_apps.get("counts", service="shop")
@@ -495,14 +495,14 @@ def test_one_app_of_several(client: Client, two_apps: AgentStore) -> None:
                 "systems": [DATABASE],
             },
             shop["sections"],
-            {"mails": 0},
+            {"mails": 0, "aws": 0},
         ),
     }
     assert two_apps.get("counts", service=django) == every | {
         "sections": newer(
             {"http": 6, "graphql": 0, "tasks": 0, "websockets": 0, "jobs": 0, "rpc": 0, "pages": 0, **SYSTEMS},
             shop["sections"],
-            {"mails": 0},
+            {"mails": 0, "aws": 0},
         )
     }
     assert client.get("/__tracepanel__/api/counts", {"service": "shop"}).json() == two_apps.get(
