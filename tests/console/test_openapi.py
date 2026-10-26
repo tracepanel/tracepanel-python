@@ -122,6 +122,8 @@ CASES: list[tuple[str, int, Callable[[Data], str]]] = [
     ("/pages", 400, lambda _: "pages?q=colour:red"),
     ("/snapshot/{id}", 200, lambda d: f"snapshot/{d['trace']}"),
     ("/snapshot/{id}", 404, lambda _: "snapshot/" + "0" * 26),
+    # The agent's license and notices, as plain text.
+    ("/licenses", 200, lambda _: "licenses"),
     ("/graphql/detail", 404, lambda _: "graphql/detail?operation=query Nope"),
     ("/websockets", 400, lambda _: "websockets?q=colour:red"),
     ("/services", 400, lambda _: "services?q=colour:red"),
@@ -172,7 +174,12 @@ def test_responses_match_the_contract(
     response = client.get(f"/__tracepanel__/api/{path}", REMOTE_ADDR=remote)
 
     assert response.status_code == status
-    response_schema(template, status).validate(documented(template, response.json()))
+
+    if "text/plain" in OPENAPI["paths"][template]["get"]["responses"][str(status)].get("content", {}):
+        assert response["Content-Type"].startswith("text/plain")
+        assert response.content
+    else:
+        response_schema(template, status).validate(documented(template, response.json()))
 
 
 def test_what_the_app_serves_itself_is_in_the_contract() -> None:

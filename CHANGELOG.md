@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (2026-10-26)
+
+Needs `tracepanel-agent` 0.5.0 (installed with it).
 
 ### Added
 
@@ -137,14 +139,18 @@
   `pan`, `cvc`, `cvv` and `cvn` in bodies, form fields, headers, settings, a
   template's context and an error's local variables. In a body, a setting or
   a template's context, `number` under a card (`card`, `creditCard`,
-  `payment_card`) is masked too.
+  `payment_card`) is masked too, and so is a `number` (or `num`) beside a
+  card's other fields (`cvc`, `cvv`, `exp_month`, `exp_year`, `expiry`)
+  whatever its object is called, as in Stripe's
+  `{"source": {"number": ...}}`. A `number`, `num` or `account` holding a
+  card's digits (13 to 19, passing the Luhn check) is masked wherever it is.
 - A query a template made as it rendered (a lazy QuerySet its `{% for %}`
   reads, a related object it shows) has the template's line
   (`code.template_line`), Django's templates and Jinja's alike, and
   `code.template` names the file that line is in: a page that extends
   another names the base template for a query outside its own blocks. The
-  console marks these queries and, with an agent that knows the line, an
-  N+1 a template made names the template and its line in its hint.
+  console marks these queries, and an N+1 a template made names the
+  template and its line in its hint.
 - Graphene: a request to graphene-django's GraphQLView is traced as its
   GraphQL operation, as Strawberry's are. The trace is named after the
   operation (`GraphQL query PostList`) and keeps its type, name, document and
@@ -187,10 +193,10 @@
   Celery's eta or countdown and message priority, RQ's `enqueue_at` and
   `enqueue_in`, Dramatiq's delay and actor priority, Django Tasks'
   `run_after` and priority.
-- The app's settings and versions reach the console, for its App tab (needs
-  an agent that serves `api/app`). The hello to the agent carries them, once
-  per process: Django's UPPERCASE settings and Flask's `app.config`, each
-  value as `repr()` shows it, cut long. A setting whose name holds a secret
+- The app's settings and versions reach the console, for its App tab. The
+  hello to the agent carries them, once per process: Django's UPPERCASE
+  settings and Flask's `app.config`, each value as `repr()` shows it, cut
+  long. A setting whose name holds a secret
   (`SECRET_KEY`, `*PASSWORD*`, `*TOKEN*`, `*KEY*`, `*SIGNATURE*`) is masked
   whole, and so is such a key inside one: the `PASSWORD` in `DATABASES`, a
   password in a cache's `OPTIONS`. The credentials in a URL are masked
@@ -202,8 +208,8 @@
   the servers, tracepanel itself, and for Django the packages its
   `INSTALLED_APPS` come from. FastAPI, Starlette and Falcon apps send the
   versions only. `capture_settings` turns the settings off.
-- What Django finds wrong with the app reaches the console's App tab too
-  (needs an agent that keeps an app's checks). Its system checks, as
+- What Django finds wrong with the app reaches the console's App tab too.
+  Its system checks, as
   `manage.py check` reports them, the deployment ones too when DEBUG is off:
   each with its id, level, message, hint and object, the silenced ones and
   those that query the database left out. The migrations not applied to the
@@ -272,27 +278,26 @@
   polling no longer floods the terminal, and the app's own requests stay.
   This covers uvicorn, gunicorn, hypercorn, granian, daphne, and the Django
   and Flask development servers. `quiet_access_log = false` keeps them.
-
-- A profile counts memory, with Python's tracemalloc, while a profiled trace
-  runs: its `peak` above the level at the start, its `net` at the end, and
-  the 50 `sites` that held the most, as the profile's frames down to the
+- A profile can count memory, with Python's tracemalloc, while a profiled
+  trace runs: its `peak` above the level at the start, its `net` at the end,
+  and the 50 `sites` that held the most, as the profile's frames down to the
   project's line, with the library's line it called. The sites are the
   picture at the peak when the sampler took one near it (`sites_at`), else at
-  the end. `shared` says another trace ran in the process meanwhile.
-  tracemalloc starts with the first profiled trace and stops once none has
-  run for a while. An app's own tracemalloc is left as it is. The profile's
-  `gc` has the garbage collections during the trace, their pause and when
-  each began. Traces that aren't profiled pay nothing.
+  the end. `shared` says another trace ran in the process meanwhile. Ask for
+  it with an `X-Tracepanel-Profile: memory` header, a
+  `tracepanel_profile=memory` cookie, or `profile_memory = true` for every
+  profiled trace. "1" profiles time alone, as before. tracemalloc slows the
+  whole process down while a trace is counted, a short request several times
+  over. It starts with the first trace that asks for memory and stops once
+  none has for a while. An app's own tracemalloc is left as it is. A task
+  started by a request that asked for memory carries `memory` instead of `1`,
+  and the hello offers `profile_memory` next to `profile`, so the panel can
+  ask for it.
+- A profile's `gc` has the garbage collections during the trace, their pause
+  and when each began. Traces that aren't profiled pay nothing.
 
 ### Changed
 
-- A profile counts memory only when asked: an `X-Tracepanel-Profile: memory`
-  header, a `tracepanel_profile=memory` cookie, or `profile_memory = true`
-  for every profiled trace. "1" profiles time alone, with the GC pauses.
-  tracemalloc slowed the whole process down while any trace was profiled, a
-  short request several times over. Tasks carry `memory` instead of `1` when
-  their request asked for it, and a worker reads both. The hello offers
-  `profile_memory` next to `profile`, so the panel can ask for it.
 - A signal's span is named `post_save`, not `signal post_save`, and a model
   sender reads `auth.Group`, not `django.contrib.auth.models.Group`.
 - The Redis commands channels-redis sends for itself are no longer `redis`
@@ -323,7 +328,6 @@
   app created before anything imported sqlite3. Creating the app printed
   `could not patch sqlite3` and left every driver untraced, sqlite3,
   psycopg and the rest.
-
 - FastAPI: a Django `atomic()` block in a sync dependency with `yield` ends
   where Django commits it, with its outcome and duration. FastAPI enters the
   block in one worker thread's copy of the request's context and leaves it in
@@ -340,8 +344,7 @@
   replaced (recycled, stopped by its timeout, dead) and for each one as it
   stops, Django Tasks' `db_worker` as it ends, and a Channels `runworker` at
   Ctrl+C. A Celery worker's main process beats from its start, so an idle
-  worker stays listed, and `db_worker` says it is there as it starts. An
-  older agent keeps listing a stopped worker as before.
+  worker stays listed, and `db_worker` says it is there as it starts.
 - A Django Task run on the immediate backend inside a request or command
   records its spans under its own root. They had the request's enqueue span
   as their parent, a span of another trace. A run's trace ends inside the
@@ -405,20 +408,14 @@
   and status ok.
 - Secrets are masked by the words of a name, not the letters in it. An `author`,
   `authors`, `author_id`, `authority`, `is_authenticated`, `tokenizer`, a
-  model's `max_tokens` or a `passenger` is shown in bodies, locals, settings and
-  a template's context, where it read `********`. Passwords, tokens, keys,
-  `Authorization`, `x-auth`, `csrftoken`, `sessionid`, cookies and card fields
-  are masked as before, `PHPSESSID` too. A name about a secret
-  (`password_length`, `token_type`, `cookie_name`) or a yes or no (`is_private`,
-  `has_password`) is shown. Plural credentials are masked (`refresh_tokens`,
-  `api_keys`, `client_secrets`), and so is `tokens` alone unless it holds a
-  model's counts (`{"tokens": 1024}`). A card's `number` (or `num`) is masked
-  beside the card's other fields (`cvc`, `cvv`, `exp_month`, `exp_year`,
-  `expiry`) whatever its object is called, as in Stripe's `{"source": {"number":
-  ...}}`, in a JSON or form body, an error's locals, a setting and a template's
-  context. It was masked only under a `card`. A `number`, `num` or `account`
-  holding a card's digits (13 to 19, passing the Luhn check) is masked wherever
-  it is.
+  model's `max_tokens` or a `passenger` is shown in bodies and an error's
+  locals, where it read `********`. Passwords, tokens, keys,
+  `Authorization`, `x-auth`, `csrftoken`, `sessionid` and cookies are masked
+  as before, `PHPSESSID` too. A name about a secret (`password_length`,
+  `token_type`, `cookie_name`) or a yes or no (`is_private`, `has_password`)
+  is shown. Plural credentials are masked (`refresh_tokens`, `api_keys`,
+  `client_secrets`), and so is `tokens` alone unless it holds a model's counts
+  (`{"tokens": 1024}`).
 - A query made through SQLAlchemy's asyncio (an `AsyncSession` in a FastAPI
   endpoint, a FastStream handler or any coroutine) has the line of project
   code that awaited it as its `code.origin`, and so has its transaction. The
@@ -451,8 +448,7 @@
   that wait (a sleep, a socket read, a lock, select, `time.sleep` and other
   C calls) say `waiting`. Each stack says when in the trace it was seen, in
   10 ms buckets (`at`, `bucket_us`), and ticks the profiler can't tell
-  between traces on one thread are counted (`dropped`). The agent needs the
-  profile fields of its next release to accept these profiles.
+  between traces on one thread are counted (`dropped`).
 
 ## 0.4.1 (2026-10-21)
 
