@@ -206,6 +206,37 @@ def test_run_traces_a_driver_without_a_framework(tmp_path: Path) -> None:
     assert json.loads(result.stdout.splitlines()[-1]) == ["command", "sql"]
 
 
+# A FastAPI app imports tracepanel's database drivers module before the app imports sqlite3.
+APP_THEN_DRIVER = """
+import json
+from fastapi import FastAPI
+from tracepanel.core.context import start_trace
+from tracepanel.storage import transport
+
+traces = []
+class Collector:
+    def submit(self, trace): traces.append(trace)
+    def flush(self, timeout=5.0): pass
+transport.set_writer(Collector())
+
+app = FastAPI()
+import sqlite3
+
+with start_trace("command", "script") as trace:
+    sqlite3.connect(":memory:").execute("SELECT 1").fetchall()
+print(json.dumps([span.kind for span in trace.spans]))
+"""
+
+
+def test_run_traces_a_driver_imported_after_the_app(tmp_path: Path) -> None:
+    (tmp_path / "main.py").write_text(APP_THEN_DRIVER)
+
+    result = tracepanel("run", "--set", "terminal_summary=false", sys.executable, "main.py", cwd=tmp_path)
+
+    assert result.stderr == ""
+    assert json.loads(result.stdout.splitlines()[-1]) == ["command", "sql"]
+
+
 def test_run_help_is_the_usage(tmp_path: Path) -> None:
     result = tracepanel("run", "--help", cwd=tmp_path)
 

@@ -244,6 +244,11 @@
 
 ### Fixed
 
+- `tracepanel run` traces the database drivers of a FastAPI, Flask or Falcon
+  app created before anything imported sqlite3. Creating the app printed
+  `could not patch sqlite3` and left every driver untraced, sqlite3,
+  psycopg and the rest.
+
 - FastAPI: a Django `atomic()` block in a sync dependency with `yield` ends
   where Django commits it, with its outcome and duration. FastAPI enters the
   block in one worker thread's copy of the request's context and leaves it in
