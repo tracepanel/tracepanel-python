@@ -1,19 +1,10 @@
 import platform
-from collections.abc import Generator
 
-import pytest
 from dirty_equals import IsStr
 
 from tracepanel.core import runtime
 
 PYTHON = ".".join(platform.python_version().split(".")[:2])
-
-
-@pytest.fixture(autouse=True)
-def restore() -> Generator[None, None, None]:
-    previous = runtime._framework  # noqa: SLF001
-    yield
-    runtime._framework = previous  # noqa: SLF001
 
 
 def test_a_known_framework_with_its_version() -> None:

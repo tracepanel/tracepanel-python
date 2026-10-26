@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from celery import Celery
+from celery import Celery, signals
 
 from tracepanel.core.model import Trace
 from tracepanel.integrations import celery
@@ -60,6 +60,23 @@ class Lines:
 if out := os.environ.get("PREFORK_OUT"):
     set_writer(Lines(out))
     celery.install()
+
+
+def quit_at_once(**kwargs: object) -> None:
+    """A terminated pool process ends here, once tracepanel is done, without its last word to the worker.
+
+    billiard's pool process, terminated (SIGTERM), says it is dead on the result queue under a lock the worker's
+    processes share. The signal that follows (a cold shutdown terminates it twice, the hard time limit kills it 0.1 s
+    on) can kill it in the middle: the lock stays held, and the worker hangs at its next put or as it stops, with or
+    without tracepanel. The worker finds the process gone all the same.
+    """
+    del kwargs
+    if celery._terminating():  # noqa: SLF001
+        os._exit(1)
+
+
+# After tracepanel's own: its receiver writes what the process still holds.
+signals.worker_process_shutdown.connect(quit_at_once, weak=False)
 
 
 @app.task(time_limit=1)

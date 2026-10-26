@@ -22,7 +22,7 @@ from django.core.files.base import ContentFile  # noqa: E402
 from django.core.files.storage import storages  # noqa: E402
 from moto.server import ThreadedMotoServer  # noqa: E402
 
-from tests.agentstore import issues  # noqa: E402
+from tests.agentstore import untimed  # noqa: E402
 from tracepanel.core.context import start_span, start_trace  # noqa: E402
 from tracepanel.core.model import Span, Trace  # noqa: E402
 from tracepanel.integrations import boto as integration  # noqa: E402
@@ -437,7 +437,7 @@ def test_the_agent_finds_a_loop_s_calls(users: Any, client: Callable[[str], Any]
         for _ in range(2):
             users.get_item(TableName="users", Key={"id": {"S": "1"}})
 
-    found = issues(traced(per_item))
+    found = untimed(traced(per_item))
 
     # One issue each, on the AWS call: their HTTP requests aren't calls the agent counts again.
     assert [(issue.kind, issue.title) for issue in found] == [
@@ -448,6 +448,6 @@ def test_the_agent_finds_a_loop_s_calls(users: Any, client: Callable[[str], Any]
 
     assert [issue.hint for issue in found[:2]] == [IsStr(regex=".*BatchGetItem.*"), IsStr(regex=".*SendMessageBatch.*")]
 
-    assert [(issue.kind, issue.title) for issue in issues(traced(twice))] == [
+    assert [(issue.kind, issue.title) for issue in untimed(traced(twice))] == [
         ("duplicates", "Duplicate DynamoDB commands: 2 identical · GetItem users")
     ]

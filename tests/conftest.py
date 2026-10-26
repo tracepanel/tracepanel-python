@@ -9,7 +9,7 @@ from django.db import connections
 from jsonschema import Draft202012Validator
 
 from tests.agentstore import AGENT_SCHEMAS, AgentStore
-from tracepanel.core import appinfo, conf
+from tracepanel.core import appinfo, conf, runtime
 from tracepanel.core.model import Trace
 from tracepanel.storage import agent, transport
 
@@ -98,6 +98,17 @@ def fresh_app_info() -> Generator[None, None, None]:
     appinfo._packages[:] = packages  # noqa: SLF001
     appinfo._checks[:] = checks  # noqa: SLF001
     appinfo.reset()
+
+
+@pytest.fixture(autouse=True)
+def django_framework() -> Generator[None, None, None]:
+    """The process's framework stays the session's (Django) after a test sets up another: a WSGI or ASGI app, Flask.
+
+    Traces carry it (`tracepanel.framework`), and the worker the next test runs in would have the other one, or none.
+    """
+    framework, named = runtime._framework, runtime._named  # noqa: SLF001
+    yield
+    runtime._framework, runtime._named = framework, named  # noqa: SLF001
 
 
 @pytest.fixture(autouse=True)
