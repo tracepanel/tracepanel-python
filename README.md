@@ -184,6 +184,71 @@ under `app.`, so `source` becomes `app.source`. SQL, logs and errors inside a
 span belong to that span. Outside development these calls do nothing, so you
 can leave them in.
 
+## In tests
+
+The pytest plugin turns what Tracepanel finds into test failures, so an N+1
+query fails CI before it reaches production. It comes with the package and
+stays off until you turn it on:
+
+```bash
+pytest --tracepanel
+```
+
+```toml
+# pyproject.toml
+[tool.pytest.ini_options]
+tracepanel = true
+tracepanel_fail_on = ["n+1", "duplicates"]
+```
+
+Each test runs as a trace named after the test. A request the test makes
+through Django's test client, Starlette's or FastAPI's `TestClient`, httpx's
+ASGI transport or Flask's test client is a trace of its own, linked to the
+test's in the console. Fixtures run outside the test's trace, so the test
+database's setup doesn't count.
+
+When the test passes, the agent looks at its traces. An issue of a kind in
+`tracepanel_fail_on` (`n+1` and `duplicates` by default) fails the test with
+the issue, its query, the line of code that ran it and a link to the trace:
+
+```text
+tracepanel found 1 issue in this test:
+
+N+1: 5 similar queries · SELECT auth_group
+  SELECT "auth_group"."name" FROM "auth_group" ... WHERE "user_id" = %s
+  at blog/views.py:9 in users
+  in GET /users/ → http://127.0.0.1:52811/#/t/01M5VH6BFMFPA7X692DKQV2ANZ
+  Load the related rows in one extra query: add `prefetch_related()` ...
+```
+
+A mark changes the rules for a test, a class or a module. A fixture and a
+context manager count queries inside the test:
+
+```python
+import pytest
+
+import tracepanel
+
+
+@pytest.mark.tracepanel(max_queries=10, allow=["n+1"])
+def test_feed(client, tracepanel_trace):
+    client.get("/feed/")
+    assert tracepanel_trace.queries <= 10
+    with tracepanel.max_queries(2):
+        client.get("/feed/?page=2")
+```
+
+`fail_on` replaces the kinds that fail the test, `allow` takes kinds out of
+them, and `max_queries` caps the queries of the test and its requests.
+`tracepanel_trace.issues` lists what the agent found in the test's requests
+so far.
+
+The plugin starts the project's agent when none is running, as
+`tracepanel run` does. Without an agent (`agent = "off"`, or none for the
+platform) the tests run without findings, and one warning says so. Query
+counts need no agent. Under pytest-xdist every worker sends its tests to the
+same agent, and async tests under anyio or pytest-asyncio work the same way.
+
 ## Command line
 
 | Command | What it does |

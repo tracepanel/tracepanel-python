@@ -22,7 +22,7 @@ from tracepanel.console.messages import MAX_BODY, is_local
 from tracepanel.core import conf, errors, profile, w3c
 from tracepanel.core import request as details
 from tracepanel.core.conf import Settings
-from tracepanel.core.context import current_trace, start_trace
+from tracepanel.core.context import start_trace, within_trace
 from tracepanel.core.model import Trace
 from tracepanel.integrations import htmx
 from tracepanel.storage.transport import complete
@@ -96,7 +96,7 @@ class TracepanelMiddleware:
         path = str(environ.get("PATH_INFO", "/"))
         if path.startswith(config.prefix):
             return _console(environ, path.removeprefix(config.prefix), start_response)
-        if not config.enabled or conf.matches(path, config.ignore_paths) or current_trace() is not None:
+        if not config.enabled or conf.matches(path, config.ignore_paths) or within_trace():
             # Already traced by an app this one is mounted in: its framework module adds to that trace.
             return self.app(environ, start_response)
         method = str(environ.get("REQUEST_METHOD", "GET"))

@@ -14,6 +14,8 @@ from tracepanel.core.model import Attrs, Span, Trace
 MAX_SPANS = 2000
 # A call made synchronously on a running event loop's thread: every other task on the loop waited for it.
 BLOCKS_EVENT_LOOP = "code.blocks_event_loop"
+# A test's trace (tracepanel's pytest plugin): what the test asks of the app, a request, is a trace of its own.
+TEST = "test"
 
 _trace: ContextVar[Trace | None] = ContextVar("tracepanel_trace", default=None)
 _span: ContextVar[Span | None] = ContextVar("tracepanel_span", default=None)
@@ -62,6 +64,12 @@ def current_trace() -> Trace | None:
 
 def current_span() -> Span | None:
     return _span.get()
+
+
+def within_trace() -> bool:
+    """Whether a request or an event beginning now is part of the current trace: not of a test's, which it serves."""
+    trace = _trace.get()
+    return trace is not None and trace.kind != TEST
 
 
 class TraceBlock:

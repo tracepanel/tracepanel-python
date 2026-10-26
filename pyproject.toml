@@ -25,6 +25,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "Framework :: FastAPI",
     "Framework :: Flask",
+    "Framework :: Pytest",
     "Framework :: Django",
     "Framework :: Django :: 5.2",
     "Framework :: Django :: 6.0",
@@ -63,6 +64,10 @@ otel = ["opentelemetry-sdk>=1.45"]
 
 [project.scripts]
 tracepanel = "tracepanel._cli:main"
+
+# Loaded by pytest wherever tracepanel is installed, and off until `pytest --tracepanel` (or `tracepanel = true`).
+[project.entry-points.pytest11]
+tracepanel = "tracepanel.pytest_plugin"
 
 [project.urls]
 Homepage = "https://tracepanel.dev"
@@ -299,6 +304,8 @@ default_item_type = "cmd"
 ignore_fail = "return_non_zero"
 
 [tool.pytest.ini_options]
+# pytester: the plugin's tests run pytest on test files of their own (tests/test_pytest_plugin.py).
+addopts = "-p pytester"
 DJANGO_SETTINGS_MODULE = "tests.project.settings"
 pythonpath = ["."]
 django_debug_mode = true

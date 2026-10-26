@@ -28,7 +28,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from tracepanel.core import conf, errors, forks, profile, services
-from tracepanel.core.context import current_trace, now_us, record_span, start_span, start_trace
+from tracepanel.core.context import current_trace, now_us, record_span, start_span, start_trace, within_trace
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Link
 from tracepanel.core.patching import patch, patched
@@ -103,7 +103,7 @@ def _wrap_dispatch(original: Any) -> Any:  # noqa: ANN401 (a coroutine function 
     async def dispatch(self: Any, message: dict[str, Any]) -> None:  # noqa: ANN401
         scope = getattr(self, "scope", {})
         handler = original.__get__(self, type(self))
-        if current_trace() is not None:
+        if within_trace():
             return await handler(message)
         if scope.get("type") == "channel":
             return await _run(self, handler, message)
