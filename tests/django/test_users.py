@@ -96,7 +96,7 @@ def test_errors(client: Client, users: list[User], settings: Settings) -> None:
 def test_the_console_offers_what_the_app_said_in_its_hello(client: Client, app_console: AgentStore) -> None:
     offered = client.get("/__tracepanel__/api/capabilities").json()
 
-    # Celery's task events (an agent after 0.3.7 lists them), a profile's memory (after 0.4.1).
+    # Celery's task events (an agent after 0.3.7 lists them), memory in profiles (a newer one).
     assert offered == newer(
         {"explain": True, "users": True, "profile": True, "request": True},
         offered,

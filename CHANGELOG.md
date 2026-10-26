@@ -4,6 +4,20 @@
 
 ### Added
 
+- Django's file storages are traced: each call a storage makes to its
+  backend (save, open, delete, exists, listdir, size, the modified, accessed
+  and created times) is a span, `storage save avatars/1.png`, with the
+  storage's alias in STORAGES, its class and system (`filesystem`, `s3`,
+  `gcs`, `azure`…), the path and the bytes written or read when the file
+  knows them. Every Storage class is covered, Django's, django-storages' and
+  the project's own, and a call made inside another (save asking exists for
+  a free name) is part of it. An S3 request's HTTP call lands inside its
+  span. url() is a span where it does more than join strings, on S3 where it
+  signs the URL. `collectstatic` shows where its time went: a span for each
+  phase (clear, copy with the finders' listing, post-process), the 10
+  slowest files of each with their storage calls, and how many files were
+  copied, linked, unmodified and post-processed. `storage_enabled = false`
+  turns it off. The spans are `function` spans for now.
 - A GraphQL request records its server library, `graphql.library`
   (`strawberry` or `graphene`), on the trace and the operation's span. The
   agent names that library's DataLoader in an N+1's hint.

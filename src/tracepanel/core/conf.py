@@ -120,6 +120,8 @@ class Config:
     # Django signals: each send with receivers is a span, each receiver a span inside it.
     signals_enabled: bool = True
     sqlalchemy_enabled: bool = True
+    # Django's file storages: each call that reaches the backend is a span, and collectstatic's phases. Read at startup.
+    storage_enabled: bool = True
     strawberry_enabled: bool = True
     # Requests not traced at all: glob patterns on the path (health checks, static files).
     ignore_paths: tuple[str, ...] = ("/health*", "/static/*", "/media/*", "/favicon.ico")
@@ -206,6 +208,7 @@ class Settings(TypedDict, total=False):
     rq_enabled: bool
     signals_enabled: bool
     sqlalchemy_enabled: bool
+    storage_enabled: bool
     strawberry_enabled: bool
     ignore_paths: list[str] | tuple[str, ...]
     ignore_tasks: list[str] | tuple[str, ...]
