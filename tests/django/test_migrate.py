@@ -1,10 +1,11 @@
 from collections.abc import Generator
+from types import SimpleNamespace
 from typing import Any, ClassVar
 
 import pytest
 from dirty_equals import IsInt, IsPartialDict, IsStr
 from django.core.management import call_command
-from django.db import connection, migrations
+from django.db import connection, migrations, models
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.operations.base import Operation
 from django.db.migrations.state import ProjectState
@@ -39,15 +40,15 @@ def catalog(settings: Settings) -> Generator[None, None, None]:
     call_command("migrate", "catalog", "zero", verbosity=0)
 
 
-def function_spans(trace: Trace, parent: Span) -> list[Span]:
-    """The `function` spans under `parent`, the schema editor's transaction between them or not."""
+def operation_spans(trace: Trace, parent: Span) -> list[Span]:
+    """The `migration.operation` spans under `parent`, the schema editor's transaction between them or not."""
     children = [span for span in trace.spans if span.parent_id == parent.id]
     found: list[Span] = []
     for span in children:
-        if span.kind == "function":
+        if span.kind == "migration.operation":
             found.append(span)
         elif span.kind == "transaction":
-            found += function_spans(trace, span)
+            found += operation_spans(trace, span)
     return found
 
 
@@ -56,7 +57,7 @@ def migration_spans(trace: Trace) -> list[Span]:
 
 
 def operations(trace: Trace) -> dict[str, list[str]]:
-    return {span.name: [each.name for each in function_spans(trace, span)] for span in migration_spans(trace)}
+    return {span.name: [each.name for each in operation_spans(trace, span)] for span in migration_spans(trace)}
 
 
 def operation(trace: Trace, name: str) -> Span:
@@ -89,7 +90,7 @@ def test_migrate_has_a_span_per_migration_and_operation(
     assert first.to_dict() == {
         "id": ID,
         "parent_id": root.id,
-        "kind": "function",
+        "kind": "migration",
         "name": "migrate catalog 0001_initial",
         "start": IsInt(),
         "duration": IsInt(ge=0),
@@ -167,7 +168,7 @@ def test_sqlmigrate_runs_nothing(catalog: None, traces: list[Trace]) -> None:
     call_command("sqlmigrate", "catalog", "0002")
     (trace,) = traces
 
-    assert [span for span in trace.spans if span.kind == "function"] == []
+    assert [span for span in trace.spans if span.kind.startswith("migration")] == []
 
 
 def irreversible(apps: Any, schema_editor: Any) -> None:  # noqa: ANN401 (RunPython's signature)
@@ -195,7 +196,7 @@ def test_operations_without_a_reverse_are_marked() -> None:
 
     assert trace.attrs == IsPartialDict({"migrate.applied": 1})
 
-    assert [(each.name, each.attrs.get("migration.risk")) for each in function_spans(trace, span)] == [
+    assert [(each.name, each.attrs.get("migration.risk")) for each in operation_spans(trace, span)] == [
         ("RunPython irreversible", "RunPython with no reverse: the migration can't be unapplied"),
         ("RunSQL", "RunSQL with no reverse: the migration can't be unapplied"),
         ("SeparateDatabaseAndState", None),
@@ -217,7 +218,7 @@ def test_operations_that_lock_a_postgresql_table_are_marked(catalog: None, trace
 
     def risks(trace: Trace) -> list[tuple[str, object]]:
         (migration,) = (span for span in migration_spans(trace) if span.attrs["migration.name"] == "0003_product_price")
-        return [(span.name, span.attrs.get("migration.risk")) for span in function_spans(trace, migration)]
+        return [(span.name, span.attrs.get("migration.risk")) for span in operation_spans(trace, migration)]
 
     assert risks(applied) == [
         # varchar(50) to varchar(100): binary coercible, no rewrite.
@@ -239,6 +240,35 @@ def test_operations_that_lock_a_postgresql_table_are_marked(catalog: None, trace
         # Shorter: each value is checked.
         ("AlterField Product.name", migrate.REWRITES),
     ]
+
+
+class AddIndexConcurrently(migrations.AddIndex):
+    """Named like django.contrib.postgres's, which needs psycopg: the name is what tells."""
+
+
+class RemoveIndexConcurrently(migrations.RemoveIndex):
+    """Named like django.contrib.postgres's."""
+
+
+@pytest.mark.parametrize(
+    ("operation", "backwards", "expected"),
+    [
+        (migrations.AddIndex("product", models.Index(fields=["sku"], name="sku_idx")), False, migrate.BLOCKS_WRITES),
+        (migrations.AddIndex("product", models.Index(fields=["sku"], name="sku_idx")), True, None),
+        (migrations.RemoveIndex("product", "sku_idx"), False, None),
+        # Unapplied, it creates the index.
+        (migrations.RemoveIndex("product", "sku_idx"), True, migrate.BLOCKS_WRITES),
+        (AddIndexConcurrently("product", models.Index(fields=["sku"], name="sku_idx")), False, None),
+        (RemoveIndexConcurrently("product", "sku_idx"), True, None),
+        # Unapplying it fails before it runs: nothing to hint.
+        (migrations.RunPython(irreversible), True, None),
+    ],
+)
+def test_index_risk_by_direction(operation: Operation, *, backwards: bool, expected: str | None) -> None:
+    editor = SimpleNamespace(connection=SimpleNamespace(vendor="postgresql"))
+    states = (ProjectState(), ProjectState())
+
+    assert migrate.risk(operation, "catalog", editor, states, backwards=backwards) == expected
 
 
 @pytest.mark.parametrize(

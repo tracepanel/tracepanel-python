@@ -55,10 +55,11 @@
   applied and unapplied. An operation that locks or rewrites a table on the
   database it runs on says why in `migration.risk`: on PostgreSQL a column
   type change that isn't binary coercible, a column made NOT NULL and an
-  AddIndex without CONCURRENTLY, on MySQL a column type change, and anywhere
-  a RunPython or RunSQL without its reverse. `sqlmigrate` runs nothing and
-  gets no spans. `migrations_enabled = false` turns it off. The spans are
-  `function` spans.
+  AddIndex without CONCURRENTLY (or a RemoveIndex unapplied), on MySQL a
+  column type change, and anywhere a RunPython or RunSQL without its
+  reverse. `sqlmigrate` runs nothing and gets no spans.
+  `migrations_enabled = false` turns it off. The spans are of their own
+  kinds, `migration` and `migration.operation`.
 - Taskiq is traced like Celery, Dramatiq and Huey (`task.system` is
   `taskiq`), through a middleware tracepanel puts first on every broker. Each
   `.kiq()` in a trace is a `task.enqueue` span, and each task a worker runs is

@@ -1,10 +1,10 @@
 """migrate, what it did: a span per migration applied or unapplied, a span per operation in it, its SQL inside.
 
 `manage.py migrate` is a `command` trace (tracepanel.django.commands). Under it, each migration the plan runs is a
-span, `migrate shop 0012_add_sku` (`unapply shop 0012_add_sku` going backwards), with whether it ran in a
-transaction (`migration.atomic`: the migration's atomic and a database that can roll DDL back) and whether it was
-faked. Each of its operations is a span inside, `AddField Product.sku`, `RunPython backfill_sku`, holding the
-statements the schema editor ran for it, or the queries its code made; the rows its INSERT, UPDATE and DELETE
+`migration` span, `migrate shop 0012_add_sku` (`unapply shop 0012_add_sku` going backwards), with whether it ran in a
+transaction (`migration.atomic`: the migration's atomic and a database that can roll DDL back) and whether it was faked.
+Each of its operations is a `migration.operation` span inside, `AddField Product.sku`, `RunPython backfill_sku`, holding
+the statements the schema editor ran for it, or the queries its code made; the rows its INSERT, UPDATE and DELETE
 statements changed (`migration.rows`) when it ran any. SQL the schema editor defers to the migration's end (indexes,
 foreign keys) is the migration's own. The trace says what the plan was and how many migrations were applied and
 unapplied.
@@ -15,7 +15,7 @@ a hint for the migration's review, from the database's own documentation, not a 
 - PostgreSQL: a column's type changed (ALTER COLUMN TYPE rewrites the table under an ACCESS EXCLUSIVE lock, unless
   the old type is binary coercible to the new one: a longer or unlimited varchar, varchar to text, a numeric with
   more precision and the same scale); a column made NOT NULL (the table is scanned under that lock); AddIndex (CREATE
-  INDEX blocks writes until it is built; AddIndexConcurrently doesn't).
+  INDEX blocks writes until it is built; AddIndexConcurrently doesn't) and RemoveIndex unapplied, which creates it.
 - MySQL: a column's type changed (a table copy, ALGORITHM=COPY, writes wait), a longer varchar aside, which can be
   done in place.
 - Any database: RunPython or RunSQL without its reverse, which leaves the migration impossible to unapply.
@@ -33,7 +33,14 @@ from typing import Any
 
 from django.db.migrations.executor import MigrationExecutor
 from django.db.migrations.migration import Migration
-from django.db.migrations.operations import AddIndex, AlterField, RunPython, RunSQL, SeparateDatabaseAndState
+from django.db.migrations.operations import (
+    AddIndex,
+    AlterField,
+    RemoveIndex,
+    RunPython,
+    RunSQL,
+    SeparateDatabaseAndState,
+)
 from django.db.migrations.operations.base import Operation
 from django.db.migrations.operations.fields import FieldOperation
 from django.db.migrations.operations.models import ModelOperation
@@ -47,7 +54,7 @@ MAX_PLAN = 100
 
 REWRITES = "ALTER COLUMN TYPE rewrites the table under an ACCESS EXCLUSIVE lock"
 SCANS = "SET NOT NULL scans the table under an ACCESS EXCLUSIVE lock"
-BLOCKS_WRITES = "CREATE INDEX blocks writes to the table until it is built (AddIndexConcurrently doesn't)"
+BLOCKS_WRITES = "CREATE INDEX blocks writes to the table until it is built (CONCURRENTLY doesn't)"
 COPIES = "changing a column's type copies the table (ALGORITHM=COPY): writes wait"
 IRREVERSIBLE = "no reverse: the migration can't be unapplied"
 
@@ -140,12 +147,14 @@ def risk(
     """
     if isinstance(operation, AlterField):
         return _alter_field_risk(operation, app_label, schema_editor.connection, states)
-    if backwards:
-        return None
-    if isinstance(operation, RunPython | RunSQL) and not operation.reversible:
+    if not backwards and isinstance(operation, RunPython | RunSQL) and not operation.reversible:
         return f"{type(operation).__name__} with {IRREVERSIBLE}"
-    concurrently = any(cls.__name__ == "AddIndexConcurrently" for cls in type(operation).__mro__)
-    if isinstance(operation, AddIndex) and not concurrently and schema_editor.connection.vendor == "postgresql":
+    # The index made: AddIndex's going forwards, RemoveIndex's going back.
+    creates, concurrently = (
+        (RemoveIndex, "RemoveIndexConcurrently") if backwards else (AddIndex, "AddIndexConcurrently")
+    )
+    concurrent = any(cls.__name__ == concurrently for cls in type(operation).__mro__)
+    if isinstance(operation, creates) and not concurrent and schema_editor.connection.vendor == "postgresql":
         return BLOCKS_WRITES
     return None
 
@@ -254,7 +263,7 @@ def _traced(operation: Operation, method: str, migration: Migration, *, atomic: 
         rows = _Rows()
         token = _operation.set(operation)
         try:
-            with start_span("function", f"{name} {target}" if target else name, attrs) as span:
+            with start_span("migration.operation", f"{name} {target}" if target else name, attrs) as span:
                 with schema_editor.connection.execute_wrapper(rows):
                     result = original(app_label, schema_editor, from_state, to_state)
                 count = rows.count() if span is not None else None
@@ -298,7 +307,7 @@ def _migration_span(migration: Migration, executor: MigrationExecutor, *, backwa
     verb = "unapply" if backwards else "migrate"
     connection = executor.connection
     return start_span(
-        "function",
+        "migration",
         f"{verb} {migration.app_label} {migration.name}",
         {
             "migration.app": migration.app_label,
