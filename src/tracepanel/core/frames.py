@@ -6,7 +6,7 @@ import os
 import reprlib
 import sys
 import sysconfig
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextvars import ContextVar
 from pathlib import Path
 from types import CodeType, FrameType, TracebackType
@@ -15,13 +15,21 @@ from tracepanel.core import conf
 from tracepanel.core.masking import MASK, card_fields, card_number, counted, sensitive
 from tracepanel.core.model import Frame
 
+
+def _library_roots(paths: Iterable[str]) -> tuple[str, ...]:
+    """Each directory as given and as resolved, longest first: a file's path matches one either way.
+
+    uv's managed Python lives in a symlinked directory (cpython-3.14-… for cpython-3.14.0-…): a code object's file
+    may be named through the link, or through where it points.
+    """
+    roots = {spelling for path in paths for spelling in (str(Path(path).absolute()), str(Path(path).resolve()))}
+    return tuple(sorted(roots, key=len, reverse=True))
+
+
 # The standard library, installed packages, and the environment's scripts (.venv/bin/uvicorn, the entry point a
 # server's stack starts in): none of them is the project's code, even inside the project's directory.
-_LIBRARY_PATHS = tuple(
-    {
-        str(Path(sysconfig.get_paths()[key]).resolve())
-        for key in ("stdlib", "platstdlib", "purelib", "platlib", "scripts")
-    }
+_LIBRARY_PATHS = _library_roots(
+    sysconfig.get_paths()[key] for key in ("stdlib", "platstdlib", "purelib", "platlib", "scripts")
 )
 _SKIP_MODULES = ("tracepanel", "django", "asgiref")
 
@@ -57,21 +65,41 @@ def relative(filename: str) -> str:
     return _relative(filename, conf.get_config().root)
 
 
-@functools.lru_cache(maxsize=4096)
-def _relative(filename: str, root: str) -> str:
+def _inside(filename: str, root: str) -> str | None:
     try:
         rel = os.path.relpath(filename, root)
     except ValueError:
-        return filename
-    return filename if rel.startswith("..") else rel
+        return None
+    return None if rel.startswith("..") else rel
+
+
+@functools.lru_cache(maxsize=4096)
+def _relative(filename: str, root: str) -> str:
+    """Cached: a file outside the root as named is resolved, and the root too (/tmp is /private/tmp on macOS)."""
+    rel = _inside(filename, root)
+    if rel is None and not filename.startswith("<"):
+        rel = _inside(str(Path(filename).resolve()), str(Path(root).resolve()))
+    return filename if rel is None else rel
+
+
+def _under_library(filename: str) -> str | None:
+    for root in _LIBRARY_PATHS:
+        if filename.startswith(root + os.sep):
+            return filename[len(root) + 1 :]
+    return None
 
 
 @functools.lru_cache(maxsize=4096)
 def library_path(filename: str) -> str:
-    """A library's or Python's file as its package names it (django/core/handlers/base.py), not its install path."""
-    for root in sorted(_LIBRARY_PATHS, key=len, reverse=True):
-        if filename.startswith(root + os.sep):
-            return filename[len(root) + 1 :]
+    """A library's or Python's file as its package names it (django/core/handlers/base.py), not its install path.
+
+    Cached: a file under no library directory as named is resolved, as a symlink on the way may hide one.
+    """
+    found = _under_library(filename)
+    if found is None and not filename.startswith("<"):
+        found = _under_library(str(Path(filename).resolve()))
+    if found is not None:
+        return found
     marker = f"{os.sep}site-packages{os.sep}"
     return filename.split(marker, 1)[1] if marker in filename else filename
 

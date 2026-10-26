@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Python's and the libraries' frames are named by their package path
+  (`threading.py`) under a Python installed in a symlinked directory, as uv
+  installs one. They showed the full install path, the home directory in it.
+  A project under a symlinked directory (`/tmp` on macOS) is named relative
+  to its root either way too.
+
 ## 0.5.0 (2026-10-26)
 
 Needs `tracepanel-agent` 0.5.0 (installed with it).
