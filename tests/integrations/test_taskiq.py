@@ -33,6 +33,7 @@ from taskiq.scheduler.scheduled_task import ScheduledTask
 from tests.agentstore import AgentStore
 from tests.profiles import busy, share
 from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, stopped, without_worker_events
+from tracepanel.core import conf
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Link, Span, Trace
 from tracepanel.integrations import taskiq as integration
@@ -696,9 +697,13 @@ def test_a_fastapi_endpoint_that_kicks_a_task_links_its_run(recorder: Recorder) 
     async def digest(user_id: int) -> dict[str, str]:
         return {"id": (await send_digest.kiq(user_id)).task_id}
 
+    previous = conf._framework  # noqa: SLF001
     tracepanel.fastapi.install(app)
-    with TestClient(app) as client:
-        task_id = client.post("/digest/7").json()["id"]
+    try:
+        with TestClient(app) as client:
+            task_id = client.post("/digest/7").json()["id"]
+    finally:
+        conf.use_source(previous)
 
     async def worker() -> None:
         # taskiq-fastapi starts the app's lifespan in the worker, and hands its tasks the app's request.
