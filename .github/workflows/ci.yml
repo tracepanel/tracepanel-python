@@ -25,7 +25,7 @@ env:
   GROUPS: >-
     --group celery --group channels --group strawberry --group django-tasks --group django-q2 --group fastapi --group dramatiq
     --group rq --group huey --group ninja --group drf --group flask --group falcon --group otel --group clients
-    --group faststream --group taskiq
+    --group faststream --group taskiq --group llm
 
 jobs:
   plan:

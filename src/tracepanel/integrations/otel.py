@@ -17,6 +17,7 @@ from opentelemetry.sdk.trace import Span as SdkSpan
 from opentelemetry.trace import SpanKind, StatusCode
 
 from tracepanel._compat import override
+from tracepanel.core import conf
 from tracepanel.core.context import MAX_SPANS, current_span, current_trace
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, AttrValue, Span, Trace
@@ -54,6 +55,8 @@ COVERED = frozenset(
         "logging",
     )
 )
+# SDKs that instrument themselves, by their scope, and the setting under which tracepanel records their calls itself.
+SELF_INSTRUMENTED = {"com.anthropic.sdk.python": "anthropic_enabled"}
 # OTel spans started but not ended yet; bounded in case some never end.
 OPEN_MAX = 10_000
 
@@ -106,6 +109,14 @@ def _scope(span: ReadableSpan) -> str | None:
     return scope.name if scope is not None else None
 
 
+def _covered(scope: str | None) -> bool:
+    """Whether tracepanel records what the span is itself: its instrumentation's library, or an SDK's own calls."""
+    if scope in COVERED:
+        return True
+    setting = SELF_INSTRUMENTED.get(scope or "")
+    return setting is not None and bool(getattr(conf.get_config(), setting))
+
+
 class TracepanelProcessor(SpanProcessor):
     """Copies OTel spans into the tracepanel trace they started in."""
 
@@ -116,7 +127,7 @@ class TracepanelProcessor(SpanProcessor):
     @override
     def on_start(self, span: SdkSpan, parent_context: object = None) -> None:  # noqa: ARG002 (SpanProcessor API)
         trace = current_trace()
-        if trace is None or span.kind is SpanKind.SERVER or _scope(span) in COVERED:
+        if trace is None or span.kind is SpanKind.SERVER or _covered(_scope(span)):
             # A server span is a request: the trace itself, which tracepanel opened.
             return
         parent = span.parent

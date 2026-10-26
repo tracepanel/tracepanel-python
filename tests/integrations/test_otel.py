@@ -9,6 +9,7 @@ from opentelemetry.sdk.trace import TracerProvider  # noqa: E402 (optional test 
 from opentelemetry.trace import SpanKind, Status, StatusCode  # noqa: E402
 
 from tests.agentstore import AgentStore  # noqa: E402
+from tracepanel.core import conf  # noqa: E402
 from tracepanel.core.context import start_span, start_trace  # noqa: E402
 from tracepanel.core.model import Span, Trace  # noqa: E402
 from tracepanel.integrations import otel  # noqa: E402
@@ -92,6 +93,25 @@ def test_what_tracepanel_records_itself_is_left_out(tracer: otel_trace.Tracer) -
             pass
 
     assert added(trace) == []
+
+
+def test_an_sdks_own_spans_are_left_out_while_tracepanel_records_its_calls(
+    tracer: otel_trace.Tracer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    anthropic = otel_trace.get_tracer("com.anthropic.sdk.python")
+    with start_trace("http", "GET /") as recorded, anthropic.start_as_current_span("chat", kind=SpanKind.CLIENT):
+        pass
+
+    monkeypatch.setenv("TRACEPANEL_ANTHROPIC_ENABLED", "false")
+    conf.reset()
+    with start_trace("http", "GET /") as kept, anthropic.start_as_current_span("chat", kind=SpanKind.CLIENT):
+        pass
+    monkeypatch.delenv("TRACEPANEL_ANTHROPIC_ENABLED")
+    conf.reset()
+
+    assert added(recorded) == []
+
+    assert [span.name for span in added(kept)] == ["chat"]
 
 
 def test_outside_a_trace_nothing_is_kept(tracer: otel_trace.Tracer) -> None:

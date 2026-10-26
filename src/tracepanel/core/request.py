@@ -229,7 +229,12 @@ def _json(data: bytes) -> str | None:
         value = json.loads(data)
     except ValueError:
         return data.decode("utf-8", errors="replace")
-    return json.dumps(_masked(value), ensure_ascii=False, separators=(",", ":"))
+    return json_text(value)
+
+
+def json_text(value: object) -> str:
+    """A JSON value as compact text, masked as a body's JSON is (an LLM call's messages)."""
+    return json.dumps(_masked(value), ensure_ascii=False, separators=(",", ":"), default=str)
 
 
 def _masked(value: object, parent: str | None = None) -> object:
