@@ -40,6 +40,7 @@ GROUPS = [
     "clients",
     "faststream",
     "taskiq",
+    "llm",
     "aws",
 ]
 

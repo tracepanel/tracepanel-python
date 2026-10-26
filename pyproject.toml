@@ -202,6 +202,11 @@ taskiq = [
     "taskiq>=0.13.0",
     "taskiq-fastapi>=0.5.0",
 ]
+# The LLM SDKs tracepanel wraps, tested against a local stub of their APIs.
+llm = [
+    "openai>=3.37.0",
+    "anthropic>=2.3.0",
+]
 # AWS through botocore (boto3, aiobotocore), against moto's AWS served from a thread of the test process (its
 # server's own dependencies: flask, flask-cors); django-storages' S3Storage on top.
 aws = [
@@ -247,7 +252,7 @@ ban-relative-imports = "all"
 
 [tool.ruff.lint.isort]
 # tracepanel.integrations.celery and friends are named after the libraries: those names stay third-party.
-known-third-party = ["celery", "channels", "faststream", "strawberry", "graphene", "graphene_django", "ninja", "rest_framework", "django", "fastapi", "flask", "falcon", "starlette", "sqlalchemy", "opentelemetry"]
+known-third-party = ["celery", "channels", "faststream", "strawberry", "graphene", "graphene_django", "ninja", "rest_framework", "django", "fastapi", "flask", "falcon", "starlette", "sqlalchemy", "opentelemetry", "openai", "anthropic"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

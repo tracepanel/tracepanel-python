@@ -79,6 +79,9 @@ class Config:
     capture_body: bool = True
     # How much of a body is kept, in KiB: a longer one is cut there, marked as cut.
     max_body_kb: int = 64
+    # Keep the messages of LLM calls, sent and received (development only, masked, cut at max_body_kb; they never
+    # leave this machine). Off by default: they are the app's users' words.
+    capture_llm_content: bool = False
     # Send the app's settings (Django's, Flask's app.config) to the console, masked (development only; they never
     # leave this machine).
     capture_settings: bool = True
@@ -97,6 +100,8 @@ class Config:
     # still has a profile to read. Only a profiled trace pays for it.
     profile_interval_ms: int = 1
     # Integrations, each on when its library is installed; `false` leaves the library unpatched. Read at startup.
+    # Anthropic's SDK: messages as LLM call spans.
+    anthropic_enabled: bool = True
     # AWS calls through botocore (boto3, aiobotocore): S3, DynamoDB, SQS, SNS and the other services.
     boto_enabled: bool = True
     celery_enabled: bool = True
@@ -120,6 +125,8 @@ class Config:
     migrations_enabled: bool = True
     mongodb_enabled: bool = True
     ninja_enabled: bool = True
+    # OpenAI's SDK: chat completions, responses and embeddings as LLM call spans.
+    openai_enabled: bool = True
     otel_enabled: bool = True
     # Redis used directly (Django's cache and the task queues record their own calls).
     redis_enabled: bool = True
@@ -190,12 +197,14 @@ class Settings(TypedDict, total=False):
     capture_request: bool
     capture_body: bool
     max_body_kb: int
+    capture_llm_content: bool
     capture_settings: bool
     capture_template_context: bool
     profile: bool
     profile_memory: bool
     profile_enabled: bool
     profile_interval_ms: int
+    anthropic_enabled: bool
     boto_enabled: bool
     celery_enabled: bool
     channels_enabled: bool
@@ -213,6 +222,7 @@ class Settings(TypedDict, total=False):
     migrations_enabled: bool
     mongodb_enabled: bool
     ninja_enabled: bool
+    openai_enabled: bool
     otel_enabled: bool
     redis_enabled: bool
     rq_enabled: bool
