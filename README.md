@@ -288,4 +288,7 @@ own at [tracepanel.dev/docs/django](https://tracepanel.dev/docs/django).
 
 ## License
 
-Licensed under the [MIT License](LICENSE).
+Licensed under the [MIT License](LICENSE). The agent it installs,
+`tracepanel-agent`, is under the
+[FSL-1.1-ALv2](https://github.com/tracepanel/tracepanel/blob/main/LICENSE):
+source available, and Apache-2.0 two years after each release.
