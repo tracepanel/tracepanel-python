@@ -7,7 +7,10 @@ from pathlib import Path
 import pytest
 
 from tests.agentstore import AgentStore
+from tracepanel import _cli
+from tracepanel.core import conf
 from tracepanel.core.context import start_trace
+from tracepanel.storage import agent
 
 pytest.importorskip("fastapi")
 
@@ -183,6 +186,26 @@ def test_config_shows_where_values_come_from(tmp_path: Path) -> None:
         "logging": "on",
         "Celery": "off: celery_enabled",
     }
+
+
+def test_the_agent_the_cli_runs_gets_the_prices_file_of_the_settings_but_not_its_mcp_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ran: list[list[str]] = []
+    monkeypatch.setattr(agent, "binary", lambda: "tracepanel-agent")
+    monkeypatch.setattr(os, "execv", lambda _path, argv: ran.append(argv))  # pyrefly: ignore[implicit-any-lambda]
+    monkeypatch.setenv("TRACEPANEL_ROOT", str(tmp_path))
+    monkeypatch.setenv("TRACEPANEL_LLM_PRICES", "prices.json")
+    conf.reset()
+
+    _cli.dev([])
+    _cli.run_agent(["mcp"])
+
+    store, prices = str(tmp_path / ".tracepanel"), str(tmp_path / "prices.json")
+    assert ran == [
+        ["tracepanel-agent", "--dir", store, "--llm-prices", prices, "--serve", "127.0.0.1:8765"],
+        ["tracepanel-agent", "--dir", store, "mcp"],
+    ]
 
 
 # No framework at all (a script, a worker): SQLAlchemy is still traced, and nothing complains while patching.

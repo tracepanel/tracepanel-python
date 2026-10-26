@@ -26,7 +26,7 @@ from tests.agentstore import AGENT_SCHEMAS, AgentStore, newer
 from tracepanel.console import proxy
 from tracepanel.core import appinfo, conf, runtime
 from tracepanel.core.context import record_span, start_trace
-from tracepanel.core.model import Trace
+from tracepanel.core.model import Attrs, Trace
 from tracepanel.storage import agent, transport
 from tracepanel.storage.transport import set_writer
 
@@ -212,6 +212,61 @@ def test_processes_starting_the_agent_together_start_one(
             if process is not None:
                 process.terminate()
                 process.wait(timeout=10)
+
+
+def test_the_agent_started_estimates_llm_costs_with_the_prices_file_of_the_settings(tmp_path: Path) -> None:
+    directory = tmp_path / ".tracepanel"
+    prices = tmp_path / "prices.json"
+    prices.write_text(json.dumps({"models": {"house-model": {"input": 1.0, "output": 2.0}}}))
+    config = dataclasses.replace(conf.get_config(), agent="auto", dir=str(directory), llm_prices=str(prices))
+    process = agent.start(config)
+    assert process is not None
+    try:
+        store = AgentStore(directory, process, str(agent.address(config)), str(agent.console_url(config)))
+        with start_trace("http", "POST /ask") as trace:
+            attrs: Attrs = {
+                "gen_ai.provider.name": "openai",
+                "gen_ai.operation.name": "chat",
+                "gen_ai.request.model": "house-model",
+                "gen_ai.usage.input_tokens": 1000,
+                "gen_ai.usage.output_tokens": 500,
+            }
+            record_span("llm", "chat house-model", start=trace.start, duration=10, attrs=attrs)
+        store.write([trace])
+
+        [call] = store.list_calls("llm")
+        # A million input tokens cost a dollar, a million output tokens two: a thousandth each.
+        assert call == {
+            "key": IsStr(),
+            "system": "llm",
+            "family": "llm",
+            "target": "openai",
+            "op": "chat",
+            "template": "house-model",
+            "name": "chat house-model",
+            "calls": 1,
+            "traces": 1,
+            "errors": 0,
+            "total": 10,
+            "slowest": 10,
+            "p95": 10,
+            "last_seen": IsPositiveInt,
+            "most_per_trace": 1,
+            "origin": None,
+            "sample_trace": trace.id,
+            "sample_span": trace.spans[-1].id,
+            "statement": None,
+            "vendor": None,
+            "hits": None,
+            "misses": None,
+            "via": None,
+            "tokens_in": 1000,
+            "tokens_out": 500,
+            "cost": 0.002,
+        }
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
 
 
 def test_the_first_trace_after_the_agent_restarted_reaches_the_new_one(tmp_path: Path) -> None:

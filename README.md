@@ -64,7 +64,10 @@ DynamoDB's are datastore commands, SQS and SNS sends are messages, and the
 N+1 and duplicate checks apply to them. A call to OpenAI or Anthropic through
 their SDKs is a span with the model, the tokens it used, why it stopped, the
 tools it called and, for a stream, the time to its first token. The messages
-themselves are kept only with `capture_llm_content = true`. It reads the log
+themselves are kept only with `capture_llm_content = true`. The console
+estimates each call's cost from list prices: `llm_prices = "prices.json"`
+names a file of your own, in the shape of the agent's `llm-prices.json`,
+that overrides or adds models. Tracepanel reads the log
 lines you write with `logging` and attaches each one to the request, task or
 command that wrote it. Your logging configuration stays as it is.
 
