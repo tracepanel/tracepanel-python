@@ -947,11 +947,33 @@ class PreforkWorker:
             self.process.send_signal(sig)
         self.process.communicate(timeout=30)
 
+    def ran(self, task_id: str) -> int:
+        """The pool process that ran the task: the one that said it started."""
+        return next(
+            line["pid"] for line in self.lines() if line.get("event") == "started" and line.get("id") == task_id
+        )
+
+    def wait_gone(self, pid: int) -> None:
+        """Until the worker has reaped its pool process `pid`: all it wrote is written."""
+        deadline = time.monotonic() + 30
+        while _alive(pid):
+            if time.monotonic() > deadline:
+                pytest.fail(f"pool process {pid} is still there")
+            time.sleep(0.05)
+
     def of(self, task_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """The traces of the task and the events that say it finished, each without the process that wrote it."""
         mine = [{k: v for k, v in line.items() if k != "pid"} for line in self.lines() if task_id in line.values()]
         finished = [{k: v for k, v in line.items() if k != "time"} for line in mine if line.get("event") == "finished"]
         return [line for line in mine if "trace" in line], finished
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 @pytest.fixture
@@ -967,8 +989,9 @@ def worker(tmp_path: Path, recorder: Recorder) -> Generator[PreforkWorker, None,
 def test_a_run_killed_by_its_hard_time_limit_has_one_trace_failed(worker: PreforkWorker) -> None:
     task_id = worker.send("overstays")
     worker.wait_for(lambda line: line.get("event") == "finished" and line.get("id") == task_id)
-    # The pool process is gone and a new one runs: the old one, sent SIGTERM, had its chance to write.
-    worker.stop()
+    # The pool process, sent SIGTERM, had its chance to write once it is gone. Not a shutdown: one that lands while
+    # billiard still kills that process can leave the worker hanging, with or without tracepanel.
+    worker.wait_gone(worker.ran(task_id))
     traces, finished = worker.of(task_id)
 
     assert traces == [
