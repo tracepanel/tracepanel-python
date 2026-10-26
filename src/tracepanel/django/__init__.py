@@ -104,6 +104,11 @@ def install() -> None:
     if conf.get_config().signals_enabled:
         signals.install()
     commands.install()
+    # migrate: its migrations and their operations, in the command's trace.
+    if conf.get_config().migrations_enabled:
+        from tracepanel.django import migrate  # noqa: PLC0415
+
+        migrate.install()
     if conf.get_config().storage_enabled:
         storages.install()
         # collectstatic: its phases and slowest files, in the command's trace.

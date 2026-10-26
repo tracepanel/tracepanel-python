@@ -100,6 +100,7 @@ INTEGRATIONS: tuple[Integration, ...] = (
     ),
     Integration("redis", "Redis", ("redis", "valkey"), "tracepanel.integrations.redis"),
     Integration("mongodb", "MongoDB", ("pymongo",), "tracepanel.integrations.mongodb"),
+    Integration("boto", "AWS (boto3)", ("botocore",), "tracepanel.integrations.boto"),
     Integration("celery", "Celery", ("celery",), "tracepanel.integrations.celery"),
     Integration("dramatiq", "Dramatiq", ("dramatiq",), "tracepanel.integrations.dramatiq"),
     Integration("rq", "RQ", ("rq",), "tracepanel.integrations.rq"),

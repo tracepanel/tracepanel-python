@@ -57,15 +57,22 @@ SQLAlchemy, Strawberry, Graphene, Django REST framework, Django Ninja,
 Channels, django-q2 and htmx when they are installed. SQL you run
 through a database driver without an ORM is traced too: sqlite3, psycopg,
 psycopg2, asyncpg, the MySQL drivers, oracledb, pyodbc and pymssql. So are
-the HTTP calls your app makes with requests, httpx, aiohttp or boto3, and its
-Redis commands. It reads the log lines you write with `logging` and attaches
-each one to the request, task or command that wrote it. Your logging
-configuration stays as it is.
+the HTTP calls your app makes with requests, httpx or aiohttp, and its
+Redis commands. Each AWS call boto3 or aiobotocore makes is a span named as
+AWS names it, `S3 PutObject avatars/1.png`: S3 calls are storage calls,
+DynamoDB's are datastore commands, SQS and SNS sends are messages, and the
+N+1 and duplicate checks apply to them. It reads the log lines you write
+with `logging` and attaches each one to the request, task or command that
+wrote it. Your logging configuration stays as it is.
 
 In Django it shows each signal sent, its sender, the line that sent it and
 the receivers that ran, each with its own time, queries and errors.
 Each call a file storage makes to its backend is a span, on the local disk
 or S3, and `collectstatic` shows its phases and its slowest files.
+`migrate` shows each migration it applied or unapplied, each operation in it
+with its SQL, and marks the operations that lock or rewrite a table on your
+database, such as a column type change on PostgreSQL. The console warns of
+migrations not applied yet.
 
 For Django, `pip install django-tracepanel` installs the same package.
 
