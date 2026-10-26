@@ -66,7 +66,7 @@ def test_filesystem_calls_are_spans(media: Storage, validator: Draft202012Valida
         {
             "id": ID,
             "parent_id": trace.spans[0].id,
-            "kind": "function",
+            "kind": "storage",
             "name": "storage save avatars/1.png",
             "start": IsInt(),
             "duration": IsInt(ge=0),
@@ -82,7 +82,7 @@ def test_filesystem_calls_are_spans(media: Storage, validator: Draft202012Valida
         {
             "id": ID,
             "parent_id": trace.spans[0].id,
-            "kind": "function",
+            "kind": "storage",
             "name": "storage exists avatars/1.png",
             "start": IsInt(),
             "duration": IsInt(ge=0),
@@ -98,7 +98,7 @@ def test_filesystem_calls_are_spans(media: Storage, validator: Draft202012Valida
         {
             "id": ID,
             "parent_id": trace.spans[0].id,
-            "kind": "function",
+            "kind": "storage",
             "name": "storage open avatars/1.png",
             "start": IsInt(),
             "duration": IsInt(ge=0),
@@ -114,7 +114,7 @@ def test_filesystem_calls_are_spans(media: Storage, validator: Draft202012Valida
         {
             "id": ID,
             "parent_id": trace.spans[0].id,
-            "kind": "function",
+            "kind": "storage",
             "name": "storage listdir avatars",
             "start": IsInt(),
             "duration": IsInt(ge=0),
@@ -131,7 +131,7 @@ def test_filesystem_calls_are_spans(media: Storage, validator: Draft202012Valida
         {
             "id": ID,
             "parent_id": trace.spans[0].id,
-            "kind": "function",
+            "kind": "storage",
             "name": "storage delete avatars/1.png",
             "start": IsInt(),
             "duration": IsInt(ge=0),
@@ -182,9 +182,9 @@ def test_a_subclass_is_counted_once_per_call(tmp_path: Path) -> None:
     by_name = {span.name: span.attrs for span in trace.spans[1:]}
 
     assert tree(trace) == [
-        ("function", "storage save 1.png", "avatars"),
-        ("function", "storage exists avatars/1.png", "avatars"),
-        ("function", "storage get_modified_time avatars/1.png", "avatars"),
+        ("storage", "storage save 1.png", "avatars"),
+        ("storage", "storage exists avatars/1.png", "avatars"),
+        ("storage", "storage get_modified_time avatars/1.png", "avatars"),
     ]
 
     assert by_name["storage save 1.png"] == {
@@ -303,15 +303,15 @@ def test_a_remote_storage_holds_its_http_calls(endpoint: str, settings: Settings
     save, *_ = (span for span in trace.spans if span.name == "storage save invoices/7.pdf")
 
     assert tree(trace) == [
-        ("function", "storage save invoices/7.pdf", "upload"),
+        ("storage", "storage save invoices/7.pdf", "upload"),
         # save() asking exists() for a free name: no span of its own, its request inside the save.
         ("http.client", "HEAD 127.0.0.1/invoices/7.pdf", "storage save invoices/7.pdf"),
         ("http.client", "PUT 127.0.0.1/invoices/7.pdf", "storage save invoices/7.pdf"),
-        ("function", "storage open invoices/7.pdf", "upload"),
+        ("storage", "storage open invoices/7.pdf", "upload"),
         ("http.client", "GET 127.0.0.1/invoices/7.pdf", "storage open invoices/7.pdf"),
         # Signed: a call, though it makes no request.
-        ("function", "storage url invoices/7.pdf", "upload"),
-        ("function", "storage delete invoices/7.pdf", "upload"),
+        ("storage", "storage url invoices/7.pdf", "upload"),
+        ("storage", "storage delete invoices/7.pdf", "upload"),
         ("http.client", "DELETE 127.0.0.1/invoices/7.pdf", "storage delete invoices/7.pdf"),
     ]
 
@@ -405,6 +405,10 @@ def test_collectstatic_shows_its_phases_and_slowest_files(
         *(span.name for span in blocks(trace, post)),
     }
     assert len(blocks(trace, post)) == collectstatic.SLOWEST
+
+    # Phases and files are functions, the calls under them storage spans.
+    assert {span.kind for span in (copy, post, *copies, *blocks(trace, post))} == {"function"}
+    assert {span.kind for span in trace.spans if span.name.startswith("storage ")} == {"storage"}
 
 
 def test_collectstatic_counts_unmodified_files(static: Path, traces: list[Trace]) -> None:

@@ -30,7 +30,8 @@
   phase (clear, copy with the finders' listing, post-process), the 10
   slowest files of each with their storage calls, and how many files were
   copied, linked, unmodified and post-processed. `storage_enabled = false`
-  turns it off. The spans are `function` spans for now.
+  turns it off. The calls are `storage` spans, collectstatic's phases and
+  files `function` spans.
 - A GraphQL request records its server library, `graphql.library`
   (`strawberry` or `graphene`), on the trace and the operation's span. The
   agent names that library's DataLoader in an N+1's hint.
@@ -253,6 +254,11 @@
   heartbeat or the writer that read the settings in its own thread meanwhile
   could put the configuration from before back, and leave the app's requests
   untraced.
+- `tracepanel run` with an interpreter that has no tracepanel installed (a
+  pyenv or system Python) only says it does not trace the process. It also
+  printed an `Error in sitecustomize` about `importlib.machinery`, which the
+  bootstrap used without importing it. The project's own sitecustomize still
+  runs there.
 - `tracepanel run` traces the database drivers of a FastAPI, Flask or Falcon
   app created before anything imported sqlite3. Creating the app printed
   `could not patch sqlite3` and left every driver untraced, sqlite3,
