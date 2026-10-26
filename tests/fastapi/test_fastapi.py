@@ -310,6 +310,47 @@ def test_a_transaction_opened_in_a_dependency_holds_the_endpoint_calls(traces: l
     assert [issue.kind for issue in issues(trace)] == ["in-transaction"]
 
 
+@pytest.mark.django_db(transaction=True)
+def test_a_django_atomic_block_around_the_endpoint_holds_its_calls(traces: list[Trace], pong: str) -> None:
+    from django.db import connection, transaction  # noqa: PLC0415
+
+    app = FastAPI(debug=True)
+
+    # The block opens in one worker thread's copy of the request's context, and closes in another's.
+    def atomic() -> Iterator[None]:
+        with transaction.atomic():
+            yield
+
+    @app.post("/pay", dependencies=[Depends(atomic)])
+    def pay() -> None:
+        httpx.get(pong)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 2")
+
+    previous = conf._framework  # noqa: SLF001
+    tracepanel.fastapi.install(app)
+    with TestClient(app) as test_client:
+        test_client.post("/pay")
+    conf.use_source(previous)
+    (trace,) = traces
+    by_id = {span.id: span for span in trace.spans}
+    (block,) = [span for span in trace.spans if span.kind == "transaction"]
+    # SQLite's backend sends BEGIN as a statement; PostgreSQL's driver begins on its own.
+    calls = [span for span in trace.spans if span.name != "BEGIN"]
+
+    assert [(span.kind, span.name, by_id[span.parent_id].kind) for span in calls if span.parent_id] == [
+        ("view", IsStr(regex=r".*<locals>\.pay"), "http"),
+        ("transaction", "transaction default", "view"),
+        ("http.client", "GET 127.0.0.1/ping", "transaction"),
+        ("sql", "SELECT", "transaction"),
+    ]
+
+    # It ended where Django committed it, in another thread than the one it began in.
+    assert (block.attrs["db.transaction.outcome"], block.duration > 0) == ("commit", True)
+
+    assert [issue.kind for issue in issues(trace)] == ["in-transaction"]
+
+
 def test_an_async_session_in_an_async_endpoint_names_the_endpoint_and_explains(
     traces: list[Trace], store: AgentStore, tmp_path: Path
 ) -> None:

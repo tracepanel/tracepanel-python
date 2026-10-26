@@ -231,6 +231,11 @@
 
 ### Fixed
 
+- FastAPI: a Django `atomic()` block in a sync dependency with `yield` ends
+  where Django commits it, with its outcome and duration. FastAPI enters the
+  block in one worker thread's copy of the request's context and leaves it in
+  another's. The block's span was kept in the first, so it never ended. The
+  open blocks are now kept on the connection, as Django keeps them.
 - The profiler no longer keeps the frames it samples alive until the next
   garbage collection. A request's locals, its rows, outlived it until then.
 - A task worker that stops leaves the Tasks page's Now at once instead of
