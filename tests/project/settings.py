@@ -10,6 +10,7 @@ INSTALLED_APPS = [
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
+    "django.contrib.staticfiles",
     "tracepanel.django",
 ]
 MIDDLEWARE = [
@@ -58,6 +59,7 @@ CACHES = {
     "sessions": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "sessions"},
 }
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 USE_TZ = True
 LOGGING = {

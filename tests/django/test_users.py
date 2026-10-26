@@ -96,9 +96,11 @@ def test_errors(client: Client, users: list[User], settings: Settings) -> None:
 def test_the_console_offers_what_the_app_said_in_its_hello(client: Client, app_console: AgentStore) -> None:
     offered = client.get("/__tracepanel__/api/capabilities").json()
 
-    # Celery's task events (an agent after 0.3.7 lists them).
+    # Celery's task events (an agent after 0.3.7 lists them), memory in profiles (a newer one).
     assert offered == newer(
-        {"explain": True, "users": True, "profile": True, "request": True}, offered, {"live_tasks": True}
+        {"explain": True, "users": True, "profile": True, "request": True},
+        offered,
+        {"live_tasks": True, "profile_memory": True},
     )
 
 
@@ -109,7 +111,11 @@ def test_the_agent_s_own_console_is_not_offered_what_only_the_app_s_answers(
     own = app_console.get("capabilities")
 
     # EXPLAIN and switching users run at the app's console: the agent's has nowhere to run them.
-    assert own == newer({"explain": False, "users": False, "profile": True, "request": True}, own, {"live_tasks": True})
+    assert own == newer(
+        {"explain": False, "users": False, "profile": True, "request": True},
+        own,
+        {"live_tasks": True, "profile_memory": True},
+    )
 
 
 def test_what_is_turned_off_is_left_out_of_the_hello(settings: Settings, users: list[User]) -> None:

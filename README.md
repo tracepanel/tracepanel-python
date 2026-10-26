@@ -64,6 +64,8 @@ configuration stays as it is.
 
 In Django it shows each signal sent, its sender, the line that sent it and
 the receivers that ran, each with its own time, queries and errors.
+Each call a file storage makes to its backend is a span, on the local disk
+or S3, and `collectstatic` shows its phases and its slowest files.
 
 For Django, `pip install django-tracepanel` installs the same package.
 

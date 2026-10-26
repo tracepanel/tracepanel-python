@@ -2,38 +2,54 @@
 
 Django runs on_commit callbacks inside Atomic.__exit__, right after COMMIT: the transaction span ends at the commit,
 and the callbacks become its siblings, so a slow callback is not counted as time the transaction held its locks.
+
+A block may close in another context than the one it opened in: FastAPI enters a sync dependency's `with atomic():`
+in one worker thread's copy of the request's context and leaves it in another's. The open blocks are kept on the
+connection they run on, as Django keeps them.
 """
 
 import functools
 import time
-from contextlib import AbstractContextManager
-from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from django.db import DEFAULT_DB_ALIAS, connections
 from django.db.backends.base.base import BaseDatabaseWrapper
 from django.db.transaction import Atomic
 
-from tracepanel.core.context import current_trace, start_span
+from tracepanel.core.context import OpenSpan, current_trace, open_span, start_span
 from tracepanel.core.frames import origin
-from tracepanel.core.model import Attrs, Span
 from tracepanel.core.patching import patch, patched
 from tracepanel.django import services as django_services
 from tracepanel.django.signals import qualname
 
+if TYPE_CHECKING:
+    from tracepanel.core.model import Attrs
+
 
 @dataclass(slots=True)
 class _Open:
-    """An atomic block being timed; Atomic instances are reused as decorators, so this lives in the context."""
+    """An atomic block being timed (None: the trace had no room left for its span)."""
 
-    context: AbstractContextManager[Span | None]
-    span: Span | None
-    started: int
+    atomic: Atomic
+    opened: OpenSpan | None
     committed: int | None = None
 
 
-_open: ContextVar[tuple[_Open, ...]] = ContextVar("tracepanel_atomic", default=())
+# The atomic blocks timed on a connection, innermost last: Atomic instances are reused as decorators.
+_OPEN = "_tracepanel_atomic"
+
+
+def _open(connection: BaseDatabaseWrapper) -> list[_Open]:
+    stack: list[_Open] | None = getattr(connection, _OPEN, None)
+    if stack is None:
+        stack = []
+        setattr(connection, _OPEN, stack)
+    return stack
+
+
+def _connection(atomic: Atomic) -> BaseDatabaseWrapper:
+    return connections[atomic.using or DEFAULT_DB_ALIAS]
 
 
 def _enter(atomic: Atomic) -> None:
@@ -47,32 +63,33 @@ def _enter(atomic: Atomic) -> None:
         "db.transaction.durable": bool(getattr(atomic, "durable", False)),
         "code.origin": origin(),
     }
-    context = start_span("transaction", f"{'savepoint' if nested else 'transaction'} {using}", attrs)
-    _open.set((*_open.get(), _Open(context, context.__enter__(), time.perf_counter_ns())))
+    opened = open_span("transaction", f"{'savepoint' if nested else 'transaction'} {using}", attrs)
+    _open(connection).append(_Open(atomic, opened))
 
 
 def _exit(atomic: Atomic, exc_type: type[BaseException] | None, failed: bool) -> None:  # noqa: FBT001
-    stack = _open.get()
-    if not stack:
+    connection = _connection(atomic)
+    entry = _open(connection).pop()
+    opened = entry.opened
+    if opened is None:
         return
-    *rest, entry = stack
-    _open.set(tuple(rest))
-    connection = connections[atomic.using or DEFAULT_DB_ALIAS]
-    if entry.span is not None:
-        rolled_back = failed or exc_type is not None or connection.needs_rollback
-        entry.span.attrs["db.transaction.outcome"] = "rollback" if rolled_back else "commit"
-        if failed or exc_type is not None:
-            entry.span.status = "error"
-    entry.context.__exit__(None, None, None)
-    if entry.span is not None and entry.committed is not None:
+    rolled_back = failed or exc_type is not None or connection.needs_rollback
+    opened.span.attrs["db.transaction.outcome"] = "rollback" if rolled_back else "commit"
+    if failed or exc_type is not None:
+        opened.span.status = "error"
+    # In whatever context it ends (another worker thread than the one it began in): its parent is current again.
+    opened.end()
+    if entry.committed is not None:
         # The block ends at COMMIT: on_commit callbacks ran after it.
-        entry.span.duration = (entry.committed - entry.started) // 1000
+        opened.span.duration = (entry.committed - opened.started) // 1000
 
 
-def _on_commit_callback(func: Any, alias: str) -> Any:  # noqa: ANN401 (any callable)
+def _on_commit_callback(func: Any, connection: BaseDatabaseWrapper) -> Any:  # noqa: ANN401 (any callable)
     """Time the callback as a sibling of the transaction it waited for."""
-    stack = _open.get()
-    parent_id = stack[-1].span.parent_id if stack and stack[-1].span is not None else None
+    stack = _open(connection)
+    opened = stack[-1].opened if stack else None
+    parent_id = opened.span.parent_id if opened is not None else None
+    alias = connection.alias
 
     @functools.wraps(func)
     def run() -> object:
@@ -92,13 +109,22 @@ _run_commit_hooks = BaseDatabaseWrapper.run_and_clear_commit_hooks
 
 
 def _patched_enter(self: Atomic) -> None:
-    if current_trace() is not None:
-        _enter(self)
-    _atomic_enter(self)
+    if current_trace() is None:
+        _atomic_enter(self)
+        return
+    _enter(self)
+    try:
+        _atomic_enter(self)
+    except BaseException:
+        # BEGIN failed (no connection): no block to time, and none left open on the connection.
+        _exit(self, None, failed=True)
+        raise
 
 
 def _patched_exit(self: Atomic, exc_type: Any, exc_value: Any, traceback: Any) -> None:  # noqa: ANN401 (Django's)
-    if not _open.get():
+    stack = _open(_connection(self))
+    if not stack or stack[-1].atomic is not self:
+        # Entered outside a trace.
         return _atomic_exit(self, exc_type, exc_value, traceback)
     try:
         _atomic_exit(self, exc_type, exc_value, traceback)
@@ -113,11 +139,11 @@ def _patched_exit(self: Atomic, exc_type: Any, exc_value: Any, traceback: Any) -
 def _patched_on_commit(self: BaseDatabaseWrapper, func: Any, robust: bool = False) -> None:  # noqa: ANN401, FBT001, FBT002
     if current_trace() is None:
         return _on_commit(self, func, robust)
-    return _on_commit(self, _on_commit_callback(func, self.alias), robust)
+    return _on_commit(self, _on_commit_callback(func, self), robust)
 
 
 def _patched_run_commit_hooks(self: BaseDatabaseWrapper) -> None:
-    stack = _open.get()
+    stack = _open(self)
     if stack:
         stack[-1].committed = time.perf_counter_ns()
     _run_commit_hooks(self)

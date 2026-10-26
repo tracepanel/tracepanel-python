@@ -73,6 +73,7 @@ def install() -> None:
         mail,
         signals,
         sql,
+        storages,
         structure,
         sync_to_async,
         transactions,
@@ -98,5 +99,12 @@ def install() -> None:
     if conf.get_config().signals_enabled:
         signals.install()
     commands.install()
+    if conf.get_config().storage_enabled:
+        storages.install()
+        # collectstatic: its phases and slowest files, in the command's trace.
+        if apps.is_installed("django.contrib.staticfiles"):
+            from tracepanel.django import collectstatic  # noqa: PLC0415
+
+            collectstatic.install()
     # Libraries and Django apps (DRF, Ninja, Channels, Django Tasks): each on when installed and not turned off.
     _setup.started("Django", debug="DEBUG", django=True, announce=_serving())
