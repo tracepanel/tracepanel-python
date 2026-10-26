@@ -7,8 +7,6 @@ as the others are created. A call made inside another storage call is part of it
 exists() for a free name, a subclass's exists() calling super(). What the backend does meanwhile (an S3 request, its
 HTTP call) lands inside the span. url() is left out where it only joins strings: on the local file system and in
 memory. On S3 it signs the URL.
-
-The agent has no span kind for storage yet: these are `function` spans, their attributes under `storage.`.
 """
 
 import functools
@@ -51,8 +49,9 @@ class Slowest:
     and errors bound to a dropped span move to its parent.
     """
 
-    def __init__(self, keep: int) -> None:
+    def __init__(self, keep: int, kind: str = "function") -> None:
         self.keep = keep
+        self.kind = kind
         self.count = 0
         self.total_us = 0
         self._kept: list[tuple[int, int, Span]] = []
@@ -61,7 +60,7 @@ class Slowest:
     def block(self, name: str, attrs: Attrs) -> Generator[Span | None, None, None]:
         trace = current_trace()
         mark = len(trace.spans) if trace is not None else 0
-        with start_span("function", name, attrs) as span:
+        with start_span(self.kind, name, attrs) as span:
             yield span
         if span is None or trace is None:
             return
@@ -160,7 +159,7 @@ def _wrap(op: str, method: Callable[..., object]) -> Callable[..., object]:
         }
         phase = pool.get()
         block: AbstractContextManager[Span | None] = (
-            phase.block(_name(op, path), attrs) if phase is not None else start_span("function", _name(op, path), attrs)
+            phase.block(_name(op, path), attrs) if phase is not None else start_span("storage", _name(op, path), attrs)
         )
         token = _inside.set(True)
         try:
