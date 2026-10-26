@@ -8,6 +8,7 @@ from types import FrameType
 import django
 import pytest
 from dirty_equals import IsInt, IsList, IsPartialDict
+from jsonschema import Draft202012Validator
 
 from tests.profiles import share
 from tracepanel.core import conf, frames, profile
@@ -79,8 +80,24 @@ def test_past_the_cap_new_stacks_count_as_other() -> None:
     assert recording.samples == MAX_STACKS + 3
 
 
-def test_nothing_sampled_is_no_profile() -> None:
-    assert profile.document(Recording(thread_id=1, interval_us=5000)) is None
+def test_a_profiled_trace_no_sample_saw_still_has_a_profile(validator: Draft202012Validator) -> None:
+    # A run shorter than a tick: its 0 samples say why the profile is empty, where none would say it wasn't asked.
+    with start_trace("command", "short") as trace:
+        pass
+    found = profile.document(Recording(thread_id=1, interval_us=5000))
+
+    assert found == {
+        "interval_us": 5000,
+        "samples": 0,
+        "dropped": 0,
+        "bucket_us": profile.BUCKET_US,
+        "frames": [],
+        "stacks": [],
+        "gc": {"collections": 0, "pause_us": 0, "pauses": []},
+    }
+
+    trace.profile = found
+    validator.validate(trace.to_dict())
 
 
 def test_a_request_asks_by_header_or_by_the_panels_cookie() -> None:

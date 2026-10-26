@@ -164,8 +164,8 @@ class Sampler:
                 self._thread.start()
         return recording
 
-    def stop(self, recording: Recording) -> dict[str, object] | None:
-        """End a trace's recording: its profile, or None when no sample saw it."""
+    def stop(self, recording: Recording) -> dict[str, object]:
+        """End a trace's recording: its profile, with no stacks when no sample saw it (a run shorter than a tick)."""
         with self._lock:
             running = self._threads.get(recording.thread_id, [])
             if recording in running:
@@ -176,13 +176,7 @@ class Sampler:
             if not self._threads:
                 self._slow_down()
         heap, recording.heap = recording.heap, None
-        measured = None
-        if heap is not None:
-            # No profile, nothing to measure for (document()): the trace's memory only stops being watched.
-            if recording.samples or recording.dropped:
-                measured = memory.measure(heap, self._tracer)
-            else:
-                self._tracer.end(heap)
+        measured = memory.measure(heap, self._tracer) if heap is not None else None
         return document(recording, measured)
 
     def overlap(self) -> None:
@@ -468,14 +462,14 @@ def count(recording: Recording, keys: tuple[Key, ...], now: int | None = None) -
     seen[at] += 1
 
 
-def document(recording: Recording, measured: memory.Measured | None = None) -> dict[str, object] | None:
+def document(recording: Recording, measured: memory.Measured | None = None) -> dict[str, object]:
     """The trace's `profile`: the functions the stacks name, each once, and each stack as indexes into them.
 
-    With what it allocated (`measured`, core.memory), its sites' frames in the same table, and its GC pauses. None
-    when nothing was seen; a trace whose ticks were all dropped has a profile that says so.
+    With what it allocated (`measured`, core.memory), its sites' frames in the same table, and its GC pauses. A trace
+    no sample saw (it ended before the sampler's first tick) still has one, with no stacks: its 0 samples say why
+    there is nothing to show, where no profile would say it wasn't asked for. A trace whose ticks were all dropped
+    has one that says so.
     """
-    if not recording.samples and not recording.dropped:
-        return None
     table = _Table()
     stacks: list[dict[str, object]] = []
     seen = sorted(recording.stacks.items(), key=lambda item: -sum(item[1].values()))
