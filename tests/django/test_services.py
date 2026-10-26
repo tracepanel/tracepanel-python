@@ -4,7 +4,7 @@ from django.db import connection, connections
 from django.test import Client
 from pytest_django.fixtures import Settings
 
-from tests.agentstore import AgentStore
+from tests.agentstore import AgentStore, newer
 from tracepanel.core.model import Trace
 
 DATABASES = ["default", "analytics"]
@@ -80,7 +80,9 @@ def test_service_map(client: Client, traces: list[Trace], store: AgentStore, set
         ("shop", "web", peer, "out") for peer in peers
     }
 
-    assert store.list_services("kind:cache")["services"] == [
+    (cache,) = store.list_services("kind:cache")["services"]
+
+    assert cache == newer(
         {
             "id": "cache:locmem/sessions",
             "kind": "cache",
@@ -93,5 +95,7 @@ def test_service_map(client: Client, traces: list[Trace], store: AgentStore, set
             "total": IsInt(ge=0),
             "errors": 0,
             "last_seen": IsInt,
-        }
-    ]
+        },
+        cache,
+        {"cloud": None},
+    )
