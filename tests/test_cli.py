@@ -56,6 +56,61 @@ def test_run_traces_an_app_without_code_changes(tmp_path: Path) -> None:
     assert json.loads(result.stdout.splitlines()[-1]) == {"header": True, "names": ["GET /items/{item_id}"]}
 
 
+# Under run the app is set up as it is created, before any route is added: routers come later.
+ROUTERS_APP = """
+import json
+from fastapi import APIRouter, FastAPI
+from fastapi.testclient import TestClient
+from tracepanel.storage import transport
+
+traces = []
+class Collector:
+    def submit(self, trace): traces.append(trace)
+    def flush(self, timeout=5.0): pass
+transport.set_writer(Collector())
+
+app = FastAPI()
+
+@app.get("/direct")
+def direct() -> int:
+    return 1
+
+items = APIRouter(prefix="/items")
+nested = APIRouter(prefix="/nested")
+
+@items.get("/{item_id}")
+def item(item_id: int) -> int:
+    return item_id
+
+@nested.get("/{item_id}")
+def nested_item(item_id: int) -> int:
+    return item_id
+
+items.include_router(nested)
+app.include_router(items, prefix="/v1")
+
+client = TestClient(app)
+for path in ("/direct", "/v1/items/3", "/v1/items/nested/4"):
+    client.get(path)
+print(json.dumps([[span.kind, span.name] for trace in traces for span in trace.spans]))
+"""
+
+
+def test_run_runs_the_routes_of_included_routers_in_a_view(tmp_path: Path) -> None:
+    (tmp_path / "main.py").write_text(ROUTERS_APP)
+
+    result = tracepanel("run", "--set", "terminal_summary=false", sys.executable, "main.py", cwd=tmp_path)
+
+    assert json.loads(result.stdout.splitlines()[-1]) == [
+        ["http", "GET /direct"],
+        ["view", "__main__.direct"],
+        ["http", "GET /v1/items/{item_id}"],
+        ["view", "__main__.item"],
+        ["http", "GET /v1/items/nested/{item_id}"],
+        ["view", "__main__.nested_item"],
+    ]
+
+
 def test_without_run_nothing_is_traced(tmp_path: Path) -> None:
     with_import = APP.replace("from tracepanel.storage", "import tracepanel.fastapi\nfrom tracepanel.storage")
     (tmp_path / "main.py").write_text(with_import)

@@ -123,6 +123,7 @@ class Config:
     # Django's file storages: each call that reaches the backend is a span, and collectstatic's phases. Read at startup.
     storage_enabled: bool = True
     strawberry_enabled: bool = True
+    taskiq_enabled: bool = True
     # Requests not traced at all: glob patterns on the path (health checks, static files).
     ignore_paths: tuple[str, ...] = ("/health*", "/static/*", "/media/*", "/favicon.ico")
     # Tasks not traced: glob patterns on the task name, e.g. "celery.backend_cleanup".
@@ -210,6 +211,7 @@ class Settings(TypedDict, total=False):
     sqlalchemy_enabled: bool
     storage_enabled: bool
     strawberry_enabled: bool
+    taskiq_enabled: bool
     ignore_paths: list[str] | tuple[str, ...]
     ignore_tasks: list[str] | tuple[str, ...]
     ignore_loggers: list[str] | tuple[str, ...]

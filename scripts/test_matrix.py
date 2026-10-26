@@ -39,6 +39,7 @@ GROUPS = [
     "otel",
     "clients",
     "faststream",
+    "taskiq",
 ]
 
 
