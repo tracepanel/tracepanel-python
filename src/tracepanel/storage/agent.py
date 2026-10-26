@@ -285,12 +285,15 @@ def sends(name: str) -> None:
 def capabilities(config: conf.Config) -> list[str]:
     """What this app's traces hold beyond the usual, and what it sends besides them.
 
-    A profile when one is asked for, with its memory too (`profile_memory`), the request's details; task events
-    (`live_tasks`).
+    A profile when one is asked for, with its memory too (`profile_memory`), and whether the settings profile every
+    trace (`profile_all`) with its memory (`profile_memory_all`): the console's Profile button shows them on. The
+    request's details; task events (`live_tasks`).
     """
     offered = (
         ("profile", config.profile_enabled),
+        ("profile_all", config.profile_enabled and config.profile),
         ("profile_memory", config.profile_enabled),
+        ("profile_memory_all", config.profile_enabled and config.profile_memory),
         ("request", config.capture_request),
     )
     own = [name for name, on in offered if on]

@@ -120,3 +120,22 @@ def test_the_hello_offers_profiling_while_it_is_on(settings: Settings) -> None:
 
     assert {"profile", "profile_memory"} <= set(offered)
     assert not {"profile", "profile_memory"} & set(agent.capabilities(conf.get_config()))
+
+
+def test_the_hello_says_when_the_settings_profile_every_request(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Nothing sent beside the traces (Celery's task events, when it is installed).
+    monkeypatch.setattr(agent, "SENDS", set())
+    default = agent.capabilities(conf.get_config())
+    settings.TRACEPANEL = {"profile": True}
+    every = agent.capabilities(conf.get_config())
+    settings.TRACEPANEL = {"profile_memory": True}
+    memory = agent.capabilities(conf.get_config())
+    settings.TRACEPANEL = {"profile": True, "profile_memory": True, "profile_enabled": False}
+    off = agent.capabilities(conf.get_config())
+
+    assert default == ["profile", "profile_memory", "request"]
+    assert every == ["profile", "profile_all", "profile_memory", "request"]
+    assert memory == ["profile", "profile_memory", "profile_memory_all", "request"]
+    assert off == ["request"]

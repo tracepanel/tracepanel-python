@@ -2,6 +2,12 @@
 
 ## 0.5.1 (2026-10-26)
 
+### Added
+
+- The panel's Profile button shows profiling set by the settings: the hello
+  says when `profile` profiles every request (`profile_all`), and when
+  `profile_memory` counts every profile's memory (`profile_memory_all`).
+
 ### Fixed
 
 - Python's and the libraries' frames are named by their package path
