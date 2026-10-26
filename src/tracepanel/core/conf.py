@@ -19,6 +19,8 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import TypedDict, Unpack
 
+from tracepanel.core import forks
+
 TRUE = ("1", "true", "yes", "on")
 FALSE = ("0", "false", "no", "off")
 
@@ -227,6 +229,9 @@ def matches(value: str, patterns: tuple[str, ...]) -> bool:
 _framework: Callable[[], Mapping[str, object]] = dict
 _configured: dict[str, object] = {}
 _cached: Config | None = None
+# Counts reset()s: a load begun before the last one read what was there before it, and is not kept.
+_generation = 0
+_lock = forks.lock()
 
 
 def use_source(source: Callable[[], Mapping[str, object]]) -> None:
@@ -243,16 +248,30 @@ def configure(**values: Unpack[Settings]) -> None:
 
 
 def get_config() -> Config:
+    """The configuration, loaded once and cached.
+
+    Another thread (a heartbeat, the writer) may load it while use_source() or reset() runs: its load read the layers
+    as they were, and would put the configuration from before back in the cache. Only a load no reset() went past is
+    kept; the one it returns is its caller's.
+    """
     global _cached  # noqa: PLW0603 (a process-wide cache)
-    if _cached is None:
-        _cached = _load()
-    return _cached
+    cached = _cached
+    if cached is not None:
+        return cached
+    generation = _generation
+    loaded = _load()
+    with _lock:
+        if generation == _generation and _cached is None:
+            _cached = loaded
+    return loaded
 
 
 def reset() -> None:
     """Forget the cached configuration: the next get_config() reads everything again."""
-    global _cached  # noqa: PLW0603
-    _cached = None
+    global _cached, _generation  # noqa: PLW0603
+    with _lock:
+        _generation += 1
+        _cached = None
 
 
 class ConfigError(ValueError):

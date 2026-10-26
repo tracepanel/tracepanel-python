@@ -1,4 +1,5 @@
 import os
+import threading
 from collections.abc import Generator
 from dataclasses import fields
 from pathlib import Path
@@ -46,6 +47,26 @@ def test_a_pyproject_without_the_section_ends_the_search(project: Path) -> None:
     (project / "pyproject.toml").write_text('[project]\nname = "app"\n')
 
     assert conf.get_config().service == "app"
+
+
+def test_a_load_from_before_a_new_source_is_not_kept(project: Path) -> None:
+    # A heartbeat or the writer loads the configuration in its thread while the framework's install() sets its source.
+    reading, read = threading.Event(), threading.Event()
+
+    def slow() -> dict[str, object]:
+        reading.set()
+        read.wait(5)
+        return {"root": str(project), "enabled": False}
+
+    conf.use_source(slow)
+    other = threading.Thread(target=conf.get_config)
+    other.start()
+    reading.wait(5)
+    conf.use_source(lambda: {"root": str(project), "enabled": True})
+    read.set()
+    other.join(5)
+
+    assert conf.get_config().enabled
 
 
 def test_environment_wins_over_the_file(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
