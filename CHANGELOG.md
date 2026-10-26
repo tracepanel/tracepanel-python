@@ -4,6 +4,20 @@
 
 ### Added
 
+- AWS calls are spans of their own, through botocore's clients (boto3,
+  aiobotocore): `S3 PutObject avatars/1.png`, `DynamoDB Query users`, with
+  the service, operation, region, request id, botocore's retries and the
+  error code of a failed call (`NoSuchKey`), as OpenTelemetry names them.
+  S3 calls are `storage` spans (`storage.system` s3, the bucket and key as
+  the path), DynamoDB's are `dynamodb` commands with their request's shape
+  as the statement and the values apart, SQS's SendMessage is an `sqs`
+  message, SNS's Publish a `messaging` one, and any other service an `rpc`
+  call. The N+1 and duplicate checks apply to them. The HTTP requests of a
+  call are part of its span, not calls of their own. A call made for a
+  Django storage (django-storages' S3Storage), a cache or a task queue is a
+  `function` span inside that call, so one loop is counted once. The
+  requests upload_file() and download_file() send from s3transfer's threads
+  are in the trace. `boto_enabled = false` turns it off.
 - Django's `migrate` shows what it did: each migration it applied or
   unapplied is a span, `migrate shop 0012_add_sku` (`unapply` going back),
   with whether it ran in a transaction and whether it was faked. Each of its

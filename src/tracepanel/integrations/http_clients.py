@@ -1,13 +1,16 @@
 """Outgoing HTTP calls: every request the app makes as an `http.client` span.
 
-- urllib3, and what is built on it: requests, botocore (boto3: S3 and the rest of AWS), most API SDKs.
+- urllib3, and what is built on it: requests, most API SDKs, and botocore with `boto_enabled` off (on, an AWS call
+  is a span of its own).
 - httpx and httpx2 (its fork Starlette's test client uses), sync and async: the transport that reaches the network,
   so a test client's in-process transport isn't a call.
 - aiohttp's client.
 
 A call is recorded where it leaves for the network, once: requests on urllib3 is one call, and a redirect urllib3
-follows itself stays inside it (one PoolManager hop is one call). Who called decides, as for SQL
-(tracepanel.core.callers): tracepanel's own calls and OpenTelemetry's exporters are left out.
+follows itself stays inside it (one PoolManager hop is one call). An AWS call boto3 makes is recorded as itself
+(tracepanel.integrations.boto): its HTTP requests, retries included, are part of its span, not calls of their own. Who
+called decides, as for SQL (tracepanel.core.callers): tracepanel's own calls and OpenTelemetry's exporters are left
+out.
 
 A call carries the W3C trace context (`traceparent`) unless the request has its own: the app it reaches, traced by
 tracepanel or OpenTelemetry, names this call as its parent, and the agent links the two traces (tracepanel.core.w3c).
@@ -17,6 +20,7 @@ import importlib
 import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping
+from contextvars import ContextVar
 from types import ModuleType
 from typing import Any, TypeVar
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -40,6 +44,8 @@ CALLERS = Callers(
 )
 # A status from this one on makes the call an error, as OpenTelemetry has it for a client.
 _ERROR_STATUS = 400
+# A client above HTTP records the call itself (an AWS SDK's call): the requests it sends meanwhile are part of it.
+covered: ContextVar[bool] = ContextVar("tracepanel_http_covered", default=False)
 
 
 def safe_url(url: str) -> str:
@@ -112,7 +118,7 @@ def with_traceparent(headers: Mapping[str, str] | None, traceparent: str) -> dic
 def call(send: Callable[[str | None], T], method: str, url: str, status: Callable[[T], int | None]) -> T:
     """Make the call, recorded when the app made it inside a trace. `send` takes the `traceparent` to add (or none)."""
     trace = current_trace()
-    if trace is None or not CALLERS.app_called(sys._getframe(1)):  # noqa: SLF001 (who called)
+    if trace is None or covered.get() or not CALLERS.app_called(sys._getframe(1)):  # noqa: SLF001 (who called)
         return send(None)
     span = new_id()
     start, counter = now_us(), time.perf_counter_ns()
@@ -131,7 +137,7 @@ async def call_async(
     send: Callable[[str | None], Awaitable[T]], method: str, url: str, status: Callable[[T], int | None]
 ) -> T:
     trace = current_trace()
-    if trace is None or not CALLERS.app_called(sys._getframe(1)):  # noqa: SLF001
+    if trace is None or covered.get() or not CALLERS.app_called(sys._getframe(1)):  # noqa: SLF001
         return await send(None)
     span = new_id()
     start, counter = now_us(), time.perf_counter_ns()
