@@ -308,3 +308,12 @@ def issues(trace: Trace) -> list[Issue]:
     names = {item.name for item in dataclasses.fields(Issue)}
     found: list[Json] = _shared.issues_of(trace)
     return [Issue(**{name: item[name] for name in names if name in item}) for item in found]
+
+
+# The issues a slow machine finds: a call past its threshold (a mock AWS or a database server under CI load).
+TIMED = frozenset({"slow-sql", "slow-http", "slow-call"})
+
+
+def untimed(trace: Trace) -> list[Issue]:
+    """The issues the agent finds in a trace but the ones about time, which a loaded machine adds."""
+    return [issue for issue in issues(trace) if issue.kind not in TIMED]

@@ -9,7 +9,7 @@ from dirty_equals import IsStr
 
 pymongo = pytest.importorskip("pymongo")
 
-from tests.agentstore import issues  # noqa: E402
+from tests.agentstore import untimed  # noqa: E402
 from tracepanel.core import conf  # noqa: E402
 from tracepanel.core.context import start_trace  # noqa: E402
 from tracepanel.core.model import Span, Trace  # noqa: E402
@@ -72,8 +72,8 @@ def test_a_find_per_item_is_an_n_plus_one_and_the_same_find_twice_a_duplicate(
     per_item = traced(lambda: [users.find_one({"_id": n}) for n in range(5)])
     twice = traced(lambda: [users.find_one({"_id": 1}) for _ in range(2)])
 
-    assert [issue.kind for issue in issues(per_item)] == ["n+1"]
-    assert [issue.kind for issue in issues(twice)] == ["duplicates"]
+    assert [issue.kind for issue in untimed(per_item)] == ["n+1"]
+    assert [issue.kind for issue in untimed(twice)] == ["duplicates"]
 
 
 def test_lists_of_values_are_one_mark_and_values_stay_out_without_capture(
