@@ -231,6 +231,11 @@
 
 ### Fixed
 
+- `tracepanel run` traces the database drivers of a FastAPI, Flask or Falcon
+  app created before anything imported sqlite3. Creating the app printed
+  `could not patch sqlite3` and left every driver untraced, sqlite3,
+  psycopg and the rest.
+
 - The profiler no longer keeps the frames it samples alive until the next
   garbage collection. A request's locals, its rows, outlived it until then.
 - A task worker that stops leaves the Tasks page's Now at once instead of

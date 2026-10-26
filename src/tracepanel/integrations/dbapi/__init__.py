@@ -19,7 +19,6 @@ driver's wrapper leaves it alone; the app, or a library on top of the driver, ge
 from collections.abc import Callable
 
 from tracepanel.core import explain as plans
-from tracepanel.integrations.dbapi import mssql, mysql, oracle, postgres, sqlite
 from tracepanel.integrations.dbapi._core import explain, known
 
 __all__ = ["explain", "explain_or", "install", "known"]
@@ -38,5 +37,9 @@ def explain_or(fallback: Callable[..., plans.Plan]) -> Callable[..., plans.Plan]
 
 def install() -> None:
     """Wrap the drivers that are installed (sqlite3 always: it is the standard library)."""
+    # Here rather than at the top: the package is imported for EXPLAIN before the app imports a driver, and the sqlite
+    # module imports sqlite3, whose import hook installs this package (while it is still importing, without install()).
+    from tracepanel.integrations.dbapi import mssql, mysql, oracle, postgres, sqlite  # noqa: PLC0415
+
     for family in (sqlite, postgres, mysql, oracle, mssql):
         family.install()
