@@ -44,6 +44,16 @@ from tests.project import (
 )
 
 
+@pytest.fixture(autouse=True)
+def no_worker_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A worker that starts runs Django's system checks, which ask every database for its features.
+
+    The first worker in a process would ask the analytics database, which a test of the default one may not touch:
+    whichever test starts it fails, and leaves its messages queued for the next one's worker.
+    """
+    monkeypatch.setenv("CELERY_SKIP_CHECKS", "1")
+
+
 def by_kind(traces: list[Trace], kind: str) -> list[Trace]:
     return [trace for trace in traces if trace.kind == kind]
 
@@ -60,11 +70,17 @@ def enqueues(trace: Trace) -> list[Span]:
     return [span for span in trace.spans if span.kind == "task.enqueue"]
 
 
-def run_all(*results: object) -> None:
-    """Run what is queued in a worker until each result is ready."""
+def run_all(*results: Any) -> None:  # noqa: ANN401 (AsyncResult, GroupResult)
+    """Run what is queued in a worker until each result is ready.
+
+    Waited for, not get(): Celery's "a get() inside a task would block" is one flag for the process. The worker sets it
+    as it starts and the test worker clears it once started, but a chord's header task that runs at once (its message
+    was queued already) clears it for its join and puts back what it found: set, so a get() here would raise.
+    """
     with start_worker(jobs.app, pool="solo", perform_ping_check=False, shutdown_timeout=10):
-        for result in results:
-            result.get(timeout=10, propagate=False)  # type: ignore[attr-defined]
+        deadline = time.monotonic() + 10
+        while not all(result.ready() for result in results) and time.monotonic() < deadline:
+            time.sleep(0.01)
 
 
 @pytest.mark.django_db
