@@ -25,7 +25,7 @@ It runs while you develop, and everything stays on your machine.
 | **Frameworks** | Django 5.2, 6.0 and 6.1, FastAPI, Starlette, Flask, Falcon (WSGI and ASGI). Any other ASGI or WSGI app, such as Litestar, Quart, Bottle or Pyramid, at the request level. Under any ASGI or WSGI server, such as uvicorn or gunicorn, or the framework's own. In Django also signals, cache, email, file storages, `collectstatic`, `migrate` and management commands. |
 | **Templates** | Django's and Jinja2. |
 | **Databases** | SQLAlchemy 2 and the Django ORM, or a driver directly: sqlite3, aiosqlite, psycopg, psycopg2, asyncpg, PyMySQL, aiomysql, asyncmy, mysqlclient, MySQL Connector, oracledb, pyodbc and pymssql. EXPLAIN on SQLite, PostgreSQL, MySQL and SQL Server. MongoDB through PyMongo. |
-| **APIs** | Django REST framework, Django Ninja, Strawberry, Graphene, htmx. |
+| **APIs** | Django REST framework, Django Ninja, Strawberry, Graphene (through graphene-django), htmx. |
 | **Background work** | Celery, Dramatiq, RQ, Huey, Taskiq, FastStream. In Django also django-q2, Django Tasks and Channels. |
 | **Clients** | requests and urllib3, httpx, aiohttp, Redis and Valkey, AWS through boto3 and aiobotocore, the OpenAI and Anthropic SDKs. Spans from OpenTelemetry instrumentations join the trace. |
 | **Logs** | The lines you write with `logging`, each on the request, task or command that wrote it. |
