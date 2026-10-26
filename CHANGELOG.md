@@ -42,9 +42,10 @@
   call. The N+1 and duplicate checks apply to them. The HTTP requests of a
   call are part of its span, not calls of their own. A call made for a
   Django storage (django-storages' S3Storage), a cache or a task queue is a
-  `function` span inside that call, so one loop is counted once. The
-  requests upload_file() and download_file() send from s3transfer's threads
-  are in the trace. `boto_enabled = false` turns it off.
+  span of its own kind inside that call, which the agent counts as the
+  layer's, so one loop is counted once. The requests upload_file() and
+  download_file() send from s3transfer's threads are in the trace.
+  `boto_enabled = false` turns it off.
 - Django's `migrate` shows what it did: each migration it applied or
   unapplied is a span, `migrate shop 0012_add_sku` (`unapply` going back),
   with whether it ran in a transaction and whether it was faked. Each of its

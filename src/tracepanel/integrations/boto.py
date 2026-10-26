@@ -13,10 +13,10 @@ Its kind says what the call does for the app, and the agent analyzes it with its
 - SQS's SendMessage and SNS's Publish (their batches too): a message sent, `sqs` and `messaging` spans.
 - Any other call (SQS's ReceiveMessage, Lambda, Secrets Manager…): an `rpc` span, `rpc.system` aws-api.
 
-A call made for a Django storage, a cache or a task queue (django-storages' S3Storage, a broker on SQS) is part of that
-call's span, which the agent analyzes: it is a `function` span inside it, with the same attributes, so that one loop
-is not counted twice. upload_file(), download_file() and their fileobj kin send their requests from s3transfer's
-threads: those carry the trace there, and the requests are spans where the transfer started.
+A call made for a Django storage, a cache or a task queue (django-storages' S3Storage, a broker on SQS) is a span of its
+own kind inside that call's span: the agent counts it as the layer's, so one loop is not counted twice. upload_file(),
+download_file() and their fileobj kin send their requests from s3transfer's threads: those carry the trace there, and
+the requests are spans where the transfer started.
 """
 
 import contextvars
@@ -29,15 +29,13 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from tracepanel.core import conf, sql
-from tracepanel.core.context import blocking_attrs, current_span, current_trace, start_span
+from tracepanel.core.context import blocking_attrs, current_trace, start_span
 from tracepanel.core.frames import origin
 from tracepanel.core.imports import when_imported
 from tracepanel.core.model import Attrs, Scalar
 from tracepanel.core.patching import patch
 from tracepanel.integrations import http_clients
 
-# Spans of a layer above the call: what the app asked that layer for. The AWS call is part of it.
-LAYERS = frozenset({"storage", "cache", "task.enqueue"})
 SENDS = {"sqs": ("SendMessage", "SendMessageBatch"), "sns": ("Publish", "PublishBatch")}
 # Where a DynamoDB request carries the app's values (an item, a key, an expression's values): these are `?`.
 VALUES = frozenset({"Item", "Key", "Keys", "ExclusiveStartKey", "ExpressionAttributeValues", "Parameters"})
@@ -240,11 +238,6 @@ def _start(client: Any, operation: str, params: Mapping[str, Any]) -> tuple[str,
         attrs.update(specific)
     attrs["server.address"] = where.hostname
     attrs["server.port"] = (where.port or (443 if where.scheme == "https" else 80)) if where.hostname else None
-    parent = current_span()
-    if parent is not None and parent.kind in LAYERS:
-        # The layer's call is the operation: this one is how it went, and storage.op would make it a storage call.
-        kind = "function"
-        attrs = {name: value for name, value in attrs.items() if not name.startswith("storage.")}
     attrs["code.origin"] = origin()
     attrs.update(blocking_attrs())
     name = f"{service_id} {operation} {target}" if target else f"{service_id} {operation}"
