@@ -121,6 +121,7 @@ class Config:
     signals_enabled: bool = True
     sqlalchemy_enabled: bool = True
     strawberry_enabled: bool = True
+    taskiq_enabled: bool = True
     # Requests not traced at all: glob patterns on the path (health checks, static files).
     ignore_paths: tuple[str, ...] = ("/health*", "/static/*", "/media/*", "/favicon.ico")
     # Tasks not traced: glob patterns on the task name, e.g. "celery.backend_cleanup".
@@ -207,6 +208,7 @@ class Settings(TypedDict, total=False):
     signals_enabled: bool
     sqlalchemy_enabled: bool
     strawberry_enabled: bool
+    taskiq_enabled: bool
     ignore_paths: list[str] | tuple[str, ...]
     ignore_tasks: list[str] | tuple[str, ...]
     ignore_loggers: list[str] | tuple[str, ...]

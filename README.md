@@ -52,9 +52,9 @@ loads each post's author in its own query, the panel shows
 `select_related()` that turns 50 queries into one. The console at
 `/__tracepanel__/` holds every request, task and command the app ran.
 
-Tracepanel also traces Celery, Dramatiq, RQ, Huey, FastStream, SQLAlchemy,
-Strawberry, Graphene, Django REST framework, Django Ninja, Channels, django-q2
-and htmx when they are installed. SQL you run
+Tracepanel also traces Celery, Dramatiq, RQ, Huey, Taskiq, FastStream,
+SQLAlchemy, Strawberry, Graphene, Django REST framework, Django Ninja,
+Channels, django-q2 and htmx when they are installed. SQL you run
 through a database driver without an ORM is traced too: sqlite3, psycopg,
 psycopg2, asyncpg, the MySQL drivers, oracledb, pyodbc and pymssql. So are
 the HTTP calls your app makes with requests, httpx, aiohttp or boto3, and its
@@ -79,6 +79,7 @@ tracepanel run flask --app app run          # Flask
 tracepanel run gunicorn app:app             # Falcon (WSGI)
 tracepanel run uvicorn app:app              # Falcon (ASGI)
 tracepanel run celery -A app worker         # a worker
+tracepanel run taskiq worker app:broker     # a Taskiq worker
 ```
 
 ## Configure

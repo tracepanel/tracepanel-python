@@ -3045,6 +3045,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pycron"
+version = "3.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/bf/dc33987a3275ad7c9f7785d14bd5e9e58cd396e62ac15b6822576ffbeeb5/pycron-3.3.0.tar.gz", hash = "sha256:877017822a65b949713b4746dcd3a3ff5bbd8b26db55e20e472dc191ea539d69", size = 71121, upload-time = "2026-09-17T07:41:46.472Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/20/b2/520fca1c0f4fb0334721e2ea187a650074492df7112209d45acb40032100/pycron-3.3.0-py3-none-any.whl", hash = "sha256:ab04a1ffa01257cc809de777cad1bf2e1a329ec6986059585b730269b7a18806", size = 5006, upload-time = "2026-09-17T07:41:45.519Z" },
+]
+
+[[package]]
 name = "pydantic"
 version = "2.13.5"
 source = { registry = "https://pypi.org/simple" }
@@ -3961,6 +3970,44 @@ wheels = [
 ]
 
 [[package]]
+name = "taskiq"
+version = "0.13.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "anyio" },
+    { name = "pycron" },
+    { name = "pydantic" },
+    { name = "taskiq-dependencies" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/09/c6/a6e5a15158e1db35b458f68f40b3e44c32134d7edad6bfcdb5bbd4128174/taskiq-0.13.0.tar.gz", hash = "sha256:7d56609a6c5a20b0c9da67e9f310ec9640266f620b8f81880bccd5f16913e687", size = 411167, upload-time = "2026-09-26T14:45:16.997Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/59/9c/c4fb8085424ef1c5479877f0f16f8dc4b406dcf6f367d51464bbf134d086/taskiq-0.13.0-py3-none-any.whl", hash = "sha256:b51e1961d8919bc897caa6f5484ac08d812341413a20a3704b69c597c4c154d2", size = 94856, upload-time = "2026-09-26T14:45:15.768Z" },
+]
+
+[[package]]
+name = "taskiq-dependencies"
+version = "1.5.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/90/47a627696e53bfdcacabc3e8c05b73bf1424685bcb5f17209cb8b12da1bf/taskiq_dependencies-1.5.7.tar.gz", hash = "sha256:0d3b240872ef152b719153b9526d866d2be978aeeaea6600e878414babc2dcb4", size = 14875, upload-time = "2025-02-26T22:07:39.876Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/99/6d/4a012f2de002c2e93273f5e7d3e3feea02f7fdbb7b75ca2ca1dd10703091/taskiq_dependencies-1.5.7-py3-none-any.whl", hash = "sha256:6fcee5d159bdb035ef915d4d848826169b6f06fe57cc2297a39b62ea3e76036f", size = 13801, upload-time = "2025-02-26T22:07:38.622Z" },
+]
+
+[[package]]
+name = "taskiq-fastapi"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "taskiq" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0b/62/6d6fcee0cf1d4f82c668cbf199ee8c89de229440698ae38eca5037c5261a/taskiq_fastapi-0.5.0.tar.gz", hash = "sha256:f8a3f1ed60be04a9e1f6a1edea321eebe4a38f320b395dcea1e996b7973b7307", size = 5889, upload-time = "2026-04-18T10:36:24.709Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b9/77/ff0504698dd833b3275c9184cc818480a8a55e397eabd4a119ca49164d9d/taskiq_fastapi-0.5.0-py3-none-any.whl", hash = "sha256:a329ab7f7aa07a2a94751b297694ac97ba5fa470e0ed1e01e4fdf8e45dbc56bc", size = 5398, upload-time = "2026-04-18T10:36:23.603Z" },
+]
+
+[[package]]
 name = "text-unidecode"
 version = "1.3"
 source = { registry = "https://pypi.org/simple" }
@@ -4033,6 +4080,9 @@ starlette = [
 strawberry = [
     { name = "strawberry-graphql", version = "0.327.7", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-10-tracepanel-graphene'" },
     { name = "strawberry-graphql", version = "0.332.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-10-tracepanel-strawberry' or extra != 'group-10-tracepanel-graphene'" },
+]
+taskiq = [
+    { name = "taskiq" },
 ]
 
 [package.dev-dependencies]
@@ -4148,6 +4198,10 @@ rq = [
 strawberry = [
     { name = "strawberry-graphql", version = "0.332.0", source = { registry = "https://pypi.org/simple" } },
 ]
+taskiq = [
+    { name = "taskiq" },
+    { name = "taskiq-fastapi" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -4169,9 +4223,10 @@ requires-dist = [
     { name = "sqlalchemy", marker = "extra == 'sqlalchemy'", specifier = ">=2.0" },
     { name = "starlette", marker = "extra == 'starlette'", specifier = ">=0.40" },
     { name = "strawberry-graphql", marker = "extra == 'strawberry'", specifier = ">=0.250" },
+    { name = "taskiq", marker = "extra == 'taskiq'", specifier = ">=0.13" },
     { name = "tracepanel-agent", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'armv6l' and sys_platform == 'linux') or (platform_machine == 'armv7l' and sys_platform == 'linux') or (platform_machine == 'i686' and sys_platform == 'linux') or (platform_machine == 'ppc64le' and sys_platform == 'linux') or (platform_machine == 'riscv64' and sys_platform == 'linux') or (platform_machine == 's390x' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (platform_machine == 'ARM64' and sys_platform == 'win32') or (platform_machine == 'x86' and sys_platform == 'win32') or sys_platform == 'darwin'", directory = "../tracepanel" },
 ]
-provides-extras = ["django", "celery", "dramatiq", "faststream", "rq", "huey", "django-q2", "channels", "strawberry", "fastapi", "starlette", "flask", "falcon", "sqlalchemy", "mongodb", "ninja", "drf", "otel"]
+provides-extras = ["django", "celery", "dramatiq", "faststream", "rq", "huey", "taskiq", "django-q2", "channels", "strawberry", "fastapi", "starlette", "flask", "falcon", "sqlalchemy", "mongodb", "ninja", "drf", "otel"]
 
 [package.metadata.requires-dev]
 bench = [{ name = "pytest-codspeed", specifier = ">=5.0.3" }]
@@ -4263,6 +4318,10 @@ rq = [
     { name = "rq", specifier = ">=2.12.0" },
 ]
 strawberry = [{ name = "strawberry-graphql", specifier = ">=0.332.0" }]
+taskiq = [
+    { name = "taskiq", specifier = ">=0.13.0" },
+    { name = "taskiq-fastapi", specifier = ">=0.5.0" },
+]
 
 [[package]]
 name = "tracepanel-agent"
