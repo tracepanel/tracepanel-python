@@ -33,8 +33,13 @@ _IN_LIST = re.compile(rf"\bIN \({_PLACEHOLDER}(?:, ?{_PLACEHOLDER})*\)", re.IGNO
 # One part of a table's name, bare or quoted: "standard SQL", `MySQL`, [SQL Server].
 _PART = r'(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|[\w$]+)'
 # The table a statement reads or writes, with its schema (Prisma's "public"."category", MySQL's `shop`.`book`). The
-# lookahead lets the search skip a word that can't start a keyword.
-_TABLE = re.compile(rf"\b(?=[FIJUfiju])(?:FROM|INTO|UPDATE|JOIN)\s+({_PART}(?:\s*\.\s*{_PART})*)", re.IGNORECASE)
+# first part is captured inside its quotes and the rest apart, so a name of one part, the usual one, needs no more
+# parsing. The lookahead lets the search skip a word that can't start a keyword.
+_TABLE = re.compile(
+    r"\b(?=[FIJUfiju])(?:FROM|INTO|UPDATE|JOIN)\s+"
+    rf'(?:"([^"]+)"|`([^`]+)`|\[([^\]]+)\]|([\w$]+))((?:\s*\.\s*{_PART})*)',
+    re.IGNORECASE,
+)
 _PARTS = re.compile(_PART)
 _COUNT = re.compile(r"^\s*SELECT\s+COUNT\(", re.IGNORECASE)
 
@@ -88,14 +93,14 @@ def span_name(sql: str) -> str:
     table = _TABLE.search(sql)
     if table is None:
         return verb
-    name = table.group(1)
-    # A name of one bare part, the usual one, is the table as it is.
-    if not name.isidentifier():
-        name = _PARTS.findall(name)[-1]
-        if name[0] in '"`[':
-            name = name[1:]
-        if name and name[-1] in '"`]':
-            name = name[:-1]
+    double, back, bracket, bare, rest = table.groups()
+    if not rest:
+        return f"{verb} {double or back or bracket or bare}"
+    name = _PARTS.findall(rest)[-1]
+    if name[0] in '"`[':
+        name = name[1:]
+    if name[-1] in '"`]':
+        name = name[:-1]
     return f"{verb} {name}"
 
 
