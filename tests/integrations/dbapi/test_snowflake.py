@@ -18,6 +18,7 @@ from jsonschema import Draft202012Validator
 from tests.integrations.dbapi import snowflakestub
 from tests.integrations.dbapi.conftest import traced
 from tracepanel._compat import override
+from tracepanel.core.context import start_trace
 from tracepanel.core.model import Span, Trace
 from tracepanel.integrations import http_clients
 
@@ -138,6 +139,19 @@ def test_a_statement_s_requests_are_recorded_as_calls(port: int) -> None:
         "code.origin": ORIGIN,
         "w3c.span_id": IsStr(regex=r"[0-9a-f]{16}"),
     }
+
+
+@pytest.mark.skipif(not HTTP, reason="5.x makes its HTTP calls in its Rust core")
+def test_a_profiled_trace_s_calls_to_snowflake_carry_its_traceparent_but_never_the_profile_request(port: int) -> None:
+    snowflakestub.Handler.carried.clear()
+    with start_trace("http", "GET /", profile="1"):
+        connection = connect(port)
+        connection.cursor().execute("SELECT 1")
+        connection.close()
+
+    carried = snowflakestub.Handler.carried
+    assert carried == [(IsStr(regex=r"00-[0-9a-f]{32}-[0-9a-f]{16}-01"), None)] * len(carried)
+    assert len(carried) >= 2
 
 
 def test_commit_and_rollback_are_statements(port: int) -> None:

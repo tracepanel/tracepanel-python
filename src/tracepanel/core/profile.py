@@ -19,8 +19,9 @@ through run_in_threadpool, in a worker thread, while the event loop's thread wai
 A trace that asked to be profiled (a request's header or cookie) hands the request on with the work it starts: a
 task's message, a job's meta, a worker channel's message carries what it asked for next to its link (`carry()`), and
 the run that reads it (`asked_by_parent()`) is profiled the same way, and so are the tasks it sends in turn. The
-`profile` setting profiles every trace anyway: its traces carry nothing. Calls to other apps over HTTP don't carry
-it: they may not be the app's own.
+`profile` setting profiles every trace anyway: its traces carry nothing. Calls to other apps over HTTP carry it too,
+those that carry a traceparent (integrations.http_clients): the X-Tracepanel-Profile header, so the app called
+profiles its trace the same way, and the apps it calls in turn theirs.
 
 A profiled trace's garbage collections are counted while it runs: each collection's pause, from gc.callbacks, goes
 to every profiled trace running then. Its memory (core.memory) only when asked for: a request's "memory" rather than

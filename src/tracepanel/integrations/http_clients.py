@@ -15,6 +15,11 @@ out.
 
 A call carries the W3C trace context (`traceparent`) unless the request has its own: the app it reaches, traced by
 tracepanel or OpenTelemetry, names this call as its parent, and the agent links the two traces (tracepanel.core.w3c).
+A trace profiled because its request asked (the X-Tracepanel-Profile header, the panel's cookie, a task's carried
+flag) asks the same of the app it calls: the call carries `X-Tracepanel-Profile` with what it asked ("1", or "memory"),
+unless the request has its own, so a profile asked for in the browser follows the whole chain of calls. A trace the
+`profile` setting profiles asks nothing of the apps it calls: their own settings decide. Snowflake's own copy of
+urllib3 only ever reaches Snowflake: its calls carry a traceparent, never the profile request.
 """
 
 import importlib
@@ -26,14 +31,14 @@ from types import ModuleType
 from typing import Any, TypeVar
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from tracepanel.core import w3c
+from tracepanel.core import profile, w3c
 from tracepanel.core.callers import Callers
 from tracepanel.core.context import Held, adopt_held, blocking_attrs, current_trace, hold, now_us, record_span, release
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.imports import when_imported
 from tracepanel.core.masking import MASK, sensitive
-from tracepanel.core.model import Attrs
+from tracepanel.core.model import Attrs, Trace
 from tracepanel.core.patching import patch
 
 T = TypeVar("T")
@@ -115,16 +120,41 @@ def _finish(  # noqa: PLR0913
     adopt_held(held, inside, recorded)
 
 
-def with_traceparent(headers: Mapping[str, str] | None, traceparent: str) -> dict[str, str]:
-    """The request's headers with `traceparent` added, unless it has one of its own (the app propagates it)."""
+# What a call carries to the app it reaches, by header: its `traceparent`, and the profile its trace asked for.
+Outgoing = dict[str, str]
+
+
+def outgoing(trace: Trace, span: str, *, ours: bool = True) -> Outgoing:
+    """The headers a call made in `trace` as span `span` adds; the profile request only where it may be ours."""
+    added = {w3c.HEADER: w3c.outgoing(trace, span)}
+    recording = profile.current.get()
+    if ours and recording is not None and recording.asked is not None:
+        added[profile.HEADER] = recording.asked
+    return added
+
+
+def with_outgoing(headers: Mapping[str, str] | None, added: Mapping[str, str]) -> dict[str, str]:
+    """The request's headers with the call's (`traceparent`, the profile asked for) added, unless it has its own."""
     headers = dict(headers or {})
-    if not any(name.lower() == w3c.HEADER for name in headers):
-        headers[w3c.HEADER] = traceparent
+    present = {name.lower() for name in headers}
+    for name, value in added.items():
+        if name not in present:
+            headers[name] = value
     return headers
 
 
-def call(send: Callable[[str | None], T], method: str, url: str, status: Callable[[T], int | None]) -> T:
-    """Make the call, recorded when the app made it inside a trace. `send` takes the `traceparent` to add (or none)."""
+def call(
+    send: Callable[[Outgoing | None], T],
+    method: str,
+    url: str,
+    status: Callable[[T], int | None],
+    *,
+    ours: bool = True,
+) -> T:
+    """Make the call, recorded when the app made it inside a trace. `send` takes the headers to add (or none).
+
+    `ours`: whether the call may reach one of the app's own services, which a profile request goes to.
+    """
     trace = current_trace()
     if trace is None or covered.get() or not CALLERS.app_called(sys._getframe(1)):  # noqa: SLF001 (who called)
         return send(None)
@@ -134,7 +164,7 @@ def call(send: Callable[[str | None], T], method: str, url: str, status: Callabl
     blocking = blocking_attrs()
     held = hold()
     try:
-        response = send(w3c.outgoing(trace, span))
+        response = send(outgoing(trace, span, ours=ours))
     except Exception as exc:
         _finish(
             method,
@@ -154,7 +184,7 @@ def call(send: Callable[[str | None], T], method: str, url: str, status: Callabl
 
 
 async def call_async(
-    send: Callable[[str | None], Awaitable[T]], method: str, url: str, status: Callable[[T], int | None]
+    send: Callable[[Outgoing | None], Awaitable[T]], method: str, url: str, status: Callable[[T], int | None]
 ) -> T:
     trace = current_trace()
     if trace is None or covered.get() or not CALLERS.app_called(sys._getframe(1)):  # noqa: SLF001
@@ -163,7 +193,7 @@ async def call_async(
     start, counter = now_us(), time.perf_counter_ns()
     held = hold()
     try:
-        response = await send(w3c.outgoing(trace, span))
+        response = await send(outgoing(trace, span))
     except Exception as exc:
         _finish(method, url, (start, counter), span, status_code=None, failed=type(exc).__name__, held=held)
         raise
@@ -174,7 +204,7 @@ async def call_async(
 # ---------- urllib3 ----------
 
 
-def _urllib3(urllib3: ModuleType) -> None:
+def _urllib3(urllib3: ModuleType, *, ours: bool = True) -> None:
     pool = urllib3.connectionpool.HTTPConnectionPool
     urlopen = pool.urlopen
 
@@ -182,18 +212,18 @@ def _urllib3(urllib3: ModuleType) -> None:
         # The pool's own URLs are paths; an absolute one goes through a proxy.
         full = url if "://" in url else f"{self.scheme}://{self.host}:{self.port}{url}"
 
-        def send(traceparent: str | None) -> Any:  # noqa: ANN401
-            if traceparent is None:
+        def send(added: Outgoing | None) -> Any:  # noqa: ANN401
+            if added is None:
                 return urlopen(self, method, url, *args, **kwargs)
             # urlopen(method, url, body, headers, ...): without headers of its own, the pool's go.
             if len(args) > 1:
-                headers = with_traceparent(args[1] if args[1] is not None else self.headers, traceparent)
+                headers = with_outgoing(args[1] if args[1] is not None else self.headers, added)
                 return urlopen(self, method, url, args[0], headers, *args[2:], **kwargs)
             given = kwargs.get("headers")
-            headers = with_traceparent(given if given is not None else self.headers, traceparent)
+            headers = with_outgoing(given if given is not None else self.headers, added)
             return urlopen(self, method, url, *args, **{**kwargs, "headers": headers})
 
-        return call(send, method, full, lambda r: r.status)
+        return call(send, method, full, lambda r: r.status, ours=ours)
 
     patch(pool, "urlopen", traced)
 
@@ -205,14 +235,15 @@ def _httpx(httpx: ModuleType) -> None:
     sync, asynchronous = httpx.HTTPTransport, httpx.AsyncHTTPTransport
     handle, handle_async = sync.handle_request, asynchronous.handle_async_request
 
-    def carry(request: Any, traceparent: str | None) -> Any:  # noqa: ANN401 (an httpx Request)
-        if traceparent is not None and w3c.HEADER not in request.headers:
-            request.headers[w3c.HEADER] = traceparent
+    def carry(request: Any, added: Outgoing | None) -> Any:  # noqa: ANN401 (an httpx Request)
+        for name, value in (added or {}).items():
+            if name not in request.headers:
+                request.headers[name] = value
         return request
 
     def traced(self: Any, request: Any) -> Any:  # noqa: ANN401 (an httpx Request and Response)
         return call(
-            lambda traceparent: handle(self, carry(request, traceparent)),
+            lambda added: handle(self, carry(request, added)),
             request.method,
             str(request.url),
             lambda r: r.status_code,
@@ -220,7 +251,7 @@ def _httpx(httpx: ModuleType) -> None:
 
     async def traced_async(self: Any, request: Any) -> Any:  # noqa: ANN401
         return await call_async(
-            lambda traceparent: handle_async(self, carry(request, traceparent)),
+            lambda added: handle_async(self, carry(request, added)),
             request.method,
             str(request.url),
             lambda r: r.status_code,
@@ -242,11 +273,11 @@ def _aiohttp(aiohttp: ModuleType) -> None:
         base = getattr(self, "_base_url", None)
         url = str(base.join(yarl.URL(str(str_or_url)))) if base else str(str_or_url)
 
-        def send(traceparent: str | None) -> Any:  # noqa: ANN401 (aiohttp's response)
-            if traceparent is None:
+        def send(added: Outgoing | None) -> Any:  # noqa: ANN401 (aiohttp's response)
+            if added is None:
                 return request(self, method, str_or_url, *args, **kwargs)
             # The session's own headers are merged in by aiohttp, under the request's.
-            headers = with_traceparent(kwargs.get("headers"), traceparent)
+            headers = with_outgoing(kwargs.get("headers"), added)
             return request(self, method, str_or_url, *args, **{**kwargs, "headers": headers})
 
         return await call_async(send, method, url, lambda r: r.status)
@@ -254,9 +285,13 @@ def _aiohttp(aiohttp: ModuleType) -> None:
     patch(session, "_request", traced)
 
 
-def _urllib3_imported(urllib3: ModuleType) -> None:
+def _urllib3_imported(urllib3: ModuleType, *, ours: bool = True) -> None:
     importlib.import_module(f"{urllib3.__name__}.connectionpool")
-    _urllib3(urllib3)
+    _urllib3(urllib3, ours=ours)
+
+
+def _snowflake_urllib3_imported(urllib3: ModuleType) -> None:
+    _urllib3_imported(urllib3, ours=False)
 
 
 def install() -> None:
@@ -264,7 +299,7 @@ def install() -> None:
     when_imported("urllib3", _urllib3_imported)
     # Snowflake's connector (before 5.0) has its own copy of requests and urllib3: its login, queries and certificate
     # checks go through that one.
-    when_imported("snowflake.connector.vendored.urllib3", _urllib3_imported)
+    when_imported("snowflake.connector.vendored.urllib3", _snowflake_urllib3_imported)
     for name in ("httpx", "httpx2"):
         when_imported(name, _httpx)
     when_imported("aiohttp", _aiohttp)

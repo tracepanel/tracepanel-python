@@ -141,8 +141,11 @@ A profile shows where a request's time went in code, as a flame graph in the
 console. Tracepanel profiles a request that sends an `X-Tracepanel-Profile: 1`
 header, and every request while the panel's Profile button is on (it sets the
 `tracepanel_profile=1` cookie). The tasks a profiled request queues are
-profiled too, on the worker. `profile = true` profiles every trace, and
-`profile_enabled = false` turns profiling off.
+profiled too, on the worker, and so are the requests it makes to your other
+services: each HTTP call that carries a `traceparent` carries the same
+`X-Tracepanel-Profile` too, so a profile asked for in the browser follows the
+whole chain. `profile = true` profiles every trace without asking the
+services it calls, and `profile_enabled = false` turns profiling off.
 
 A frame that waits rather than computes (a sleep, a socket read, a lock) is
 marked as waiting, and an async trace shows what its task awaits instead of

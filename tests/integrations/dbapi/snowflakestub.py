@@ -87,11 +87,14 @@ def _result(query_id: str, statement: str) -> dict[str, Any]:
 class Handler(BaseHTTPRequestHandler):
     # The paths asked for, in order, without their query strings.
     paths: ClassVar[list[str]] = []
+    # What each request carried: its traceparent and the profile it asked for (X-Tracepanel-Profile), in order.
+    carried: ClassVar[list[tuple[str | None, str | None]]] = []
     _queries = 0
 
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0]
         Handler.paths.append(path)
+        Handler.carried.append((self.headers.get("traceparent"), self.headers.get("x-tracepanel-profile")))
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length)
         if self.headers.get("Content-Encoding") == "gzip":
