@@ -9,7 +9,7 @@ from dirty_equals import IsInt, IsPartialDict, IsStr
 from jsonschema import Draft202012Validator
 
 from tracepanel._compat import override
-from tracepanel.core import w3c
+from tracepanel.core import conf, w3c
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Span, Trace
 from tracepanel.integrations import http_clients
@@ -20,11 +20,14 @@ http_clients.install()
 ORIGIN = IsStr(regex=r"tests/integrations/test_http_clients\.py:\d+ in work")
 # The traceparent each request reached the server with, in order.
 received: list[str | None] = []
+# The profile each request asked the server for (X-Tracepanel-Profile), in order.
+asked: list[str | None] = []
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         received.append(self.headers.get("traceparent"))
+        asked.append(self.headers.get("x-tracepanel-profile"))
         path = self.path.split("?", 1)[0]
         if path == "/go":
             self.send_response(302)
@@ -148,6 +151,96 @@ def test_a_request_with_its_own_traceparent_keeps_it(server: str) -> None:
     requests.get(f"{server}/ok", timeout=5)
 
     assert received == [own, None]
+
+
+# ---------- a profile asked for goes on with the calls ----------
+
+
+def every_client(server: str) -> None:
+    """A call through each client: requests, urllib3, httpx sync and async, aiohttp."""
+    requests, urllib3, httpx = (pytest.importorskip(name) for name in ("requests", "urllib3", "httpx"))
+    aiohttp = pytest.importorskip("aiohttp")
+
+    async def asynchronous() -> None:
+        async with httpx.AsyncClient() as client:
+            await client.get(f"{server}/ok")
+        async with aiohttp.ClientSession() as session, session.get(f"{server}/ok") as response:
+            await response.read()
+
+    requests.get(f"{server}/ok", timeout=5)
+    urllib3.PoolManager().request("GET", f"{server}/ok")
+    httpx.get(f"{server}/ok")
+    asyncio.run(asynchronous())
+
+
+def profiled(server: str, *, asking: bool | str | None) -> Trace:
+    """Every client's call in a trace whose request asked for `asking`; what each call asked of the server."""
+    received.clear()
+    asked.clear()
+    with start_trace("http", "GET /", profile=asking) as trace:
+        every_client(server)
+    return complete(trace)
+
+
+@pytest.mark.parametrize("asking", ["1", "memory"])
+def test_a_trace_that_asked_for_a_profile_asks_the_apps_it_calls_the_same(server: str, asking: str) -> None:
+    trace = profiled(server, asking=asking)
+
+    assert asked == [asking] * 5
+
+    assert received == carried(trace)
+
+
+def test_code_that_profiles_its_trace_asks_for_the_time_profile(server: str) -> None:
+    profiled(server, asking=True)
+
+    assert asked == ["1"] * 5
+
+
+def test_a_trace_not_profiled_asks_nothing_of_the_apps_it_calls(server: str) -> None:
+    trace = profiled(server, asking=None)
+
+    assert asked == [None] * 5
+
+    assert received == carried(trace)
+
+
+def test_a_trace_the_setting_profiles_asks_nothing_of_the_apps_it_calls(
+    server: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every trace here is profiled: each app's own setting decides for its own.
+    monkeypatch.setenv("TRACEPANEL_PROFILE", "1")
+    conf.reset()
+
+    trace = profiled(server, asking=None)
+
+    assert trace.profile is not None
+    assert asked == [None] * 5
+
+
+def test_while_profiling_is_off_a_trace_asks_nothing_of_the_apps_it_calls(
+    server: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRACEPANEL_PROFILE_ENABLED", "0")
+    conf.reset()
+
+    profiled(server, asking="1")
+
+    assert asked == [None] * 5
+
+
+def test_a_request_with_its_own_profile_header_keeps_it(server: str) -> None:
+    requests, httpx = (pytest.importorskip(name) for name in ("requests", "httpx"))
+
+    received.clear()
+    asked.clear()
+    with start_trace("http", "GET /", profile="memory"):
+        requests.get(f"{server}/ok", headers={"X-TRACEPANEL-PROFILE": "1"}, timeout=5)
+        httpx.get(f"{server}/ok", headers={"x-tracepanel-profile": "1"})
+    # Outside a trace: nothing added.
+    requests.get(f"{server}/ok", timeout=5)
+
+    assert asked == ["1", "1", None]
 
 
 def test_an_error_status_and_a_redirect(server: str) -> None:
@@ -277,8 +370,8 @@ def test_outside_a_trace_it_only_calls(server: str) -> None:
 def test_a_call_made_while_another_is_on_its_way_is_inside_it(server: str) -> None:
     requests = pytest.importorskip("requests")
 
-    def send(traceparent: str | None) -> Any:  # noqa: ANN401 (a response)
-        del traceparent
+    def send(added: dict[str, str] | None) -> Any:  # noqa: ANN401 (a response)
+        del added
         # Snowflake's connector checks the server's certificate as it connects: a request of its own, inside.
         requests.get(f"{server}/ok", timeout=5)
         return requests.post(f"{server}/ok", timeout=5)

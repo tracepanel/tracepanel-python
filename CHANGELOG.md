@@ -26,6 +26,14 @@
 - What a statement or an HTTP call makes while it runs is inside it: a
   driver over HTTP (Snowflake's, through SQLAlchemy or not) shows its
   requests under the query, not beside it.
+- A profile asked for follows the chain of calls: a trace profiled because
+  its request asked (the `X-Tracepanel-Profile` header, the panel's cookie, a
+  task's flag) sends `X-Tracepanel-Profile` with the same value (`1` or
+  `memory`) on each HTTP call that carries a `traceparent` (requests,
+  urllib3, httpx, aiohttp), unless the request sets its own. The service it
+  reaches profiles its trace, and asks the services it calls in turn. A
+  trace `profile = true` profiles asks nothing of them: their own settings
+  decide. Snowflake's own copy of urllib3 never sends it.
 
 ## 0.6.0 (2026-10-28)
 
