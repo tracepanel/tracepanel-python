@@ -7,6 +7,9 @@
 - The README opens with the 40-second demo video and a table of what
   Tracepanel works with, and its screenshots show a FastAPI app's Swagger UI
   with the panel docked under it.
+- A query on a schema-qualified table is named by the table alone, without
+  its schema or quotes: `FROM "public"."t"` is `SELECT t`, `[dbo].[orders]`
+  is `SELECT orders`, as the JavaScript SDK and the agent name theirs.
 
 ## 0.5.1 (2026-10-26)
 

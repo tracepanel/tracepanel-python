@@ -30,13 +30,12 @@ _WHITESPACE = re.compile(r"\s+")
 # SQLAlchemy). The agent's rules, so a statement recorded here and one it maps from OpenTelemetry group alike.
 _PLACEHOLDER = r"(?:%s|%\([A-Za-z0-9_]+\)s|\?[0-9]*|\$[0-9]+|@[A-Za-z0-9_]+|:[A-Za-z0-9_]+)"
 _IN_LIST = re.compile(rf"\bIN \({_PLACEHOLDER}(?:, ?{_PLACEHOLDER})*\)", re.IGNORECASE)
-# The table a statement reads or writes, its schema too, each part bare or quoted: "standard SQL", `MySQL`,
-# [SQL Server] (`[dbo].[orders]`). The first part and the rest are apart, so a name of one part, the usual one, needs
-# no quotes dropped. The lookahead lets the search skip a word that can't start a keyword.
-_TABLE = re.compile(
-    r'\b(?=[FIJUfiju])(?:FROM|INTO|UPDATE|JOIN)\s+[`"\[]?(\w+)[`"\]]?((?:\.[`"\[]?\w+[`"\]]?)*)', re.IGNORECASE
-)
-_QUOTES = str.maketrans("", "", '`"[]')
+# One part of a table's name, bare or quoted: "standard SQL", `MySQL`, [SQL Server].
+_PART = r'(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|[\w$]+)'
+# The table a statement reads or writes, with its schema (Prisma's "public"."category", MySQL's `shop`.`book`). The
+# lookahead lets the search skip a word that can't start a keyword.
+_TABLE = re.compile(rf"\b(?=[FIJUfiju])(?:FROM|INTO|UPDATE|JOIN)\s+({_PART}(?:\s*\.\s*{_PART})*)", re.IGNORECASE)
+_PARTS = re.compile(_PART)
 _COUNT = re.compile(r"^\s*SELECT\s+COUNT\(", re.IGNORECASE)
 
 
@@ -78,7 +77,10 @@ def _parsed(sql: str) -> tuple[str, str, str]:
 
 
 def span_name(sql: str) -> str:
-    """A statement's span name: its verb and its table, schema kept, quotes dropped (`SELECT dbo.orders`)."""
+    """A statement's span name: its verb and its table, its schema and quotes left out (`SELECT orders`).
+
+    The same rule in every SDK, and in the agent for a statement it maps from OpenTelemetry.
+    """
     words = sql.split(None, 1)
     verb = words[0].upper() if words else "SQL"
     if verb == "SELECT" and _COUNT.match(sql):
@@ -86,8 +88,15 @@ def span_name(sql: str) -> str:
     table = _TABLE.search(sql)
     if table is None:
         return verb
-    name, schema_and_rest = table.groups()
-    return f"{verb} {name}{schema_and_rest.translate(_QUOTES)}" if schema_and_rest else f"{verb} {name}"
+    name = table.group(1)
+    # A name of one bare part, the usual one, is the table as it is.
+    if not name.isidentifier():
+        name = _PARTS.findall(name)[-1]
+        if name[0] in '"`[':
+            name = name[1:]
+        if name and name[-1] in '"`]':
+            name = name[:-1]
+    return f"{verb} {name}"
 
 
 def params_hash(params: Params) -> str:

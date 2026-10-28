@@ -36,6 +36,37 @@ def test_span_names_tell_counts_from_reads() -> None:
     assert span_name('UPDATE "t" SET "likes" = ("t"."likes" + %s)') == "UPDATE t"
 
 
+def test_a_schema_qualified_table_is_named_by_the_table() -> None:
+    # The same cases as the other SDKs' and the agent's own tests: one rule everywhere.
+    statements = [
+        'SELECT "public"."category"."id", "public"."category"."name" FROM "public"."category" WHERE 1=1',
+        'SELECT COUNT(*) AS "_count$_all" FROM (SELECT "public"."order"."id" FROM "public"."order" OFFSET $1) AS "sub"',
+        'SELECT "t1"."id" FROM "public"."order_item" AS "t1" LEFT JOIN "public"."product" AS "t2" ON "t2"."id" = 1',
+        'INSERT INTO "public"."order" ("number") VALUES ($1) RETURNING "public"."order"."id"',
+        'UPDATE "public"."product" SET "stock" = $1 WHERE "public"."product"."id" = $2',
+        'DELETE FROM "public"."cart_item" WHERE "public"."cart_item"."customer_id" = $1',
+        "SELECT `book`.`id` FROM `shop`.`book` JOIN `shop`.`author` ON `author`.`id` = `book`.`author_id`",
+        "UPDATE `shop` . `book` SET `price` = ?",
+        "SELECT [id] FROM [dbo].[orders]",
+        "SELECT * FROM shop.books",
+        'SELECT id FROM "Order Items"',
+    ]
+
+    assert [span_name(statement) for statement in statements] == [
+        "SELECT category",
+        "SELECT COUNT order",
+        "SELECT order_item",
+        "INSERT order",
+        "UPDATE product",
+        "DELETE cart_item",
+        "SELECT book",
+        "UPDATE book",
+        "SELECT orders",
+        "SELECT books",
+        "SELECT Order Items",
+    ]
+
+
 _USERS = "[auth_user].[id] AS [id], [auth_user].[username] AS [username] FROM [auth_user]"
 _IN_GROUP = (
     "INNER JOIN [auth_user_groups] ON ([auth_user].[id] = [auth_user_groups].[user_id]) "
@@ -72,26 +103,26 @@ _IN_GROUP = (
             "UPDATE auth_user",
             "UPDATE [auth_user] SET [username] = %s WHERE [auth_user].[id] = %s",
         ),
-        # A schema stays in the name, as the agent names a statement it maps from OpenTelemetry.
+        # A schema is left out of the name, as the agent names a statement it maps from OpenTelemetry.
         (
             "SELECT TOP 10 [o].[id] FROM [dbo].[orders] AS [o] WHERE [o].[customer_id] IN (@P1, @P2, @P3)",
-            "SELECT dbo.orders",
+            "SELECT orders",
             "SELECT TOP 10 [o].[id] FROM [dbo].[orders] AS [o] WHERE [o].[customer_id] IN (...)",
         ),
         (
             "SELECT [id] FROM [dbo].[orders] WHERE [customer_id] IN (@id0, @id1)",
-            "SELECT dbo.orders",
+            "SELECT orders",
             "SELECT [id] FROM [dbo].[orders] WHERE [customer_id] IN (...)",
         ),
         (
             "SELECT id FROM dbo.orders WHERE customer_id IN (?, ?)",
-            "SELECT dbo.orders",
+            "SELECT orders",
             "SELECT id FROM dbo.orders WHERE customer_id IN (...)",
         ),
         # Oracle, PostgreSQL, MySQL and SQLite quoting and placeholders.
         (
             'SELECT "ID" FROM "SHOP"."ORDERS" WHERE "ID" IN (:1, :2)',
-            "SELECT SHOP.ORDERS",
+            "SELECT ORDERS",
             'SELECT "ID" FROM "SHOP"."ORDERS" WHERE "ID" IN (...)',
         ),
         (
@@ -106,7 +137,7 @@ _IN_GROUP = (
         ),
         (
             'SELECT "t"."id" FROM "public"."t" WHERE "t"."id" IN (%s, %s)',
-            "SELECT public.t",
+            "SELECT t",
             'SELECT "t"."id" FROM "public"."t" WHERE "t"."id" IN (...)',
         ),
         (
