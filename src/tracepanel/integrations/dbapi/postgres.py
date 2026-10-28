@@ -55,7 +55,11 @@ def _explainer(connect: Any, params: dict[str, Any]) -> _core.plans.Execute:  # 
 
 
 def _psycopg_attrs(cursor: Any) -> Attrs:  # noqa: ANN401 (a psycopg cursor)
-    info = cursor.connection.info
+    return _psycopg_connection_attrs(cursor.connection)
+
+
+def _psycopg_connection_attrs(connection: Any) -> Attrs:  # noqa: ANN401 (a psycopg connection)
+    info = connection.info
     import psycopg  # noqa: PLC0415 (installed: its cursor is here)
 
     params = {
@@ -89,7 +93,27 @@ def _fetching(method: Callable[..., Generator[Any, Any, Any]]) -> Callable[..., 
     return counted
 
 
+def _psycopg_connect(cls: type, *, asynchronous: bool) -> None:
+    """Connection.connect() and AsyncConnection.connect(), the classmethods that open them (psycopg_pool's too)."""
+    method = vars(cls)["connect"].__func__
+    where = _psycopg_connection_attrs
+
+    def connect(owner: type, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 (psycopg's own signature)
+        return _core.opening(lambda: method(owner, *args, **kwargs), client="psycopg", system="postgresql", where=where)
+
+    async def connect_async(owner: type, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        return await _core.opening_async(
+            lambda: method(owner, *args, **kwargs), client="psycopg", system="postgresql", where=where
+        )
+
+    patch(cls, "connect", classmethod(functools.wraps(method)(connect_async if asynchronous else connect)))
+
+
 def _install_psycopg(psycopg: ModuleType) -> None:
+    _psycopg_connect(psycopg.Connection, asynchronous=False)
+    _psycopg_connect(psycopg.AsyncConnection, asynchronous=True)
+    # psycopg.connect is Connection.connect, bound when psycopg was imported.
+    patch(psycopg, "connect", psycopg.Connection.connect)
     # Cursor and ServerCursor define execute(); the other cursor classes inherit one of them (likewise async).
     for name in ("Cursor", "ServerCursor"):
         _core.wrap(getattr(psycopg, name), _core.DBAPI, db=_psycopg_attrs, statement=_rendered)
@@ -170,7 +194,12 @@ def _psycopg2_connect(
     import psycopg2.extensions  # noqa: PLC0415
 
     factory = _core.subclass(connection_factory or psycopg2.extensions.connection, _Psycopg2Connection)
-    return original(psycopg2, "connect")(dsn, connection_factory=factory, cursor_factory=cursor_factory, **kwargs)
+    return _core.opening(
+        lambda: original(psycopg2, "connect")(dsn, connection_factory=factory, cursor_factory=cursor_factory, **kwargs),
+        client="psycopg2",
+        system="postgresql",
+        where=_psycopg2_attrs,
+    )
 
 
 def _install_psycopg2(psycopg2: ModuleType) -> None:
@@ -324,7 +353,21 @@ def _cursor_closing(method: Callable[..., Awaitable[Any]]) -> Callable[..., Awai
     return closing
 
 
+def _asyncpg_connect(connect: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+    """connect_utils._connect: what asyncpg.connect() and its pool's new connections go through."""
+
+    @functools.wraps(connect)
+    async def traced(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 (asyncpg's own signature)
+        return await _core.opening_async(
+            lambda: connect(*args, **kwargs), client="asyncpg", system="postgresql", where=_asyncpg_attrs
+        )
+
+    return traced
+
+
 def _install_asyncpg(asyncpg: ModuleType) -> None:
+    utils = asyncpg.connect_utils
+    patch(utils, "_connect", _asyncpg_connect(utils._connect))  # noqa: SLF001
     # The pool's methods take a connection and call its own: the connection's wrapper records the statement.
     _core.wrap(asyncpg.connection.Connection, _ASYNCPG, db=_asyncpg_attrs, asynchronous=True)
     _core.wrap(

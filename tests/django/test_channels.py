@@ -265,7 +265,8 @@ def test_a_message_to_a_worker_channel_is_a_task_linked_to_its_send(
         },
     )
     assert generate.links == [Link(kind="enqueued_by", trace_id=request.id, span_id=enqueue.id)]
-    assert [(span.kind, span.name) for span in generate.spans[1:]] == [
+    # On PostgreSQL the worker's thread opens a connection of its own first (a `sql.connect` span).
+    assert [(span.kind, span.name) for span in generate.spans[1:] if span.kind != "sql.connect"] == [
         ("sql", "SELECT COUNT auth_user"),
         ("task.enqueue", f"enqueue {BUILD}"),
     ]
@@ -282,7 +283,9 @@ def test_a_message_to_a_worker_channel_is_a_task_linked_to_its_send(
         }
     )
     assert build.links == [Link(kind="enqueued_by", trace_id=generate.id, span_id=follow.id)]
-    assert [(span.kind, span.name) for span in build.spans[1:]] == [("sql", "SELECT COUNT auth_user")]
+    assert [(span.kind, span.name) for span in build.spans[1:] if span.kind != "sql.connect"] == [
+        ("sql", "SELECT COUNT auth_user")
+    ]
 
     for trace in (request, generate, build):
         validator.validate(trace.to_dict())

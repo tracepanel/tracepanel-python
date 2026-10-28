@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Snowflake: statements through `snowflake-connector-python` directly, sync
+  and `snowflake.connector.aio`, 4.x and 5.x, as `sql` spans, and its
+  `commit()` and `rollback()` too, which SQLAlchemy doesn't record: a round
+  trip each, and SQLAlchemy's pool rolls back every connection it takes
+  back. Before 5.0 the connector's HTTP calls go through its own copy of
+  requests and urllib3 (aiohttp for asyncio): the login, the queries'
+  requests and the certificate checks are `http.client` spans inside the
+  connection or the statement they serve. 5.x makes them in its Rust core.
+- Opening a database connection is a `sql.connect` span, `connect
+  snowflake` or `connect postgresql`, with `db.system`, `db.namespace`, the
+  server and, when a pool opened it, `db.connection.pool`. A request that
+  opens one no longer shows that time as its code's: a Snowflake login
+  takes seconds, and Django with `CONN_MAX_AGE` 0 opens one per request.
+  SQLAlchemy records the ones its pool opens, with the dialect's first
+  questions inside. Django records the ones it opens, with its setup
+  statements inside. psycopg, psycopg2, asyncpg, PyMySQL, mysqlclient and
+  Snowflake's connector record the ones the app opens itself. A SQLite file
+  opens in no time and makes none. The agent counts the span as the
+  database's time from the release that knows the `sql.connect` kind.
+- What a statement or an HTTP call makes while it runs is inside it: a
+  driver over HTTP (Snowflake's, through SQLAlchemy or not) shows its
+  requests under the query, not beside it.
+
 ## 0.6.0 (2026-10-28)
 
 Needs `tracepanel-agent` 0.6.0 (installed with it). Its MCP server reads

@@ -6,12 +6,13 @@ import sys
 import time
 from collections.abc import Awaitable, Callable, Coroutine, Generator, Mapping, Sequence
 from dataclasses import dataclass
+from types import FrameType
 from typing import Any, TypeVar
 
 from tracepanel.core import explain as plans
 from tracepanel.core import forks, sql
 from tracepanel.core.callers import Callers
-from tracepanel.core.context import current_trace, now_us
+from tracepanel.core.context import adopt_held, current_trace, hold, now_us, release
 from tracepanel.core.model import Attrs, Scalar, Span
 from tracepanel.core.patching import patch
 from tracepanel.core.services import database
@@ -34,9 +35,19 @@ CALLERS = Callers(
         "asyncmy",
         "oracledb",
         "pymssql",
+        "snowflake.connector",
     ),
     # mssql-django's backend (`mssql`) is Django's database layer for SQL Server.
-    layers=("django.db.", "mssql.", "sqlalchemy.", "tracepanel.", "aiosqlite.", "psycopg_pool."),
+    # snowflake-sqlalchemy's dialect runs SQLAlchemy's statements on the connector's cursor.
+    layers=(
+        "django.db.",
+        "mssql.",
+        "sqlalchemy.",
+        "snowflake.sqlalchemy.",
+        "tracepanel.",
+        "aiosqlite.",
+        "psycopg_pool.",
+    ),
     # asyncpg's pool resets a connection it gets back.
     housekeeping=frozenset({("asyncpg.connection", "reset"), ("asyncpg.connection", "_reset")}),
 )
@@ -111,11 +122,16 @@ async def run_async(  # noqa: PLR0913
     many: bool,
     db: Callable[[], Attrs],
     then: Callable[[Span, T], None] | None = None,
+    always: bool = False,
 ) -> T:
-    """run() for an async driver: the check runs once the call is awaited, where the stack shows who awaits it."""
-    if current_trace() is None or not CALLERS.app_called(sys._getframe(1)):  # noqa: SLF001
+    """run() for an async driver: the check runs once the call is awaited, where the stack shows who awaits it.
+
+    `always`: whoever called, as a statement no layer records itself (a connection's COMMIT, run on a cursor).
+    """
+    if current_trace() is None or (not always and not CALLERS.app_called(sys._getframe(1))):  # noqa: SLF001
         return await execute()
     start, counter, status, result = now_us(), time.perf_counter_ns(), "ok", None
+    held = hold()
     try:
         result = await execute()
     except Exception:
@@ -124,6 +140,7 @@ async def run_async(  # noqa: PLR0913
     else:
         return result
     finally:
+        inside = release(held)
         span = sql.record(
             text(statement),
             params,
@@ -133,6 +150,7 @@ async def run_async(  # noqa: PLR0913
             duration=(time.perf_counter_ns() - counter) // 1000,
             status=status,
         )
+        adopt_held(held, inside, span)
         if span is not None and status == "ok" and then is not None:
             then(span, result)  # type: ignore[arg-type]  # ok: the call returned it
 
@@ -302,6 +320,67 @@ def subclass(base: type, mixin: type) -> type:
     if not isinstance(base, type) or issubclass(base, mixin):
         return base
     return type(f"Traced{base.__name__}", (mixin, base), {"__module__": base.__module__})
+
+
+# ---------- opening a connection ----------
+
+# The pools that open a driver's connections: their module, and what the span calls them.
+_POOLS = (
+    ("sqlalchemy.pool", "sqlalchemy"),
+    ("psycopg_pool", "psycopg_pool"),
+    ("asyncpg.pool", "asyncpg"),
+)
+# How far up the stack a pool is looked for: the driver's own frames and the pool's few.
+_POOL_DEPTH = 24
+
+
+def _pool(frame: FrameType | None) -> Attrs:
+    """`db.connection.pool`, when a pool opens the connection: a request's new connection, made at checkout."""
+    for _ in range(_POOL_DEPTH):
+        if frame is None:
+            break
+        name: str = frame.f_globals.get("__name__", "")
+        for module, pool in _POOLS:
+            if name.startswith(module):
+                return {"db.connection.pool": pool}
+        frame = frame.f_back
+    return {}
+
+
+def opening(open_: Callable[[], T], *, client: str, system: str, where: Callable[[T], Attrs]) -> T:
+    """Open a connection through a driver, as a `sql.connect` span (tracepanel.core.sql.connecting) in a trace.
+
+    `where` describes the connection once open (_core.attrs: its alias, server and database).
+    """
+    if current_trace() is None:
+        return open_()
+    with sql.connecting(system, {"db.client": client, **_pool(sys._getframe(1))}) as span:  # noqa: SLF001
+        connection = open_()
+        if span is not None:
+            span.attrs.update(where(connection))
+        return connection
+
+
+def described(connection: object, attrs: Callable[[Any], Attrs]) -> Callable[[object], Attrs]:
+    """A `where` for opening() when the call opens `connection` itself (its __init__ or connect()) and returns None."""
+
+    def where(_result: object) -> Attrs:
+        return attrs(connection)
+
+    return where
+
+
+async def opening_async(
+    open_: Callable[[], Awaitable[T]], *, client: str, system: str, where: Callable[[T], Attrs]
+) -> T:
+    """opening() for an async driver."""
+    if current_trace() is None:
+        return await open_()
+    with sql.connecting(system, {"db.client": client, **_pool(sys._getframe(1))}) as span:  # noqa: SLF001
+        connection = await open_()
+        if span is not None:
+            span.attrs.update(where(connection))
+        return connection
 
 
 # ---------- where a statement ran, and EXPLAIN there ----------

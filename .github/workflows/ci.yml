@@ -25,7 +25,7 @@ env:
   GROUPS: >-
     --group celery --group channels --group strawberry --group django-tasks --group django-q2 --group fastapi --group dramatiq
     --group rq --group huey --group ninja --group drf --group flask --group falcon --group otel --group clients
-    --group faststream --group taskiq --group llm --group aws
+    --group faststream --group taskiq --group llm --group aws --group snowflake
 
 jobs:
   plan:
@@ -252,6 +252,38 @@ jobs:
         env:
           TRACEPANEL_AGENT_BIN: ${{ github.workspace }}/tracepanel-python/.venv/bin/tracepanel-agent
           UV_NO_SYNC: "1"
+
+  snowflake5:
+    # Snowflake's connector 5.x (a Rust core, and snowflake-sqlalchemy on it) can't share an environment with 4.x, which
+    # the other jobs test: its tests, against the local stand-in for Snowflake's API.
+    needs: [agent]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tracepanel-python
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: tracepanel-python
+      - uses: actions/checkout@v7
+        with:
+          repository: tracepanel/tracepanel
+          ref: ${{ needs.agent.outputs.sha }}
+          path: tracepanel
+      - uses: actions/download-artifact@v8
+        with:
+          name: tracepanel-agent
+          path: agent
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.14"
+          working-directory: tracepanel-python
+          cache-suffix: snowflake5
+      - run: uv sync --locked --group snowflake5 --no-install-package tracepanel-agent
+      - run: uv pip install --no-deps ../agent/*.whl
+      - run: uv run --no-sync pytest tests/integrations/dbapi/test_snowflake.py
+        env:
+          TRACEPANEL_AGENT_BIN: ${{ github.workspace }}/tracepanel-python/.venv/bin/tracepanel-agent
 
   drivers:
     # The database drivers on their servers, with Django and SQLAlchemy on the same drivers: each statement once; and

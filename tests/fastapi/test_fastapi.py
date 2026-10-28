@@ -330,8 +330,9 @@ def test_a_django_atomic_block_around_the_endpoint_holds_its_calls(traces: list[
     (trace,) = traces
     by_id = {span.id: span for span in trace.spans}
     (block,) = [span for span in trace.spans if span.kind == "transaction"]
-    # SQLite's backend sends BEGIN as a statement; PostgreSQL's driver begins on its own.
-    calls = [span for span in trace.spans if span.name != "BEGIN"]
+    # SQLite's backend sends BEGIN as a statement; PostgreSQL's driver begins on its own, on a connection the worker
+    # thread opens first (a `sql.connect` span).
+    calls = [span for span in trace.spans if span.name != "BEGIN" and span.kind != "sql.connect"]
 
     assert [(span.kind, span.name, by_id[span.parent_id].kind) for span in calls if span.parent_id] == [
         ("view", IsStr(regex=r".*<locals>\.pay"), "http"),
