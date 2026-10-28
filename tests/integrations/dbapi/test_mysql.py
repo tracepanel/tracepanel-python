@@ -220,3 +220,29 @@ def test_async_sqlalchemy_statement_can_be_explained_and_names_its_caller(dialec
     }
 
     assert [(span.status, span.attrs["code.origin"]) for span in statements(trace)] == [("ok", ORIGIN), ("ok", ORIGIN)]
+
+
+@pytest.mark.parametrize("driver", ["pymysql", "mysqlclient"])
+def test_a_connection_the_driver_opens_is_a_connect_span(driver: str) -> None:
+    m = my()
+
+    def work() -> None:
+        DRIVERS[driver]().close()
+
+    trace = traced(work)
+
+    assert [(span.name, span.attrs) for span in trace.spans if span.kind == "sql.connect"] == [
+        (
+            "connect mysql",
+            {
+                "db.client": driver,
+                "db.alias": f"{driver}:{m['database']}",
+                "db.vendor": "mysql",
+                "db.system": "mysql",
+                "db.namespace": m["database"],
+                "server.address": m["host"],
+                "server.port": m["port"],
+                "code.origin": IsStr(regex=rf"tests/integrations/dbapi/test_mysql\.py:\d+ in {driver}_connect"),
+            },
+        )
+    ]

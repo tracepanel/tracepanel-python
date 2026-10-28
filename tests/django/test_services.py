@@ -5,7 +5,9 @@ from django.test import Client
 from pytest_django.fixtures import Settings
 
 from tests.agentstore import AgentStore, newer
+from tracepanel.core.context import start_trace
 from tracepanel.core.model import Trace
+from tracepanel.django import services
 
 DATABASES = ["default", "analytics"]
 
@@ -99,3 +101,35 @@ def test_service_map(client: Client, traces: list[Trace], store: AgentStore, set
         cache,
         {"cloud": None},
     )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_new_connection_to_a_server_is_a_connect_span() -> None:
+    connection.close()
+
+    def work() -> None:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+
+    with start_trace("http", "GET /") as trace:
+        work()
+
+    opened = [(span.name, span.attrs) for span in trace.spans if span.kind == "sql.connect"]
+    if connection.vendor == "sqlite":
+        # A file opens in no time.
+        assert opened == []
+        return
+    assert opened == [
+        (
+            f"connect {connection.vendor}",
+            {
+                "db.client": "django",
+                "db.alias": "default",
+                "db.vendor": connection.vendor,
+                **services.for_connection(connection),
+                "code.origin": IsStr(regex=r"tests/django/test_services\.py:\d+ in work"),
+            },
+        )
+    ]
+    # Django's own setup statements on it are inside it, the app's after it.
+    assert [span.kind for span in trace.spans if span.parent_id == trace.spans[0].id] == ["sql.connect", "sql"]

@@ -13,11 +13,21 @@ import re
 import time
 import uuid
 import weakref
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import TypeVar
 
 from tracepanel.core import conf
-from tracepanel.core.context import blocking_attrs, current_span, current_trace, now_us, record_span
+from tracepanel.core.context import (
+    adopt_held,
+    blocking_attrs,
+    current_span,
+    current_trace,
+    hold,
+    now_us,
+    record_span,
+    release,
+    start_span,
+)
 from tracepanel.core.frames import library_caller, origin, template_place
 from tracepanel.core.model import Attrs, Scalar, Span
 
@@ -225,12 +235,15 @@ def run(  # noqa: PLR0913
     started = time.perf_counter_ns()
     status = "ok"
     blocking = blocking_attrs()
+    # What the driver records meanwhile (a driver over HTTP: Snowflake's requests) is the statement's.
+    held = hold()
     try:
         return execute()
     except Exception:
         status = "error"
         raise
     finally:
+        inside = release(held)
         span = record(
             sql,
             params,
@@ -241,6 +254,7 @@ def run(  # noqa: PLR0913
             status=status,
             extra=blocking,
         )
+        adopt_held(held, inside, span)
         if span is not None and then is not None and status == "ok":
             then(span)
 
@@ -285,3 +299,25 @@ def record(  # noqa: PLR0913 (the statement, where it ran, when, how it went)
         status=status,
         parent=parent,
     )
+
+
+# ---------- opening a connection ----------
+
+# Opening a connection to the database: the database's time, not a statement.
+CONNECT = "sql.connect"
+
+
+@contextlib.contextmanager
+def connecting(system: str, attrs: Attrs | None = None) -> Iterator[Span | None]:
+    """Open a connection to the database inside the block, as a `sql.connect` span named `connect <system>`.
+
+    What the driver does meanwhile (logging in over HTTPS, the TLS handshake, the session's first statements) is
+    inside it. None outside a trace, and inside another such span: a layer (SQLAlchemy's pool, Django) opening it
+    through a driver that records its own. The caller adds what is known once it is open (the server, the database).
+    """
+    current = current_span()
+    if current_trace() is None or (current is not None and current.kind == CONNECT):
+        yield None
+        return
+    with start_span(CONNECT, f"connect {system}", {**(attrs or {}), "code.origin": origin()}) as span:
+        yield span

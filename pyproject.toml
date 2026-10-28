@@ -145,6 +145,19 @@ drivers = [
     # mssql-django 2 brings mssql-python, whose macOS wheels need macOS 15; pyodbc stays its default driver.
     "mssql-django>=1.8,<2; python_full_version < '3.15'",
 ]
+# Snowflake's connector against a local stand-in for its REST API (tests/integrations/dbapi/snowflakestub.py): 4.x,
+# whose own copy of requests and urllib3 (aiohttp for asyncio) makes its HTTP calls. 5.x makes them in its Rust core:
+# the snowflake5 group, an environment of its own (tool.uv's conflicts), with snowflake-sqlalchemy, which needs 5.x
+# for SQLAlchemy 2.1. Neither has a wheel for Python 3.15 yet.
+snowflake = [
+    "snowflake-connector-python>=4.8.1,<5; python_full_version < '3.15'",
+    "aiohttp>=3.14.5",
+]
+snowflake5 = [
+    "snowflake-connector-python>=5.1.0; python_full_version < '3.15'",
+    "snowflake-sqlalchemy>=2.1.0; python_full_version < '3.15'",
+    "sqlalchemy>=2.1.4",
+]
 strawberry = [
     "strawberry-graphql>=0.332.0",
 ]
@@ -223,7 +236,7 @@ requires = ["uv_build>=0.12,<0.13"]
 build-backend = "uv_build"
 
 [tool.uv]
-conflicts = [[{ group = "strawberry" }, { group = "graphene" }]]
+conflicts = [[{ group = "strawberry" }, { group = "graphene" }], [{ group = "snowflake" }, { group = "snowflake5" }]]
 
 [tool.uv.sources]
 # In development: built from the tracepanel repository checked out next to this one (Rust). `uv sync --no-sources` uses

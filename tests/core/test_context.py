@@ -1,7 +1,18 @@
+import contextvars
+import threading
+
 import pytest
 
-from tracepanel.core import profile
-from tracepanel.core.context import current_span, current_trace, open_span, start_span, start_trace
+from tracepanel.core import profile, sql
+from tracepanel.core.context import (
+    current_span,
+    current_trace,
+    now_us,
+    open_span,
+    record_span,
+    start_span,
+    start_trace,
+)
 
 
 class Stopped(BaseException):
@@ -82,3 +93,41 @@ def test_an_open_span_ended_while_a_trace_begun_inside_it_runs() -> None:
         context.__exit__(None, None, None)
 
         assert (current_trace(), current_span()) == (request, request.spans[0])
+
+
+def call(name: str) -> None:
+    record_span("http.client", name, start=now_us(), duration=1, attrs={})
+
+
+def test_a_statement_holds_what_it_records_while_it_runs_and_not_what_another_thread_does() -> None:
+    meanwhile, recorded = threading.Event(), threading.Event()
+
+    def elsewhere() -> None:
+        meanwhile.wait()
+        call("GET /other-thread")
+        recorded.set()
+
+    def execute() -> None:
+        call("POST /query-request")
+        # A thread already running, in its copy of the request's context (a thread pool's) records meanwhile.
+        meanwhile.set()
+        recorded.wait()
+        with start_span("function", "inside"):
+            call("GET /deeper")
+
+    with start_trace("http", "GET /") as trace:
+        thread = threading.Thread(target=contextvars.copy_context().run, args=(elsewhere,))
+        thread.start()
+        sql.run(execute, "SELECT 1", None, many=False, database=dict)
+        thread.join()
+        call("GET /after")
+
+    by_id = {span.id: span for span in trace.spans}
+    assert [(span.name, by_id[span.parent_id].name) for span in trace.spans if span.parent_id] == [
+        ("POST /query-request", "SELECT"),
+        ("GET /other-thread", "GET /"),
+        ("inside", "SELECT"),
+        ("GET /deeper", "inside"),
+        ("SELECT", "GET /"),
+        ("GET /after", "GET /"),
+    ]

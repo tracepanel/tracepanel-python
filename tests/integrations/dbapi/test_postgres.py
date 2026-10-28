@@ -4,8 +4,9 @@ import pytest
 from dirty_equals import IsPartialDict, IsStr
 
 from tests.integrations.dbapi.conftest import explained_meanwhile, pg, pg_url, postgres, sql_spans, statements, traced
-from tracepanel.core.model import Trace
+from tracepanel.core.model import Attrs, Trace
 from tracepanel.integrations import dbapi
+from tracepanel.integrations import sqlalchemy as sqlalchemy_integration
 
 pytestmark = postgres
 
@@ -418,3 +419,112 @@ def test_psycopg_async_server_side_cursor_counts_the_rows_read() -> None:
             [row async for row in cursor]
 
     assert returned(traced(lambda: asyncio.run(work()))) == [7]
+
+
+# ---------- opening a connection ----------
+
+
+def connections(trace: Trace) -> list[Attrs]:
+    """The attributes of each `sql.connect` span, in order."""
+    return [span.attrs for span in trace.spans if span.kind == "sql.connect"]
+
+
+def opened(client: str, **more: object) -> dict[str, object]:
+    """What a connection's span says about it: the database it opened, its server, the app's line that opened it."""
+    return {
+        "db.client": client,
+        "db.alias": f"{client}:{pg()['dbname']}",
+        "db.vendor": "postgresql",
+        "db.system": "postgresql",
+        "db.namespace": pg()["dbname"],
+        "server.address": pg()["host"],
+        "server.port": int(pg()["port"]),
+        "code.origin": ORIGIN,
+        **more,
+    }
+
+
+def test_a_connection_each_driver_opens_is_a_connect_span() -> None:
+    psycopg, psycopg2 = pytest.importorskip("psycopg"), pytest.importorskip("psycopg2")
+    asyncpg = pytest.importorskip("asyncpg")
+
+    async def asynchronous() -> None:
+        await (await psycopg.AsyncConnection.connect(dsn())).close()
+        await (await asyncpg.connect(**asyncpg_params())).close()
+
+    def work() -> None:
+        psycopg.connect(dsn()).close()
+        psycopg2.connect(dsn()).close()
+        asyncio.run(asynchronous())
+
+    trace = traced(work)
+
+    assert [span.name for span in trace.spans if span.kind == "sql.connect"] == ["connect postgresql"] * 4
+    meanwhile = IsStr(regex=r"tests/integrations/dbapi/test_postgres\.py:\d+ in asynchronous")
+    assert connections(trace) == [
+        opened("psycopg"),
+        opened("psycopg2"),
+        opened("psycopg", **{"code.origin": meanwhile}),
+        opened("asyncpg", **{"code.origin": meanwhile}),
+    ]
+
+
+def test_a_connection_asyncpg_s_pool_opens_says_so() -> None:
+    asyncpg = pytest.importorskip("asyncpg")
+
+    async def work() -> None:
+        pool = await asyncpg.create_pool(**asyncpg_params(), min_size=1, max_size=1)
+        await pool.close()
+
+    trace = traced(lambda: asyncio.run(work()))
+
+    assert connections(trace) == [opened("asyncpg", **{"db.connection.pool": "asyncpg"})]
+
+
+@pytest.mark.parametrize("dialect", ["psycopg", "psycopg2"])
+def test_a_connection_sqlalchemy_s_pool_opens_is_sqlalchemy_s(dialect: str) -> None:
+    sqlalchemy = pytest.importorskip("sqlalchemy")
+    pytest.importorskip(dialect)
+    engine = sqlalchemy.create_engine(pg_url(dialect))
+
+    def work() -> None:
+        with engine.connect() as connection:
+            connection.execute(sqlalchemy.text("SELECT 1"))
+
+    try:
+        cold, warm = traced(work), traced(work)
+    finally:
+        engine.dispose()
+
+    assert connections(cold) == [
+        {
+            "db.client": "sqlalchemy",
+            "db.alias": sqlalchemy_integration.engine_alias(engine),
+            "db.vendor": "postgresql",
+            "db.system": "postgresql",
+            "db.namespace": pg()["dbname"],
+            "server.address": pg()["host"],
+            "server.port": int(pg()["port"]),
+            "db.connection.pool": "sqlalchemy",
+            "code.origin": ORIGIN,
+        }
+    ]
+    assert connections(warm) == []
+
+
+@pytest.mark.parametrize("dialect", ["asyncpg", "psycopg"])
+def test_a_connection_async_sqlalchemy_opens_is_one_span(dialect: str) -> None:
+    pytest.importorskip(dialect)
+    pytest.importorskip("greenlet")  # SQLAlchemy's asyncio
+    from sqlalchemy import text  # noqa: PLC0415
+    from sqlalchemy.ext.asyncio import create_async_engine  # noqa: PLC0415
+
+    async def work() -> None:
+        engine = create_async_engine(pg_url(dialect))
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+        await engine.dispose()
+
+    trace = traced(lambda: asyncio.run(work()))
+
+    assert connections(trace) == [IsPartialDict({"db.client": "sqlalchemy", "db.connection.pool": "sqlalchemy"})]

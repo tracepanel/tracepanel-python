@@ -37,6 +37,25 @@ class _Outer:
 _outer: ContextVar[_Outer | None] = ContextVar("tracepanel_outer", default=None)
 
 
+@dataclass(slots=True, eq=False)
+class Held:
+    """The spans begun in this context while a span recorded only once it ends runs (a statement, an HTTP call).
+
+    Such a span isn't current while it runs: what it does meanwhile (the HTTPS requests a Snowflake query makes)
+    records under the span current then. Once recorded, it takes those spans as its children (adopt_held). Held per
+    context, not by time: what a task or thread already running records meanwhile stays where it is; one begun inside
+    (its context copied from there) is the span's work.
+    """
+
+    spans: list[Span]
+    # The span current when the hold began: the held spans directly under it are the ones to move.
+    under: str | None
+    previous: "Held | None"
+
+
+_held: ContextVar[Held | None] = ContextVar("tracepanel_held", default=None)
+
+
 def now_us() -> int:
     return time.time_ns() // 1000
 
@@ -198,6 +217,7 @@ def start_span(kind: str, name: str, attrs: Attrs | None = None) -> Generator[Sp
         attrs=dict(attrs or {}),
     )
     trace.spans.append(span)
+    _hold(span)
     started = time.perf_counter_ns()
     token = _span.set(span)
     try:
@@ -263,6 +283,7 @@ def open_span(kind: str, name: str, attrs: Attrs | None = None) -> OpenSpan | No
         attrs=dict(attrs or {}),
     )
     trace.spans.append(span)
+    _hold(span)
     _span.set(span)
     return OpenSpan(span, parent, time.perf_counter_ns())
 
@@ -301,7 +322,42 @@ def record_span(  # noqa: PLR0913
         attrs=attrs,
     )
     trace.spans.append(span)
+    _hold(span)
     return span
+
+
+def _hold(span: Span) -> None:
+    held = _held.get()
+    if held is not None:
+        held.spans.append(span)
+
+
+def hold() -> Held | None:
+    """Begin holding the spans this context records, for a span recorded once its work ends; None outside a trace."""
+    if _trace.get() is None:
+        return None
+    current = _span.get()
+    held = Held([], current.id if current else None, _held.get())
+    _held.set(held)
+    return held
+
+
+def release(held: Held | None) -> list[Span]:
+    """Stop holding (before recording the span itself, which isn't its own child): the spans held, to adopt_held()."""
+    if held is None:
+        return []
+    if _held.get() is held:
+        _held.set(held.previous)
+    return held.spans
+
+
+def adopt_held(held: Held | None, spans: list[Span], parent: Span | None) -> None:
+    """Make `parent` the parent of the spans held that began directly under the span current when the hold began."""
+    if held is None or parent is None or not spans:
+        return
+    for span in spans:
+        if span.parent_id == held.under and span is not parent:
+            span.parent_id = parent.id
 
 
 def recorded() -> int:

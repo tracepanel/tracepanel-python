@@ -5,6 +5,7 @@ Cython types: a connection's cursors are made of a traced subclass of the class 
 connection with the same driver (aiomysql's and asyncmy's through PyMySQL, the protocol they share).
 """
 
+import functools
 import importlib
 from collections.abc import Callable
 from contextvars import ContextVar
@@ -60,9 +61,12 @@ def _pymysql_params(connection: Any) -> dict[str, Any]:  # noqa: ANN401
 
 
 def _pymysql_attrs(cursor: Any) -> Attrs:  # noqa: ANN401
-    import pymysql  # noqa: PLC0415 (installed: its cursor is here)
+    return _pymysql_connection_attrs(cursor.connection)
 
-    connection = cursor.connection
+
+def _pymysql_connection_attrs(connection: Any) -> Attrs:  # noqa: ANN401
+    import pymysql  # noqa: PLC0415 (installed: its connection is here)
+
     return _where(
         "pymysql",
         connection.host,
@@ -85,14 +89,24 @@ def _aiomysql_attrs(cursor: Any) -> Attrs:  # noqa: ANN401
 def _mysqlclient_init(self: Any, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401 (MySQLdb's Connection.__init__)
     import MySQLdb.connections  # noqa: PLC0415
 
-    original(MySQLdb.connections.Connection, "__init__")(self, *args, **kwargs)
     setattr(self, _OPENED, dict(kwargs))
+    # Its __init__ connects.
+    _core.opening(
+        lambda: original(MySQLdb.connections.Connection, "__init__")(self, *args, **kwargs),
+        client="mysqlclient",
+        system="mysql",
+        where=_core.described(self, _mysqlclient_connection_attrs),
+    )
 
 
 def _mysqlclient_attrs(cursor: Any) -> Attrs:  # noqa: ANN401
+    return _mysqlclient_connection_attrs(cursor.connection)
+
+
+def _mysqlclient_connection_attrs(connection: Any) -> Attrs:  # noqa: ANN401
     import MySQLdb  # noqa: PLC0415
 
-    opened: dict[str, Any] = getattr(cursor.connection, _OPENED, None) or {}
+    opened: dict[str, Any] = getattr(connection, _OPENED, None) or {}
     name = opened.get("database", opened.get("db", ""))
     explain = _explainer(MySQLdb.connect, opened) if opened else None
     return _where("mysqlclient", opened.get("host", ""), opened.get("port", ""), name, explain)
@@ -116,8 +130,25 @@ def _connector_attrs(cursor: Any) -> Attrs:  # noqa: ANN401 (a mysql.connector c
     return _where("mysql-connector", host, port, name, _explainer(mysql.connector.connect, params))
 
 
+def _pymysql_connect(connect: Callable[..., Any]) -> Callable[..., Any]:
+    """Connection.connect(), which its __init__ calls, and a reconnecting ping."""
+
+    @functools.wraps(connect)
+    def traced(self: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401 (PyMySQL's own signature)
+        return _core.opening(
+            lambda: connect(self, *args, **kwargs),
+            client="pymysql",
+            system="mysql",
+            where=_core.described(self, _pymysql_connection_attrs),
+        )
+
+    return traced
+
+
 def _pymysql(pymysql: ModuleType) -> None:
     _core.wrap(pymysql.cursors.Cursor, _core.DBAPI, db=_pymysql_attrs)
+    connection = pymysql.connections.Connection
+    patch(connection, "connect", _pymysql_connect(connection.connect))
 
 
 def _aiomysql(aiomysql: ModuleType) -> None:

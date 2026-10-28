@@ -1,7 +1,8 @@
 """Outgoing HTTP calls: every request the app makes as an `http.client` span.
 
 - urllib3, and what is built on it: requests, most API SDKs, and botocore with `boto_enabled` off (on, an AWS call
-  is a span of its own).
+  is a span of its own). Snowflake's connector's own copy of them too: its calls are inside the statement or the
+  connection they serve.
 - httpx and httpx2 (its fork Starlette's test client uses), sync and async: the transport that reaches the network,
   so a test client's in-process transport isn't a call.
 - aiohttp's client.
@@ -27,7 +28,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from tracepanel.core import w3c
 from tracepanel.core.callers import Callers
-from tracepanel.core.context import blocking_attrs, current_trace, now_us, record_span
+from tracepanel.core.context import Held, adopt_held, blocking_attrs, current_trace, hold, now_us, record_span, release
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.imports import when_imported
@@ -85,8 +86,13 @@ def _finish(  # noqa: PLR0913
     status_code: int | None,
     failed: str | None,
     blocking: Attrs | None = None,
+    held: Held | None = None,
 ) -> None:
-    """Record the call as span `span`: `started` is its start (now_us) and perf_counter_ns() then."""
+    """Record the call as span `span`: `started` is its start (now_us) and perf_counter_ns() then.
+
+    `held`: what the call recorded while it ran (the certificate checks Snowflake's connector makes for a request),
+    its children.
+    """
     start, counter = started
     attrs = {**_attrs(method, url), **(blocking or {})}
     attrs["w3c.span_id"] = w3c.span_id(span)
@@ -96,7 +102,8 @@ def _finish(  # noqa: PLR0913
         attrs["error.type"] = failed
     attrs["code.origin"] = origin()
     error = failed is not None or (status_code is not None and status_code >= _ERROR_STATUS)
-    record_span(
+    inside = release(held)
+    recorded = record_span(
         "http.client",
         _name(method, url),
         start=start,
@@ -105,6 +112,7 @@ def _finish(  # noqa: PLR0913
         status="error" if error else "ok",
         span_id=span,
     )
+    adopt_held(held, inside, recorded)
 
 
 def with_traceparent(headers: Mapping[str, str] | None, traceparent: str) -> dict[str, str]:
@@ -124,12 +132,24 @@ def call(send: Callable[[str | None], T], method: str, url: str, status: Callabl
     start, counter = now_us(), time.perf_counter_ns()
     # A synchronous client on an event loop's thread blocks it until the answer comes.
     blocking = blocking_attrs()
+    held = hold()
     try:
         response = send(w3c.outgoing(trace, span))
     except Exception as exc:
-        _finish(method, url, (start, counter), span, status_code=None, failed=type(exc).__name__, blocking=blocking)
+        _finish(
+            method,
+            url,
+            (start, counter),
+            span,
+            status_code=None,
+            failed=type(exc).__name__,
+            blocking=blocking,
+            held=held,
+        )
         raise
-    _finish(method, url, (start, counter), span, status_code=status(response), failed=None, blocking=blocking)
+    _finish(
+        method, url, (start, counter), span, status_code=status(response), failed=None, blocking=blocking, held=held
+    )
     return response
 
 
@@ -141,12 +161,13 @@ async def call_async(
         return await send(None)
     span = new_id()
     start, counter = now_us(), time.perf_counter_ns()
+    held = hold()
     try:
         response = await send(w3c.outgoing(trace, span))
     except Exception as exc:
-        _finish(method, url, (start, counter), span, status_code=None, failed=type(exc).__name__)
+        _finish(method, url, (start, counter), span, status_code=None, failed=type(exc).__name__, held=held)
         raise
-    _finish(method, url, (start, counter), span, status_code=status(response), failed=None)
+    _finish(method, url, (start, counter), span, status_code=status(response), failed=None, held=held)
     return response
 
 
@@ -234,13 +255,16 @@ def _aiohttp(aiohttp: ModuleType) -> None:
 
 
 def _urllib3_imported(urllib3: ModuleType) -> None:
-    importlib.import_module("urllib3.connectionpool")
+    importlib.import_module(f"{urllib3.__name__}.connectionpool")
     _urllib3(urllib3)
 
 
 def install() -> None:
     """Wrap each HTTP client once the app imports it (requests through urllib3)."""
     when_imported("urllib3", _urllib3_imported)
+    # Snowflake's connector (before 5.0) has its own copy of requests and urllib3: its login, queries and certificate
+    # checks go through that one.
+    when_imported("snowflake.connector.vendored.urllib3", _urllib3_imported)
     for name in ("httpx", "httpx2"):
         when_imported(name, _httpx)
     when_imported("aiohttp", _aiohttp)

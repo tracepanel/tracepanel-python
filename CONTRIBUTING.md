@@ -10,7 +10,7 @@ the console. The agent and its console live in
 Check out tracepanel next to this repository, then:
 
 ```bash
-uv sync --all-groups --no-group graphene  # builds the agent from ../tracepanel
+uv sync --all-groups --no-group graphene --no-group snowflake5  # builds the agent from ../tracepanel
 uv run poe test                           # pytest on SQLite
 uv run poe lint                           # ruff, pyrefly (strict), import-linter, the docs
 uv run poe fmt                            # ruff check --fix and ruff format
@@ -24,6 +24,14 @@ worker runs each group.
 Graphene needs graphql-core older than Strawberry's, so the `graphene` group
 has an environment of its own: `uv run poe test-matrix graphene` runs the
 tests there, as CI's graphene job does.
+
+Snowflake's connector 4.x and 5.x can't share one either: `snowflake` has 4.x,
+`snowflake5` 5.x. Its tests run against a local stand-in for Snowflake's API,
+with no account. To run them on 5.x, as CI's snowflake5 job does:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-snowflake5 uv run --group snowflake5 pytest tests/integrations/dbapi/test_snowflake.py
+```
 
 `TRACEPANEL_TEST_DB=postgres` runs the tests on PostgreSQL, with the usual
 `PG*` variables. `uv sync --no-sources` installs the published agent in place

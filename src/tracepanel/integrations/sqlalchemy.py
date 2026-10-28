@@ -1,5 +1,7 @@
 """SQLAlchemy: every statement of every engine as an `sql` span, every transaction as a `transaction` span.
 
+A connection its pool opens is a `sql.connect` span (a server's: a SQLite file opens in no time).
+
 The second database layer on tracepanel.core.sql (Django's ORM is the first): the statement, its parameters for EXPLAIN,
 its place in project code and the N+1 / duplicate analysis are the same. Through SQLAlchemy's own events, so whatever
 runs on it is covered (sqlakit, SQLModel, Flask-SQLAlchemy). Turned on when SQLAlchemy is installed.
@@ -10,19 +12,31 @@ already has it. EXPLAIN runs on the engine of that alias (an async engine's on a
 """
 
 import asyncio
+import functools
+import sys
 import time
 import weakref
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from types import FrameType
 from typing import Any
 
 from tracepanel.core import explain as plans
 from tracepanel.core import forks, sql
-from tracepanel.core.context import OpenSpan, current_span, current_trace, now_us, open_span
+from tracepanel.core.context import (
+    OpenSpan,
+    adopt_held,
+    current_span,
+    current_trace,
+    hold,
+    now_us,
+    open_span,
+    release,
+)
 from tracepanel.core.frames import origin
 from tracepanel.core.model import Attrs, Scalar, Span, Trace
 from tracepanel.core.patching import patch
-from tracepanel.core.services import database
+from tracepanel.core.services import database, system
 
 MARKER = "_tracepanel"
 # Where a statement's timing waits between before_cursor_execute and after_cursor_execute.
@@ -30,11 +44,15 @@ _STARTED = "_tracepanel_started"
 
 
 def _database(connection: Any) -> Attrs:  # noqa: ANN401 (sqlalchemy.engine.Connection)
-    url = connection.engine.url
-    vendor = str(connection.dialect.name)
+    return _engine_database(connection.engine)
+
+
+def _engine_database(engine: Any) -> Attrs:  # noqa: ANN401 (sqlalchemy.engine.Engine)
+    url = engine.url
+    vendor = str(engine.dialect.name)
     return {
         "db.client": "sqlalchemy",
-        "db.alias": engine_alias(connection.engine),
+        "db.alias": engine_alias(engine),
         "db.vendor": vendor,
         **database(vendor, url.host or "", str(url.port or ""), url.database or ""),
     }
@@ -133,15 +151,17 @@ def _explain_async(
 
 def _before(conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool) -> None:  # noqa: ANN401, ARG001, FBT001, PLR0913, PLR0917 (SQLAlchemy's signature)
     if current_trace() is not None and context is not None:
-        setattr(context, _STARTED, (now_us(), time.perf_counter_ns()))
+        # What the driver records meanwhile (a dialect over HTTP: Snowflake's, Trino's) is the statement's.
+        setattr(context, _STARTED, (now_us(), time.perf_counter_ns(), hold()))
 
 
 def _finish(conn: Any, statement: str, parameters: Any, context: Any, *, many: bool, status: str) -> None:  # noqa: ANN401, PLR0913
     started = getattr(context, _STARTED, None)
     if started is None:
         return
-    start, counter = started
+    start, counter, held = started
     setattr(context, _STARTED, None)
+    inside = release(held)
     span = sql.record(
         statement,
         parameters,
@@ -152,6 +172,7 @@ def _finish(conn: Any, statement: str, parameters: Any, context: Any, *, many: b
         status=status,
         parent=_transaction(conn),
     )
+    adopt_held(held, inside, span)
     if span is not None and status == "ok":
         # The result made from this context counts what is fetched from it.
         sql.counts_into(context, span)
@@ -296,6 +317,52 @@ def _checkin(dbapi_connection: Any, record: Any) -> None:  # noqa: ANN401, ARG00
     _close_spans(record.info, "rollback")
 
 
+# ---------- a new connection ----------
+
+# How far up the stack a pool's connect looks for the engine asking: Engine.raw_connection() is a few frames up.
+_ENGINE_DEPTH = 16
+
+
+def _engine_of(pool: Any, frame: FrameType | None) -> Any:  # noqa: ANN401 (a Pool, and its Engine or None)
+    """The engine the pool opens a connection for: a pool knows its dialect only, the engine asking is on the stack."""
+    from sqlalchemy.engine import Engine  # noqa: PLC0415 (installed: its pool is connecting)
+
+    for _ in range(_ENGINE_DEPTH):
+        if frame is None:
+            break
+        asking = frame.f_locals.get("self")
+        if isinstance(asking, Engine) and asking.pool is pool:
+            return asking
+        frame = frame.f_back
+    return None
+
+
+def _connect(connect: Any) -> Any:  # noqa: ANN401 (_ConnectionRecord.__connect)
+    """A pool opening a connection, at checkout: a `sql.connect` span, the driver's and the dialect's work inside.
+
+    The first connection of an engine also initializes its dialect (queries of its own, not recorded as statements)
+    and every one runs the app's `connect` listeners: a new connection costs all of it. A SQLite file opens in no
+    time.
+    """
+
+    @functools.wraps(connect)
+    def traced(self: Any) -> None:  # noqa: ANN401 (a _ConnectionRecord)
+        if current_trace() is None:
+            connect(self)
+            return
+        pool = self._ConnectionRecord__pool  # the record's pool, name-mangled
+        engine = _engine_of(pool, sys._getframe(1))  # noqa: SLF001 (the stack tells who asked)
+        vendor = str((engine.dialect if engine is not None else pool._dialect).name)  # noqa: SLF001
+        if vendor == "sqlite":
+            connect(self)
+            return
+        attrs = _engine_database(engine) if engine is not None else {"db.client": "sqlalchemy", "db.vendor": vendor}
+        with sql.connecting(system(vendor), {**attrs, "db.connection.pool": "sqlalchemy"}):
+            connect(self)
+
+    return traced
+
+
 def install() -> None:
     """Listen on every engine, present and future; a no-op without SQLAlchemy."""
     try:
@@ -307,6 +374,11 @@ def install() -> None:
     if getattr(Engine, MARKER, False):
         return
     from sqlalchemy.engine.cursor import CursorResult  # noqa: PLC0415
+    from sqlalchemy.pool.base import _ConnectionRecord  # noqa: PLC0415
+
+    # Its private __connect(), name-mangled: where a pool opens every connection, and runs the connect events.
+    record_connect = vars(_ConnectionRecord)["_ConnectionRecord__connect"]
+    patch(_ConnectionRecord, "_ConnectionRecord__connect", _connect(record_connect))
 
     for name, counting in (
         ("_fetchone_impl", _fetchone),

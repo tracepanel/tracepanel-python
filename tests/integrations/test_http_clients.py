@@ -272,3 +272,22 @@ def test_outside_a_trace_it_only_calls(server: str) -> None:
     requests = pytest.importorskip("requests")
 
     assert requests.get(f"{server}/ok", timeout=5).text == "ok"
+
+
+def test_a_call_made_while_another_is_on_its_way_is_inside_it(server: str) -> None:
+    requests = pytest.importorskip("requests")
+
+    def send(traceparent: str | None) -> Any:  # noqa: ANN401 (a response)
+        del traceparent
+        # Snowflake's connector checks the server's certificate as it connects: a request of its own, inside.
+        requests.get(f"{server}/ok", timeout=5)
+        return requests.post(f"{server}/ok", timeout=5)
+
+    trace = traced(lambda: http_clients.call(send, "POST", f"{server}/login", lambda response: response.status_code))
+
+    by_id = {span.id: span for span in trace.spans}
+    assert [(span.name, by_id[str(span.parent_id)].name) for span in calls(trace)] == [
+        ("GET 127.0.0.1/ok", "POST 127.0.0.1/login"),
+        ("POST 127.0.0.1/ok", "POST 127.0.0.1/login"),
+        ("POST 127.0.0.1/login", "GET /"),
+    ]

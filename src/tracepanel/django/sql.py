@@ -1,10 +1,13 @@
 """SQL under Django: an execute wrapper on every new database connection, recorded by tracepanel.core.sql.
 
+Opening a connection to a server is a `sql.connect` span.
+
 The rows a query returned are counted as Django fetches them (its cursor's fetchone, fetchmany and fetchall, what
 the ORM reads results with), into the statement's span: on every database, SQLite's included, whose driver doesn't
 say how many rows a SELECT found.
 """
 
+import functools
 from collections.abc import Callable
 from typing import Any
 
@@ -13,6 +16,7 @@ from django.db.backends.signals import connection_created
 from django.db.backends.utils import CursorWrapper
 
 from tracepanel.core import sql
+from tracepanel.core.context import current_trace
 from tracepanel.core.model import Attrs, Span
 from tracepanel.core.patching import patch
 from tracepanel.django import services as django_services
@@ -64,7 +68,26 @@ def add_wrapper(sender: object, connection: BaseDatabaseWrapper, **kwargs: objec
         connection.execute_wrappers.append(wrapper)
 
 
+def _connect(connect: Callable[[BaseDatabaseWrapper], None]) -> Callable[[BaseDatabaseWrapper], None]:
+    """A new connection to a server's database, as a `sql.connect` span: the driver's, and Django's setup statements.
+
+    With CONN_MAX_AGE at 0, Django's default, every request opens one. A SQLite file opens in no time.
+    """
+
+    @functools.wraps(connect)
+    def traced(self: BaseDatabaseWrapper) -> None:
+        if self.vendor == "sqlite" or current_trace() is None:
+            connect(self)
+            return
+        attrs = _database(self)
+        with sql.connecting(str(attrs["db.system"]), attrs):
+            connect(self)
+
+    return traced
+
+
 def install() -> None:
+    patch(BaseDatabaseWrapper, "connect", _connect(BaseDatabaseWrapper.connect))
     # Connections are per thread, so a signal catches every one, including async ORM threads.
     connection_created.connect(add_wrapper, dispatch_uid="tracepanel.sql")
     # Django's cursor passes these on to the driver's (__getattr__): its own methods count first.

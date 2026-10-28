@@ -9,6 +9,11 @@ database through the driver (FastAPI or Flask with raw SQL, Peewee, a script) ge
 - MySQL and MariaDB: PyMySQL, mysqlclient, MySQL Connector/Python, aiomysql, asyncmy.
 - Oracle: python-oracledb.
 - SQL Server: pyodbc, pymssql.
+- Snowflake: snowflake-connector-python, sync and asyncio.
+
+Opening a connection is a `sql.connect` span (tracepanel.core.sql.connecting) for Snowflake, psycopg, psycopg2, asyncpg,
+PyMySQL and mysqlclient: what a new connection costs a request (a Snowflake login takes seconds). SQLAlchemy's pool
+and Django record the ones they open themselves, whatever the driver.
 
 An ORM runs its statements through the same drivers, and records them itself. What decides is who called the driver
 (tracepanel.core.callers): the first frame above the call that is neither the driver's own code nor this package's.
@@ -39,7 +44,7 @@ def install() -> None:
     """Wrap the drivers that are installed (sqlite3 always: it is the standard library)."""
     # Here rather than at the top: the package is imported for EXPLAIN before the app imports a driver, and the sqlite
     # module imports sqlite3, whose import hook installs this package (while it is still importing, without install()).
-    from tracepanel.integrations.dbapi import mssql, mysql, oracle, postgres, sqlite  # noqa: PLC0415
+    from tracepanel.integrations.dbapi import mssql, mysql, oracle, postgres, snowflake, sqlite  # noqa: PLC0415
 
-    for family in (sqlite, postgres, mysql, oracle, mssql):
+    for family in (sqlite, postgres, mysql, oracle, mssql, snowflake):
         family.install()
