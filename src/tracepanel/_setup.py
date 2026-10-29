@@ -30,9 +30,9 @@ def started(framework: str, *, debug: str = "debug mode", django: bool = False, 
     accesslog.install()
     registry.install(django=django)
     # EXPLAIN in the console runs where a query came from: a driver's database, else the SQLAlchemy engine (Django's own
-    # runs on its connection).
+    # runs on its connection), at the app's console and at the one the agent asks it for.
     if not django:
-        app_console.register("explain", app_console.explain_handler(dbapi.explain_or(sqlalchemy.explain)))
+        app_console.explain_with(dbapi.explain_or(sqlalchemy.explain))
     terminal.install()
     if announce:
         terminal.announce(framework, debug=debug)

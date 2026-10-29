@@ -5,6 +5,7 @@ has the reads the tests need, each one an API call, returning what the API retur
 """
 
 import atexit
+import contextlib
 import dataclasses
 import json
 import os
@@ -12,10 +13,11 @@ import socket
 import struct
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -23,7 +25,8 @@ from urllib.parse import urlencode
 
 from tracepanel._compat import override
 from tracepanel.core import conf
-from tracepanel.core.model import Issue, Trace
+from tracepanel.core.context import record_span, start_trace
+from tracepanel.core.model import Attrs, Issue, Trace
 from tracepanel.storage import agent
 
 
@@ -52,6 +55,27 @@ def binary() -> str:
         msg = "no tracepanel-agent: `uv sync` builds it from ../tracepanel, or set TRACEPANEL_AGENT_BIN"
         raise RuntimeError(msg)
     return found
+
+
+# What another app (a JavaScript BFF on SQLite) answers the agent's EXPLAIN with: the rows the agent reads a plan from.
+OTHER_APPS_ROWS: Json = {"columns": ["id", "parent", "notused", "detail"], "rows": [[2, 0, 0, "SCAN orders"]]}
+# The plan the agent reads from them.
+OTHER_APPS_PLAN: Json = {
+    "vendor": "sqlite",
+    "alias": "default",
+    "analyzed": False,
+    "lines": [{"depth": 0, "text": "SCAN orders", "warning": "Full scan of orders: no index is used"}],
+}
+
+
+def other_services_query(service: str) -> tuple[Trace, str]:
+    """A trace another app recorded (a linked trace of a call chain), and its query's span id."""
+    attrs: Attrs = {"db.system": "sqlite", "db.statement": "SELECT * FROM orders"}
+    with start_trace("http", "GET /api/orders") as trace:
+        span = record_span("sql", "SELECT orders", start=trace.start, duration=10, attrs=attrs)
+    assert span is not None
+    trace.attrs["service.name"] = service
+    return trace, span.id
 
 
 class SearchError(Exception):
@@ -91,6 +115,40 @@ class AgentStore:
         if self.process.poll() is None:
             self.process.terminate()
             self.process.wait(timeout=WAIT_S)
+
+    @contextlib.contextmanager
+    def other_app(self, service: str, answer: Json) -> Iterator[list[Json]]:
+        """Another app of `service` connected (a JavaScript BFF), answering the agent's EXPLAIN with `answer`.
+
+        Down its connection, while inside: the requests it got.
+        """
+        sock = agent.connect(self.address, self.max_traces, can=["explain"], service=service)
+        if sock is None:
+            msg = "the agent refused the connection"
+            raise RuntimeError(msg)
+        sock.settimeout(None)
+        asked: list[Json] = []
+
+        def answering() -> None:
+            with contextlib.suppress(OSError), sock.makefile("rb") as stream:
+                while len(header := stream.read(4)) == 4:
+                    request = json.loads(stream.read(struct.unpack(">I", header)[0]))
+                    asked.append(request)
+                    data = json.dumps({**answer, "answer": request["id"]}).encode()
+                    sock.sendall(struct.pack(">I", len(data)) + data)
+
+        thread = threading.Thread(target=answering, daemon=True)
+        thread.start()
+        # The agent registers the app once it has read the hello: a moment after it answered it.
+        deadline = time.monotonic() + WAIT_S
+        while not self.get("capabilities", service=service)["explain"] and time.monotonic() < deadline:
+            time.sleep(POLL_S)
+        try:
+            yield asked
+        finally:
+            sock.shutdown(socket.SHUT_RDWR)
+            sock.close()
+            thread.join(WAIT_S)
 
     def config(self) -> conf.Config:
         """Settings whose writer sends to this agent."""

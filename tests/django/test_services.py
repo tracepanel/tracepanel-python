@@ -58,7 +58,10 @@ def test_service_map(client: Client, traces: list[Trace], store: AgentStore, set
 
     databases = [node for node in result["services"] if node["kind"] == "database"]
 
-    assert result["apps"] == [
+    (app,) = result["apps"]
+
+    # An agent newer than the released one adds the app's issues and its time percentiles.
+    assert app == newer(
         {
             "service": "shop",
             "role": "web",
@@ -67,8 +70,10 @@ def test_service_map(client: Client, traces: list[Trace], store: AgentStore, set
             "total": IsInt(ge=0),
             "last_seen": IsInt,
             "runtime": IsStr(regex=r"Python 3\.\d+ · Django \d+\.\d+"),
-        }
-    ]
+        },
+        app,
+        {"issues": IsInt(ge=0), "p50": IsInt(ge=0), "p95": IsInt(ge=0)},
+    )
     assert [(node["kind"], node["system"]) for node in result["services"]] == [
         ("cache", "locmem"),
         *[("database", node["system"]) for node in databases],

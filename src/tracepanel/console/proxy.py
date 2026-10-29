@@ -17,6 +17,8 @@ from tracepanel.core import conf
 from tracepanel.storage import agent, transport
 
 TIMEOUT_S = 10.0
+# EXPLAIN the agent asks another app for: it waits 15 s for that app's answer.
+EXPLAIN_TIMEOUT_S = 20.0
 # The widget asks for a trace as soon as its response arrives: the agent may not have written it yet.
 TRACE_WAIT_S = 1.0
 TRACE_POLL_S = 0.05
@@ -28,13 +30,13 @@ PASSED = ("Cache-Control",)
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
-def forward(request: Request, path: str) -> Response | None:
+def forward(request: Request, path: str, *, timeout: float = TIMEOUT_S) -> Response | None:
     """The agent's answer to `<path>` under the console, or None without an agent that answers."""
     config = conf.get_config()
     if not agent.ensure_started(config) or (base := agent.console_url(config)) is None:
         return None
     url = f"{base}{path}" + (f"?{urlencode(dict(request.query))}" if request.query else "")
-    response = _fetch(url, request.method, request.body, request.content_type)
+    response = _fetch(url, request.method, request.body, request.content_type, timeout=timeout)
     if request.method == "GET" and _not_stored_yet(path, dict(request.query), response):
         # This process's own traces may still be in its queue, then in the agent's: send them, wait a little. The
         # widget asks for a page's issues as soon as it loads; answering once the trace is stored spares it retries.
@@ -74,11 +76,13 @@ def trace(trace_id: str) -> dict[str, object] | None:
 VIA_APP = "Tracepanel-Console"
 
 
-def _fetch(url: str, method: str, body: bytes = b"", content_type: str = "") -> Response | None:
+def _fetch(
+    url: str, method: str, body: bytes = b"", content_type: str = "", *, timeout: float = TIMEOUT_S
+) -> Response | None:
     headers = {VIA_APP: conf.get_config().service, **({"Content-Type": content_type} if content_type else {})}
     sent = urllib.request.Request(url, data=body or None, method=method, headers=headers)  # noqa: S310 (the agent)
     try:
-        with OPENER.open(sent, timeout=TIMEOUT_S) as answer:
+        with OPENER.open(sent, timeout=timeout) as answer:
             return _response(answer.status, answer.headers, answer.read())
     except urllib.error.HTTPError as error:
         return _response(error.code, error.headers, error.read())

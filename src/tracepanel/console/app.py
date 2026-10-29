@@ -35,10 +35,19 @@ ExplainRunner = Callable[..., explain.Plan]
 
 
 def explain_handler(run: ExplainRunner) -> Handler:
-    """`api/explain?trace=&span=&analyze=` for a framework's (or database layer's) way of running EXPLAIN."""
+    """`api/explain?trace=&span=&analyze=` for a framework's (or database layer's) way of running EXPLAIN.
+
+    For this app's traces only: another service's (a linked trace of a call chain) the agent asks the app that
+    recorded it, down that app's connection.
+    """
 
     def handle(request: Request) -> Response:
-        span = _span(request.query.get("trace", ""), request.query.get("span", ""))
+        trace_id = request.query.get("trace", "")
+        document = proxy.trace(trace_id) if trace_id else None
+        if _service(document) not in {"", conf.get_config().service}:
+            forwarded = proxy.forward(request, request.path, timeout=proxy.EXPLAIN_TIMEOUT_S)
+            return forwarded or _no_agent(api=True)
+        span = _span(document, request.query.get("span", ""))
         attrs = span.get("attrs") if span else None
         if span is None or span.get("kind") != "sql" or not isinstance(attrs, dict):
             return json_response(NOT_FOUND, status=404)
@@ -56,8 +65,39 @@ def explain_handler(run: ExplainRunner) -> Handler:
     return handle
 
 
-def _span(trace_id: str, span_id: str) -> dict[str, object] | None:
-    document = proxy.trace(trace_id) if trace_id else None
+def explain_answer(run: ExplainRunner, done: Callable[[], object] | None = None) -> agent.Answerer:
+    """The agent's `explain` request, EXPLAIN asked at a console this app doesn't serve, run as its own console runs it.
+
+    `done` runs after it, in its thread (Django closes the connection the thread opened).
+    """
+
+    def answer(request: dict[str, object]) -> dict[str, object]:
+        try:
+            statement, params, alias, analyze = explain.asked(request)
+            return run(statement, params, alias, analyze=analyze).to_answer()
+        except explain.ExplainError as exc:
+            return {"error": str(exc)}
+        finally:
+            if done is not None:
+                done()
+
+    return answer
+
+
+def explain_with(run: ExplainRunner, done: Callable[[], object] | None = None) -> None:
+    """EXPLAIN by `run`: at the app's own console (`api/explain`), and down its connection when the agent asks."""
+    register("explain", explain_handler(run))
+    agent.answer("explain", explain_answer(run, done))
+
+
+def _service(document: dict[str, object] | None) -> str:
+    """The service that recorded a trace; "" for none (an SDK from before said none)."""
+    attrs = document.get("attrs") if document else None
+    service = attrs.get("service.name") if isinstance(attrs, dict) else None
+    return service if isinstance(service, str) else ""
+
+
+def _span(document: dict[str, object] | None, span_id: str) -> dict[str, object] | None:
     spans = document.get("spans") if document else None
     if not isinstance(spans, list):
         return None

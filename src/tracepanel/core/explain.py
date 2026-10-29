@@ -24,6 +24,11 @@ _SELECT = re.compile(r"^\s*SELECT\b", re.IGNORECASE)
 _QUOTED = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|`[^`]*`|\[[^\W\d][^\]]*\]|--[^\n]*|/\*.*?\*/", re.DOTALL)
 # %s, %(name)s, ?, ?1, :name or :1 (not a :: cast), $1, @P1 or @name (not SQL Server's @@ functions).
 _PLACEHOLDER = re.compile(r"%s|%\(\w+\)s|\?|(?<!:):[A-Za-z0-9_]|\$\d+|(?<!@)@[A-Za-z0-9_]")
+# A named placeholder: %(name)s, or :name (not a :: cast, not Oracle's positional :1).
+_NAMED = re.compile(r"%\((\w+)\)s|(?<!:):([A-Za-z_]\w*)")
+# What the agent writes before a statement it asks the app to EXPLAIN (tracepanel.storage.agent): the app writes
+# its own.
+_AGENT_PREFIX = re.compile(r"^\s*EXPLAIN\s+(?:QUERY\s+PLAN\s+|\(ANALYZE,\s*BUFFERS\)\s+|ANALYZE\s+)?", re.IGNORECASE)
 _SQLITE_SCAN = re.compile(r"^SCAN (?:TABLE )?(\w+)(?!.*\bUSING\b)")
 _PG_SEQ_SCAN = re.compile(r"Seq Scan on (\w+)")
 # An operator of SHOWPLAN_ALL as it reads: "   |    |--Clustered Index Scan(OBJECT:([shop].[dbo].[orders].[PK])".
@@ -53,6 +58,9 @@ class Plan:
     alias: str
     analyzed: bool
     lines: list[PlanLine] = field(default_factory=list)
+    # What the database answered, as it came: the agent reads its own plan from them (tracepanel.storage.agent).
+    columns: list[str] = field(default_factory=list, compare=False, repr=False)
+    rows: list[tuple[object, ...]] = field(default_factory=list, compare=False, repr=False)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -60,6 +68,14 @@ class Plan:
             "alias": self.alias,
             "analyzed": self.analyzed,
             "lines": [{"depth": line.depth, "text": line.text, "warning": line.warning} for line in self.lines],
+        }
+
+    def to_answer(self) -> dict[str, object]:
+        """The answer to the agent's request: the plan as the console shows it, and the rows it reads its own from."""
+        return {
+            **self.to_dict(),
+            "columns": self.columns,
+            "rows": [[_scalar(value) for value in row] for row in self.rows],
         }
 
 
@@ -189,6 +205,26 @@ def params_from(attrs: Mapping[str, object]) -> list[Scalar] | dict[str, Scalar]
     return dict(zip((str(name) for name in names), scalars, strict=True)) if isinstance(names, list) else scalars
 
 
+def asked(request: Mapping[str, object]) -> tuple[str, list[Scalar] | dict[str, Scalar] | None, str, bool]:
+    """What the agent asks the app to EXPLAIN: the statement, its parameters, its alias, whether to ANALYZE.
+
+    The agent sends the statement it wrote for the database, `EXPLAIN ...`: the app writes its own, as for its console
+    (SQL Server's has none). Its parameters are the span's, a list: named ones go back to their names, as the cursor
+    took them, from `param_names` when the agent sends them, else from the statement's placeholders in order.
+    """
+    sql, params, names = request.get("sql"), request.get("params"), request.get("param_names")
+    if not isinstance(sql, str):
+        msg = "The agent asked for no statement."
+        raise ExplainError(msg)
+    statement = _AGENT_PREFIX.sub("", sql, count=1)
+    values = [_scalar(value) for value in params] if isinstance(params, list) else None
+    if values is not None and not isinstance(names, list):
+        names = list(dict.fromkeys(a or b for a, b in _NAMED.findall(_QUOTED.sub("", statement)))) or None
+    if values is not None and isinstance(names, list) and len(names) == len(values):
+        values = dict(zip((str(name) for name in names), values, strict=True))
+    return statement, values, str(request.get("alias") or "default"), request.get("analyze") is True
+
+
 Rows = list[tuple[object, ...]]
 Values = Sequence[Scalar] | Mapping[str, Scalar] | None
 # Statements to run before and after it on the same connection, the second whatever happens (SQL Server's SHOWPLAN).
@@ -249,4 +285,4 @@ def explain(  # noqa: PLR0913 (the statement, where it ran, how to run it)
         lines = _postgres(rows)
     else:
         lines = _table(columns, rows)
-    return Plan(vendor=vendor, alias=alias, analyzed=analyze, lines=lines)
+    return Plan(vendor=vendor, alias=alias, analyzed=analyze, lines=lines, columns=columns, rows=rows)

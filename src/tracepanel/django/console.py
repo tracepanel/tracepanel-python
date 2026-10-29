@@ -8,6 +8,7 @@ from collections.abc import Callable
 from django.apps import apps
 from django.conf import settings
 from django.core.exceptions import RequestDataTooBig
+from django.db import connections
 from django.http import FileResponse, HttpRequest, HttpResponse
 from django.http.response import HttpResponseBase
 
@@ -75,7 +76,8 @@ def _view(view: Callable[[HttpRequest], HttpResponseBase]) -> app.Handler:
 
 
 def install() -> None:
-    app.register("explain", app.explain_handler(dbapi.explain_or(explain.explain)))
+    # Asked by the agent, in a thread of its own: the connection Django opened there is closed after.
+    app.explain_with(dbapi.explain_or(explain.explain), done=connections.close_all)
     # Switching the user needs Django's auth and sessions: without them the API (and the widget's button) is absent,
     # and the module, which imports auth's models, is never imported.
     if apps.is_installed("django.contrib.auth") and apps.is_installed("django.contrib.sessions"):
