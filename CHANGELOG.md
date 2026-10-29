@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0 (2026-10-29)
+
+Needs `tracepanel-agent` 0.8.0 (installed with it). A shared snapshot holds
+the request's whole chain of calls, not only the traces it called itself.
+The chain's Profile tab has the memory its traces counted, next to their
+time. The MCP tool `get_profile` reads the profiles of the traces down a
+trace's calls too, one section per app.
+
 ## 0.7.0 (2026-10-29)
 
 Needs `tracepanel-agent` 0.7.0 (installed with it). It shows a request
