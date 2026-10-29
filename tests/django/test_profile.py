@@ -125,8 +125,9 @@ def test_the_hello_offers_profiling_while_it_is_on(settings: Settings) -> None:
 def test_the_hello_says_when_the_settings_profile_every_request(
     settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Nothing sent beside the traces (Celery's task events, when it is installed).
+    # Nothing sent beside the traces (Celery's task events, when it is installed), nothing answered (EXPLAIN).
     monkeypatch.setattr(agent, "SENDS", set())
+    monkeypatch.setattr(agent, "ANSWERS", {})
     default = agent.capabilities(conf.get_config())
     settings.TRACEPANEL = {"profile": True}
     every = agent.capabilities(conf.get_config())

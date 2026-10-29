@@ -56,6 +56,31 @@ def explain_handler(run: ExplainRunner) -> Handler:
     return handle
 
 
+def explain_answer(run: ExplainRunner, done: Callable[[], object] | None = None) -> agent.Answerer:
+    """The agent's `explain` request, EXPLAIN asked at a console this app doesn't serve, run as its own console runs it.
+
+    `done` runs after it, in its thread (Django closes the connection the thread opened).
+    """
+
+    def answer(request: dict[str, object]) -> dict[str, object]:
+        try:
+            statement, params, alias, analyze = explain.asked(request)
+            return run(statement, params, alias, analyze=analyze).to_answer()
+        except explain.ExplainError as exc:
+            return {"error": str(exc)}
+        finally:
+            if done is not None:
+                done()
+
+    return answer
+
+
+def explain_with(run: ExplainRunner, done: Callable[[], object] | None = None) -> None:
+    """EXPLAIN by `run`: at the app's own console (`api/explain`), and down its connection when the agent asks."""
+    register("explain", explain_handler(run))
+    agent.answer("explain", explain_answer(run, done))
+
+
 def _span(trace_id: str, span_id: str) -> dict[str, object] | None:
     document = proxy.trace(trace_id) if trace_id else None
     spans = document.get("spans") if document else None

@@ -4,6 +4,13 @@
 
 ### Added
 
+- EXPLAIN of a Python app's query works at a console the app doesn't serve,
+  a JavaScript app's in front of it (a BFF before a FastAPI app): the app
+  says `explain` in its hello's capabilities and answers the agent's
+  request down its own connection, in a thread of its own, on the
+  database the query ran on, as its own console runs it. Django closes the
+  connection that thread opened. A reconnect or a forked worker answers on
+  its new connection.
 - Snowflake: statements through `snowflake-connector-python` directly, sync
   and `snowflake.connector.aio`, 4.x and 5.x, as `sql` spans, and its
   `commit()` and `rollback()` too, which SQLAlchemy doesn't record: a round

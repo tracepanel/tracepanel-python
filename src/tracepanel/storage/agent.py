@@ -13,6 +13,12 @@ masked, and the versions it runs on, `{"settings": {"DEBUG": "True", ...}, "vers
 tracepanel.core.appinfo), answered by `{"ok": true}` (or a refusal with its reason); then frames, a 4-byte big-endian
 length and a JSON array of `Trace.to_dict()`, or an object: task events, `{"tasks": [...]}`, or what the checks found
 after the hello, `{"app": {"checks": [...], "migrations": {...}}}` (an agent from before ignores either).
+
+The agent's requests come down the same connection, a frame each, to an app whose hello said it answers them (in
+`capabilities`: `explain`): `{"id": 7, "explain": {"sql": "EXPLAIN SELECT ...", "params": [...], "alias": ...}}`,
+EXPLAIN asked at a console this app doesn't serve (a JavaScript app's in front of it). A thread of the connection's
+reads them, each runs in a thread of its own, and its answer goes up as a frame with the same id, `{"answer": 7,
+...}`, or `{"answer": 7, "error": "..."}`.
 """
 
 import contextlib
@@ -24,6 +30,7 @@ import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -59,6 +66,10 @@ CONNECT_TIMEOUT_S = 0.5
 SEND_TIMEOUT_S = 2.0
 # Without an agent, how often to look for one again.
 RETRY_S = 5.0
+# The hello's answer is a line this short.
+MAX_LINE = 65536
+# What the reader takes from the socket at a time: a length it can't trust never sizes a buffer.
+CHUNK = 65536
 # How often to start an agent again: one that exited (idle, killed) is started anew, one that can't start isn't retried
 # on every request.
 RESTART_S = 30.0
@@ -282,12 +293,23 @@ def sends(name: str) -> None:
     SENDS.add(name)
 
 
+# What the app answers when the agent asks down its connection (`explain`), as the integrations say on install: the
+# request's body in, the answer's out. Each one runs in a thread of its own, off the writer's and the app's.
+Answerer = Callable[[dict[str, object]], dict[str, object]]
+ANSWERS: dict[str, Answerer] = {}
+
+
+def answer(name: str, answerer: Answerer) -> None:
+    """Say in the hello that the app answers `name` (`explain`) down its connection, with `answerer`."""
+    ANSWERS[name] = answerer
+
+
 def capabilities(config: conf.Config) -> list[str]:
     """What this app's traces hold beyond the usual, and what it sends besides them.
 
     A profile when one is asked for, with its memory too (`profile_memory`), and whether the settings profile every
     trace (`profile_all`) with its memory (`profile_memory_all`): the console's Profile button shows them on. The
-    request's details; task events (`live_tasks`).
+    request's details; task events (`live_tasks`); what the app answers when the agent asks (`explain`).
     """
     offered = (
         ("profile", config.profile_enabled),
@@ -297,7 +319,7 @@ def capabilities(config: conf.Config) -> list[str]:
         ("request", config.capture_request),
     )
     own = [name for name, on in offered if on]
-    return own + sorted(SENDS)
+    return own + sorted(SENDS | ANSWERS.keys())
 
 
 def console_offers() -> list[str]:
@@ -331,15 +353,45 @@ def connect(  # noqa: PLR0913 (the hello's fields)
             **({"app": app} if app else {}),
         }
         sock.sendall(json.dumps(hello).encode() + b"\n")
-        answer = json.loads(sock.makefile("rb").readline() or b"{}")
+        accepted = json.loads(_line(sock) or b"{}")
     except (OSError, ValueError):
         sock.close()
         return None
-    if not isinstance(answer, dict) or answer.get("ok") is not True:
+    if not isinstance(accepted, dict) or accepted.get("ok") is not True:
         sock.close()
         return None
     sock.settimeout(SEND_TIMEOUT_S)
     return sock
+
+
+def _line(sock: socket.socket) -> bytes:
+    """The hello's answer, a byte at a time: what comes after it is the agent's first request, the reader's."""
+    line = bytearray()
+    while not line.endswith(b"\n") and len(line) < MAX_LINE:
+        byte = sock.recv(1)
+        if not byte:
+            break
+        line += byte
+    return bytes(line)
+
+
+def _receive(sock: socket.socket, size: int, current: Callable[[], bool]) -> bytes | None:
+    """`size` bytes from the agent; None once the connection is closed, or no longer the one in use (`current`)."""
+    data = bytearray()
+    while len(data) < size:
+        try:
+            chunk = sock.recv(min(size - len(data), CHUNK))
+        except TimeoutError:
+            # Nothing asked for a while: the socket's timeout is the writer's.
+            if current():
+                continue
+            return None
+        except OSError:
+            return None
+        if not chunk:
+            return None
+        data += chunk
+    return bytes(data)
 
 
 def _open(addr: str) -> socket.socket | None:
@@ -365,7 +417,10 @@ def _open(addr: str) -> socket.socket | None:
 
 
 def _closed(sock: socket.socket) -> bool:
-    """Whether the agent closed this connection: it sends nothing unasked, so anything to read is its end."""
+    """Whether the agent closed this connection: it sends nothing unasked, so anything to read is its end.
+
+    Unless the app answers its requests: then the connection's reader reads, and sees the end (AgentWriter._read).
+    """
     try:
         nothing: list[socket.socket] = []
         readable, _, _ = select.select([sock], nothing, nothing, 0)
@@ -381,6 +436,8 @@ class AgentWriter(BatchWriter):
         self.config = config
         self.sent = 0
         self._sock: socket.socket | None = None
+        # The connection a thread reads the agent's requests from (the app answers some, ANSWERS).
+        self._reading: socket.socket | None = None
         self._retry_at = 0.0
         self._warned = False
         # The writer thread sends; a console asking what the app offers connects first (connected()). Free in a forked
@@ -392,8 +449,9 @@ class AgentWriter(BatchWriter):
     def _start(self) -> None:
         # After a fork the child makes its own connection, with its own hello: the parent's socket is the parent's.
         # The child's copy of it is closed (the parent's connection stays open), so no frame of the child's can go
-        # into the parent's stream, between two of its frames.
-        inherited, self._sock = getattr(self, "_sock", None), None
+        # into the parent's stream, between two of its frames. Closed only, not shut down: that would end the parent's.
+        # Its reader stays the parent's: a forked child has no thread but the one that forked.
+        inherited, self._sock, self._reading = getattr(self, "_sock", None), None, None
         if inherited is not None:
             with contextlib.suppress(OSError):
                 inherited.close()
@@ -407,10 +465,9 @@ class AgentWriter(BatchWriter):
             return self._sock is not None
 
     def _connect(self) -> None:
-        if self._sock is not None and _closed(self._sock):
+        if self._sock is not None and self._reading is not self._sock and _closed(self._sock):
             # The agent went (a restart, a rebuild): a write would still go into this socket and be lost, unseen.
-            self._sock.close()
-            self._sock = None
+            self._drop()
             self._retry_at = 0.0
         if self._sock is not None or time.monotonic() < self._retry_at:
             return
@@ -437,6 +494,64 @@ class AgentWriter(BatchWriter):
             self._sock = hello(addr) if addr else None
         if self._sock is None:
             self._retry_at = time.monotonic() + RETRY_S
+        elif ANSWERS:
+            # The hello said what the app answers: the agent may ask from now on.
+            self._reading = self._sock
+            threading.Thread(
+                target=self._read, args=(self._sock,), name="tracepanel-agent-requests", daemon=True
+            ).start()
+
+    def _drop(self) -> None:
+        """Close the connection; its reader, waiting for a request, sees the end."""
+        if self._sock is None:
+            return
+        with contextlib.suppress(OSError):
+            self._sock.shutdown(socket.SHUT_RDWR)
+        self._sock.close()
+        self._sock = None
+
+    def _read(self, sock: socket.socket) -> None:
+        """The agent's requests down this connection, each answered in a thread of its own, until it closes."""
+
+        def current() -> bool:
+            return self._sock is sock
+
+        while (head := _receive(sock, 4, current)) is not None:
+            body = _receive(sock, struct.unpack(">I", head)[0], current)
+            if body is None:
+                break
+            try:
+                request = json.loads(body)
+            except ValueError:
+                # A request this SDK can't read: the agent times it out.
+                continue
+            if isinstance(request, dict):
+                threading.Thread(
+                    target=self._answer, args=(sock, request), name="tracepanel-agent-answer", daemon=True
+                ).start()
+        with self._lock:
+            if self._sock is sock:
+                # The agent went: the next write connects again, to the agent there is then.
+                self._drop()
+                self._retry_at = 0.0
+
+    def _answer(self, sock: socket.socket, request: dict[str, object]) -> None:
+        """A request run by what answers it, and its answer sent up the connection it came down."""
+        name = next((name for name in ANSWERS if name in request), None)
+        if name is None:
+            return
+        body = request[name]
+        try:
+            if not isinstance(body, dict):
+                msg = f"The agent's {name} request isn't an object."
+                raise TypeError(msg)  # noqa: TRY301 (answered as any other failure)
+            reply = ANSWERS[name](body)
+        except Exception as exc:  # noqa: BLE001 (the agent hears what went wrong instead of waiting)
+            reply = {"error": str(exc) or type(exc).__name__}
+        with self._lock:
+            # A connection made since (the agent restarted) never heard the request.
+            if self._sock is sock:
+                self._send_frame({**reply, "answer": request.get("id")})
 
     @override
     def write(self, batch: list[Trace]) -> None:
@@ -467,8 +582,12 @@ class AgentWriter(BatchWriter):
             sys.stderr.write(f"tracepanel ▸ {unavailable(self.config)}\n")
 
     def _frame(self, payload: object) -> bool:
-        """One frame to the agent; whether it went."""
+        """One frame to the agent, connecting first if need be; whether it went."""
         self._connect()
+        return self._send_frame(payload)
+
+    def _send_frame(self, payload: object) -> bool:
+        """One frame on the connection there is; whether it went."""
         if self._sock is None:
             return False
         data = json.dumps(payload, separators=(",", ":")).encode()
@@ -476,8 +595,7 @@ class AgentWriter(BatchWriter):
             self._sock.sendall(struct.pack(">I", len(data)) + data)
         except OSError:
             # The agent went away: this frame is lost; the next ones go to it once it is back.
-            self._sock.close()
-            self._sock = None
+            self._drop()
             self._retry_at = time.monotonic() + RETRY_S
             return False
         return True

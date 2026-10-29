@@ -319,6 +319,9 @@ def test_the_hello_says_what_the_app_offers_the_console(tmp_path: Path, monkeypa
     monkeypatch.setattr(agent, "CONSOLE", {"explain": lambda: True, "users": lambda: False})
     # Celery's task events.
     monkeypatch.setattr(agent, "SENDS", {"live_tasks"})
+    # EXPLAIN answered down the connection too, when the agent asks for a console the app doesn't serve.
+    answers: dict[str, agent.Answerer] = {"explain": lambda _request: {}}
+    monkeypatch.setattr(agent, "ANSWERS", answers)
     config = dataclasses.replace(conf.get_config(), capture_request=True, profile_enabled=True, service="shop")
 
     hello = _hello(tmp_path, config)
@@ -327,7 +330,7 @@ def test_the_hello_says_what_the_app_offers_the_console(tmp_path: Path, monkeypa
         {
             "protocol": agent.PROTOCOL,
             "service": "shop",
-            "capabilities": ["profile", "profile_memory", "request", "live_tasks"],
+            "capabilities": ["profile", "profile_memory", "request", "explain", "live_tasks"],
             "console": ["explain"],
         }
     )
@@ -336,6 +339,7 @@ def test_the_hello_says_what_the_app_offers_the_console(tmp_path: Path, monkeypa
 def test_an_app_that_offers_nothing_says_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(agent, "CONSOLE", {})
     monkeypatch.setattr(agent, "SENDS", set())
+    monkeypatch.setattr(agent, "ANSWERS", {})
     config = dataclasses.replace(conf.get_config(), capture_request=False, profile_enabled=False)
 
     hello = _hello(tmp_path, config)

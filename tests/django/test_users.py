@@ -111,9 +111,10 @@ def test_the_agent_s_own_console_is_not_offered_what_only_the_app_s_answers(
     client.get("/__tracepanel__/api/capabilities")
     own = app_console.get("capabilities")
 
-    # EXPLAIN and switching users run at the app's console: the agent's has nowhere to run them.
+    # Switching users runs at the app's console only: the agent's has nowhere to run it. EXPLAIN it asks the app for,
+    # down the app's connection.
     assert own == newer(
-        {"explain": False, "users": False, "profile": True, "request": True},
+        {"explain": True, "users": False, "profile": True, "request": True},
         own,
         {"live_tasks": True, "profile_memory": True, "profile_all": False, "profile_memory_all": False},
     )
