@@ -11,6 +11,9 @@
   database the query ran on, as its own console runs it. Django closes the
   connection that thread opened. A reconnect or a forked worker answers on
   its new connection.
+- EXPLAIN at a Python app's console of another service's trace (a JS or
+  Java app's linked trace in a call chain) goes to the agent, which asks the
+  app that recorded it: the console no longer runs it on its own database.
 - Snowflake: statements through `snowflake-connector-python` directly, sync
   and `snowflake.connector.aio`, 4.x and 5.x, as `sql` spans, and its
   `commit()` and `rollback()` too, which SQLAlchemy doesn't record: a round

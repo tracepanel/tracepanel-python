@@ -7,7 +7,7 @@ from django.db import connection
 from django.test import Client
 from pytest_django.fixtures import Settings
 
-from tests.agentstore import AgentStore
+from tests.agentstore import OTHER_APPS_PLAN, OTHER_APPS_ROWS, AgentStore, other_services_query
 from tracepanel.core import explain as plans
 from tracepanel.core.model import Attrs, Scalar, Trace
 from tracepanel.django import explain
@@ -158,3 +158,18 @@ def test_the_agent_asks_for_an_explain_and_the_app_runs_it_in_a_thread_of_its_ow
             "rows": IsList(length=(1, ...)),
         }
     ]
+
+
+@pytest.mark.django_db
+def test_explain_of_another_services_trace_is_the_agents(client: Client, store: AgentStore) -> None:
+    # A linked trace of a call chain, recorded by a JavaScript BFF: its database isn't this app's.
+    trace, span = other_services_query("bff")
+    store.write([trace])
+
+    with store.other_app("bff", OTHER_APPS_ROWS) as asked:
+        response = client.get(f"/__tracepanel__/api/explain?trace={trace.id}&span={span}")
+
+    assert response.status_code == 200
+    assert response.json() == OTHER_APPS_PLAN
+
+    assert asked == [IsPartialDict(id=IsInt, explain=IsPartialDict(sql="EXPLAIN QUERY PLAN SELECT * FROM orders"))]

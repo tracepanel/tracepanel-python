@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import pytest
-from dirty_equals import IsPartialDict, IsStr
+from dirty_equals import IsInt, IsPartialDict, IsStr
 
 fastapi = pytest.importorskip("fastapi")
 sqlalchemy = pytest.importorskip("sqlalchemy")
@@ -22,7 +22,13 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 from strawberry.fastapi import GraphQLRouter  # noqa: E402
 
 import tracepanel.fastapi  # noqa: E402
-from tests.agentstore import AgentStore, issues  # noqa: E402
+from tests.agentstore import (  # noqa: E402
+    OTHER_APPS_PLAN,
+    OTHER_APPS_ROWS,
+    AgentStore,
+    issues,
+    other_services_query,
+)
 from tests.profiles import sampled, share_meanwhile  # noqa: E402
 from tracepanel._compat import override  # noqa: E402
 from tracepanel.core import conf  # noqa: E402
@@ -224,6 +230,20 @@ def test_explain_runs_on_the_engine(client: TestClient, traces: list[Trace], sto
     # Unnamed engines are numbered in the order they appear: other tests may have made one first.
     assert plan == IsPartialDict(vendor="sqlite", alias=IsStr(regex=r"sqlite(#\d+)?"), analyzed=False)
     assert plan["lines"] == [IsPartialDict(text=IsStr(regex=r"SCAN player.*"))]
+
+
+def test_explain_of_another_services_trace_is_the_agents(client: TestClient, store: AgentStore) -> None:
+    # A linked trace of a call chain, recorded by a JavaScript BFF: its database isn't this app's.
+    trace, span = other_services_query("bff")
+    store.write([trace])
+
+    with store.other_app("bff", OTHER_APPS_ROWS) as asked:
+        response = client.get("/__tracepanel__/api/explain", params={"trace": trace.id, "span": span})
+
+    assert response.status_code == 200
+    assert response.json() == OTHER_APPS_PLAN
+
+    assert asked == [IsPartialDict(id=IsInt, explain=IsPartialDict(sql="EXPLAIN QUERY PLAN SELECT * FROM orders"))]
 
 
 def test_routes_of_included_routers_keep_their_prefix(client: TestClient, traces: list[Trace]) -> None:

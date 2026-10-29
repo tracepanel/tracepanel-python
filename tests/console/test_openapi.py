@@ -144,6 +144,15 @@ NEWER: list[tuple[str, int, Callable[[Data], str]]] = [
     ("/aws", 400, lambda _: "aws?q=colour:red"),
     ("/aws/calls", 200, lambda _: "aws/calls?q=aws:S3"),
     ("/aws/calls", 400, lambda _: "aws/calls?q=colour:red"),
+    # A trace and the chain of its calls: the traces, and their logs, calls and issues together.
+    ("/traces/{id}/chain", 200, lambda d: f"traces/{d['trace']}/chain"),
+    ("/traces/{id}/chain", 404, lambda _: "traces/" + "0" * 26 + "/chain"),
+    ("/traces/{id}/logs", 200, lambda d: f"traces/{d['trace']}/logs"),
+    ("/traces/{id}/logs", 404, lambda _: "traces/" + "0" * 26 + "/logs"),
+    ("/traces/{id}/calls", 200, lambda d: f"traces/{d['trace']}/calls"),
+    ("/traces/{id}/calls", 404, lambda _: "traces/" + "0" * 26 + "/calls"),
+    ("/traces/{id}/issues", 200, lambda d: f"traces/{d['trace']}/issues"),
+    ("/traces/{id}/issues", 404, lambda _: "traces/" + "0" * 26 + "/issues"),
 ]
 CASES += [case for case in NEWER if case[0] in OPENAPI["paths"]]
 

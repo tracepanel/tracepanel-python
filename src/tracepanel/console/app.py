@@ -35,10 +35,19 @@ ExplainRunner = Callable[..., explain.Plan]
 
 
 def explain_handler(run: ExplainRunner) -> Handler:
-    """`api/explain?trace=&span=&analyze=` for a framework's (or database layer's) way of running EXPLAIN."""
+    """`api/explain?trace=&span=&analyze=` for a framework's (or database layer's) way of running EXPLAIN.
+
+    For this app's traces only: another service's (a linked trace of a call chain) the agent asks the app that
+    recorded it, down that app's connection.
+    """
 
     def handle(request: Request) -> Response:
-        span = _span(request.query.get("trace", ""), request.query.get("span", ""))
+        trace_id = request.query.get("trace", "")
+        document = proxy.trace(trace_id) if trace_id else None
+        if _service(document) not in {"", conf.get_config().service}:
+            forwarded = proxy.forward(request, request.path, timeout=proxy.EXPLAIN_TIMEOUT_S)
+            return forwarded or _no_agent(api=True)
+        span = _span(document, request.query.get("span", ""))
         attrs = span.get("attrs") if span else None
         if span is None or span.get("kind") != "sql" or not isinstance(attrs, dict):
             return json_response(NOT_FOUND, status=404)
@@ -81,8 +90,14 @@ def explain_with(run: ExplainRunner, done: Callable[[], object] | None = None) -
     agent.answer("explain", explain_answer(run, done))
 
 
-def _span(trace_id: str, span_id: str) -> dict[str, object] | None:
-    document = proxy.trace(trace_id) if trace_id else None
+def _service(document: dict[str, object] | None) -> str:
+    """The service that recorded a trace; "" for none (an SDK from before said none)."""
+    attrs = document.get("attrs") if document else None
+    service = attrs.get("service.name") if isinstance(attrs, dict) else None
+    return service if isinstance(service, str) else ""
+
+
+def _span(document: dict[str, object] | None, span_id: str) -> dict[str, object] | None:
     spans = document.get("spans") if document else None
     if not isinstance(spans, list):
         return None
