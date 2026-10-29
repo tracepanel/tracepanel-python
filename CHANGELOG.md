@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 (2026-10-29)
+
+Needs `tracepanel-agent` 0.7.0 (installed with it). It shows a request
+across the apps it went through: a frontend's call, the API behind it and
+that API's queries are one tree. The DB, HTTP calls, Logs, Issues and
+Profile tabs cover the whole chain, and an N+1 across apps is found on
+the trace that made the calls. The panel's list shows the traces other
+apps served under the request that called them. EXPLAIN of a query runs
+in the app that recorded it, from any console.
 
 ### Added
 
