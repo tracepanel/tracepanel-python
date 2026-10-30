@@ -1,13 +1,12 @@
 """Snowflake's connector against a local stand-in for its REST API (snowflakestub): no account.
 
-The `snowflake` test group has 4.x, whose own copy of requests and urllib3 (aiohttp for asyncio) makes its HTTP calls:
-they show, inside the connection or the statement they serve. The `snowflake5` group has 5.x, whose Rust core makes
-them out of Python's sight: the connection and the statements show all the same.
+The `snowflake` test group has 4.x, whose own copy of requests and urllib3 (aiohttp for asyncio) makes its HTTP calls.
+The `snowflake5` group has 5.x, whose Rust core makes them out of Python's sight. Either way the connection and the
+statements show, and the connector's HTTP calls don't: their time is the span's they serve. The app's own calls show.
 """
 
 import asyncio
 import importlib
-import importlib.metadata
 from collections.abc import Iterator
 from typing import Any, cast
 
@@ -25,8 +24,6 @@ from tracepanel.integrations import http_clients
 pytest.importorskip("snowflake.connector")
 http_clients.install()
 
-# 4.x: its HTTP calls are Python's, and recorded.
-HTTP = int(importlib.metadata.version("snowflake-connector-python").split(".")[0]) < 5
 ORIGIN = IsStr(regex=r"tests/integrations/dbapi/test_snowflake\.py:\d+ in work")
 # A connection opened by connect() below.
 CONNECTED = IsStr(regex=r"tests/integrations/dbapi/test_snowflake\.py:\d+ in connect")
@@ -62,15 +59,6 @@ def tree(trace: Trace, under: str | None = None) -> Tree:
     return [(span.kind, span.name, tree(trace, span.id)) for span in children]
 
 
-def http(path: str) -> tuple[str, str, Tree]:
-    return ("http.client", f"POST 127.0.0.1{path}", [])
-
-
-def calls(*paths: str) -> Tree:
-    """The HTTP calls a span holds: none from 5.x, whose core makes them."""
-    return [http(path) for path in paths] if HTTP else []
-
-
 def spans(trace: Trace, kind: str) -> list[Span]:
     return [span for span in trace.spans if span.kind == kind]
 
@@ -92,7 +80,7 @@ def connect(port: int) -> Any:  # noqa: ANN401 (a Snowflake connection)
     return importlib.import_module("snowflake.connector").connect(**snowflakestub.params(port))
 
 
-def test_a_new_connection_shows_its_login_and_a_statement_its_requests(
+def test_a_new_connection_and_a_statement_show_without_the_connector_s_http_calls(
     port: int, asked: list[str], validator: Draft202012Validator
 ) -> None:
     def work() -> None:
@@ -105,11 +93,7 @@ def test_a_new_connection_shows_its_login_and_a_statement_its_requests(
     trace = traced(work)
 
     validator.validate(trace.to_dict())
-    assert tree(trace) == [
-        ("sql.connect", "connect snowflake", calls("/session/v1/login-request")),
-        ("sql", "SELECT", calls("/queries/v1/query-request")),
-        *calls("/session"),
-    ]
+    assert tree(trace) == [("sql.connect", "connect snowflake", []), ("sql", "SELECT", [])]
     assert asked[:2] == ["/session/v1/login-request", "/queries/v1/query-request"]
 
     assert spans(trace, "sql.connect")[0].attrs == {**where(port), "code.origin": CONNECTED}
@@ -119,19 +103,11 @@ def test_a_new_connection_shows_its_login_and_a_statement_its_requests(
     )
 
 
-@pytest.mark.skipif(not HTTP, reason="5.x makes its HTTP calls in its Rust core")
-def test_a_statement_s_requests_are_recorded_as_calls(port: int) -> None:
-    def work() -> None:
-        connection = connect(port)
-        connection.cursor().execute("SELECT 1")
-        connection.close()
-
-    trace = traced(work)
-
-    query = next(span for span in spans(trace, "http.client") if span.name.endswith("/query-request"))
-    assert query.attrs == {
+def app_call(port: int) -> dict[str, object]:
+    """The attributes of the app's own call to the stand-in's /app/report."""
+    return {
         "http.request.method": "POST",
-        "url.full": IsStr(regex=rf"http://127\.0\.0\.1:{port}/queries/v1/query-request\?requestId=[0-9a-f-]+"),
+        "url.full": f"http://127.0.0.1:{port}/app/report",
         "url.scheme": "http",
         "server.address": "127.0.0.1",
         "server.port": port,
@@ -141,8 +117,28 @@ def test_a_statement_s_requests_are_recorded_as_calls(port: int) -> None:
     }
 
 
-@pytest.mark.skipif(not HTTP, reason="5.x makes its HTTP calls in its Rust core")
-def test_a_profiled_trace_s_calls_to_snowflake_carry_its_traceparent_but_never_the_profile_request(port: int) -> None:
+def test_the_app_s_own_calls_show_beside_the_statements(port: int, asked: list[str]) -> None:
+    requests = pytest.importorskip("requests")
+
+    def work() -> None:
+        connection = connect(port)
+        requests.post(f"http://127.0.0.1:{port}/app/report", timeout=5)
+        connection.cursor().execute("SELECT 1")
+        connection.close()
+
+    trace = traced(work)
+
+    assert tree(trace) == [
+        ("sql.connect", "connect snowflake", []),
+        ("http.client", "POST 127.0.0.1/app/report", []),
+        ("sql", "SELECT", []),
+    ]
+    assert asked[:3] == ["/session/v1/login-request", "/app/report", "/queries/v1/query-request"]
+
+    assert spans(trace, "http.client")[0].attrs == app_call(port)
+
+
+def test_the_connector_s_requests_carry_neither_a_traceparent_nor_a_profile_request(port: int) -> None:
     snowflakestub.Handler.carried.clear()
     with start_trace("http", "GET /", profile="1"):
         connection = connect(port)
@@ -150,7 +146,7 @@ def test_a_profiled_trace_s_calls_to_snowflake_carry_its_traceparent_but_never_t
         connection.close()
 
     carried = snowflakestub.Handler.carried
-    assert carried == [(IsStr(regex=r"00-[0-9a-f]{32}-[0-9a-f]{16}-01"), None)] * len(carried)
+    assert carried == [(None, None)] * len(carried)
     assert len(carried) >= 2
 
 
@@ -163,10 +159,7 @@ def test_commit_and_rollback_are_statements(port: int) -> None:
 
     trace = traced(work)
 
-    assert tree(trace)[1:3] == [
-        ("sql", "COMMIT", calls("/queries/v1/query-request")),
-        ("sql", "ROLLBACK", calls("/queries/v1/query-request")),
-    ]
+    assert tree(trace)[1:] == [("sql", "COMMIT", []), ("sql", "ROLLBACK", [])]
     assert [span.attrs["db.statement"] for span in spans(trace, "sql")] == ["COMMIT", "ROLLBACK"]
 
 
@@ -186,6 +179,8 @@ def test_a_connection_that_fails_to_open_is_an_error(port: int) -> None:
     assert [(span.name, span.status) for span in connecting] == [("connect snowflake", "error")]
     assert connecting[0].attrs == {"db.client": "snowflake", "code.origin": ORIGIN}
 
+    assert spans(trace, "http.client") == []
+
 
 def test_the_asyncio_connector_shows_the_same(port: int, asked: list[str]) -> None:
     aio = pytest.importorskip("snowflake.connector.aio")
@@ -201,14 +196,37 @@ def test_the_asyncio_connector_shows_the_same(port: int, asked: list[str]) -> No
     trace = traced(lambda: asyncio.run(work()))
 
     assert tree(trace) == [
-        ("sql.connect", "connect snowflake", calls("/session/v1/login-request")),
-        ("sql", "SELECT", calls("/queries/v1/query-request")),
-        ("sql", "COMMIT", calls("/queries/v1/query-request")),
-        *calls("/session"),
+        ("sql.connect", "connect snowflake", []),
+        ("sql", "SELECT", []),
+        ("sql", "COMMIT", []),
     ]
     assert asked[:3] == ["/session/v1/login-request", "/queries/v1/query-request", "/queries/v1/query-request"]
 
     assert spans(trace, "sql.connect")[0].attrs == {**where(port), "code.origin": ORIGIN}
+
+
+def test_the_app_s_own_aiohttp_call_shows_while_a_statement_runs(port: int) -> None:
+    aio = pytest.importorskip("snowflake.connector.aio")
+    aiohttp = pytest.importorskip("aiohttp")
+
+    async def call() -> None:
+        async with aiohttp.ClientSession() as session, session.post(f"http://127.0.0.1:{port}/app/report") as answer:
+            await answer.read()
+
+    async def work() -> None:
+        connection = await aio.connect(**snowflakestub.params(port))
+        await asyncio.gather(connection.cursor().execute("SELECT 1"), call())
+        await connection.close()
+
+    trace = traced(lambda: asyncio.run(work()))
+
+    assert sorted(tree(trace)) == [
+        ("http.client", "POST 127.0.0.1/app/report", []),
+        ("sql", "SELECT", []),
+        ("sql.connect", "connect snowflake", []),
+    ]
+
+    assert spans(trace, "http.client")[0].attrs == {**app_call(port), "code.origin": IsStr(regex=r".+ in call")}
 
 
 # ---------- through SQLAlchemy ----------
@@ -271,13 +289,13 @@ def test_a_request_that_opens_a_pool_s_connection_shows_it_and_the_next_one_does
     cold, warm = traced(work), traced(work)
 
     # The connection's ROLLBACK as the pool takes it back: SQLAlchemy's own.
-    statements = [
-        ("transaction", "transaction ANALYTICS", [("sql", "SELECT", calls("/queries/v1/query-request"))]),
-        ("sql", "COMMIT", calls("/queries/v1/query-request")),
-        ("sql", "ROLLBACK", calls("/queries/v1/query-request")),
+    statements: Tree = [
+        ("transaction", "transaction ANALYTICS", [("sql", "SELECT", [])]),
+        ("sql", "COMMIT", []),
+        ("sql", "ROLLBACK", []),
     ]
     # The dialect rolls back the connection it first connected with: inside the connection's time.
-    opened = [*calls("/session/v1/login-request"), ("sql", "ROLLBACK", calls("/queries/v1/query-request"))]
+    opened: Tree = [("sql", "ROLLBACK", [])]
     assert tree(cold) == [("sql.connect", "connect snowflake", opened), *statements]
     assert tree(warm) == statements
 

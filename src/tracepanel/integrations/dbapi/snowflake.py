@@ -1,10 +1,11 @@
 """Snowflake: snowflake-connector-python, sync and asyncio (`snowflake.connector.aio`), 4.x and 5.x.
 
 Opening a connection logs in over HTTPS, creates the session and checks certificates: seconds, on a cold start. It is
-a `sql.connect` span, and every statement a `sql` span. Before 5.0 the connector talks to Snowflake through its own
-copy of requests and urllib3 (aiohttp for asyncio), which tracepanel.integrations.http_clients wraps: the login, the
-queries' requests and the certificate checks are `http.client` spans inside the connection or the statement they
-serve. From 5.0 a Rust core makes them, out of Python's sight: the connection and the statements still show.
+a `sql.connect` span, and every statement a `sql` span. The HTTP calls the connector makes for them (the login, the
+queries' requests, their results' chunks, the certificate checks, its telemetry) are not spans of their own: their
+time is the connection's or the statement's. From 5.0 a Rust core makes them, out of Python's sight; before 5.0 its own
+copy of requests and urllib3 does (aiohttp for asyncio), which tracepanel.integrations.http_clients leaves out. The
+app's own HTTP calls are recorded as ever, a statement running or not.
 
 Classes by version: 4.x's SnowflakeConnection (connect() opens it, __init__ calls it) and SnowflakeCursorBase, in
 `connection`, `cursor`, `aio._connection` and `aio._cursor`; 5.x's Connection (its __init__ opens it; the asyncio one's

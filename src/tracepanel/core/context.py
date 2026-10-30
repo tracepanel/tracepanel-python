@@ -39,9 +39,9 @@ _outer: ContextVar[_Outer | None] = ContextVar("tracepanel_outer", default=None)
 
 @dataclass(slots=True, eq=False)
 class Held:
-    """The spans begun in this context while a span recorded only once it ends runs (a statement, an HTTP call).
+    """The spans begun in this context while a span recorded only once it ends runs (a statement).
 
-    Such a span isn't current while it runs: what it does meanwhile (the HTTPS requests a Snowflake query makes)
+    Such a span isn't current while it runs: what it does meanwhile (the requests a driver over HTTP makes, Trino's)
     records under the span current then. Once recorded, it takes those spans as its children (adopt_held). Held per
     context, not by time: what a task or thread already running records meanwhile stays where it is; one begun inside
     (its context copied from there) is the span's work.

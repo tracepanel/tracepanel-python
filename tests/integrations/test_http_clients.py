@@ -1,6 +1,6 @@
 import asyncio
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Coroutine, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -354,33 +354,44 @@ def calling_from(module: str) -> Callable[[str], Any]:
     return namespace["get"]
 
 
-@pytest.mark.parametrize("module", ["tracepanel.storage.agent", "opentelemetry.exporter.otlp.proto.http"])
-def test_tracepanel_s_and_opentelemetry_s_own_calls_are_left_out(server: str, module: str) -> None:
+def awaiting_from(module: str) -> Callable[[str], Coroutine[Any, Any, None]]:
+    namespace: dict[str, Any] = {"__name__": module}
+    source = (
+        "import aiohttp\n"
+        "async def get(url):\n"
+        "    async with aiohttp.ClientSession() as session, session.get(url) as response:\n"
+        "        await response.read()\n"
+    )
+    exec(source, namespace)  # noqa: S102
+    return namespace["get"]
+
+
+# Snowflake's connector: its HTTP calls are its statements' work (the asyncio one's through aiohttp; its own copy of
+# requests and urllib3 otherwise, which isn't wrapped).
+LEFT_OUT = ["tracepanel.storage.agent", "opentelemetry.exporter.otlp.proto.http", "snowflake.connector.aio._network"]
+
+
+@pytest.mark.parametrize("module", LEFT_OUT)
+def test_tracepanel_s_opentelemetry_s_and_snowflake_s_own_calls_are_left_out(server: str, module: str) -> None:
     pytest.importorskip("requests")
+    received.clear()
 
     assert summary(traced(lambda: calling_from(module)(f"{server}/ok"))) == []
+
+    assert received == [None]
+
+
+@pytest.mark.parametrize("module", LEFT_OUT)
+def test_their_aiohttp_calls_are_left_out_too(server: str, module: str) -> None:
+    pytest.importorskip("aiohttp")
+    received.clear()
+
+    assert summary(traced(lambda: asyncio.run(awaiting_from(module)(f"{server}/ok")))) == []
+
+    assert received == [None]
 
 
 def test_outside_a_trace_it_only_calls(server: str) -> None:
     requests = pytest.importorskip("requests")
 
     assert requests.get(f"{server}/ok", timeout=5).text == "ok"
-
-
-def test_a_call_made_while_another_is_on_its_way_is_inside_it(server: str) -> None:
-    requests = pytest.importorskip("requests")
-
-    def send(added: dict[str, str] | None) -> Any:  # noqa: ANN401 (a response)
-        del added
-        # Snowflake's connector checks the server's certificate as it connects: a request of its own, inside.
-        requests.get(f"{server}/ok", timeout=5)
-        return requests.post(f"{server}/ok", timeout=5)
-
-    trace = traced(lambda: http_clients.call(send, "POST", f"{server}/login", lambda response: response.status_code))
-
-    by_id = {span.id: span for span in trace.spans}
-    assert [(span.name, by_id[str(span.parent_id)].name) for span in calls(trace)] == [
-        ("GET 127.0.0.1/ok", "POST 127.0.0.1/login"),
-        ("POST 127.0.0.1/ok", "POST 127.0.0.1/login"),
-        ("POST 127.0.0.1/login", "GET /"),
-    ]

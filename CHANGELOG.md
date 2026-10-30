@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Snowflake's connector before 5.0 no longer shows its HTTP calls as
+  `http.client` spans: the login, the queries' requests, their results'
+  chunks, the certificate checks and the telemetry, through its own copy of
+  requests and urllib3 or aiohttp for asyncio. Every statement had a few
+  under it. Their time stays in the `sql.connect` or `sql` span they serve,
+  as with 5.x, whose Rust core makes them. They no longer reach the HTTP
+  tab, the services map or the HTTP N+1 and duplicate checks, and carry no
+  `traceparent`. The app's own HTTP calls are recorded as before, while a
+  statement runs too.
+
 ## 0.8.0 (2026-10-29)
 
 Needs `tracepanel-agent` 0.8.0 (installed with it). A shared snapshot holds
