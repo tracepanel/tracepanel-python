@@ -8,7 +8,7 @@ from django.test import Client
 from tests.agentstore import issues
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Error, Span, Trace
-from tracepanel.core.sql import fingerprint, span_name
+from tracepanel.core.sql import fingerprint, span_name, statement
 
 
 def test_fingerprint_collapses_whitespace_and_in_lists() -> None:
@@ -75,7 +75,7 @@ _IN_GROUP = (
 
 
 @pytest.mark.parametrize(
-    ("statement", "name", "fingerprinted"),
+    ("sql", "name", "fingerprinted"),
     [
         # SQL Server as mssql-django writes it: [names], TOP for a slice from the start, OFFSET ... FETCH for the rest.
         (
@@ -152,8 +152,50 @@ _IN_GROUP = (
         ),
     ],
 )
-def test_names_and_fingerprints_in_each_dialect(statement: str, name: str, fingerprinted: str) -> None:
-    assert (span_name(statement), fingerprint(statement)) == (name, fingerprinted)
+def test_names_and_fingerprints_in_each_dialect(sql: str, name: str, fingerprinted: str) -> None:
+    assert (span_name(sql), fingerprint(sql)) == (name, fingerprinted)
+
+
+@pytest.mark.parametrize(
+    ("sql", "one_line", "name", "fingerprinted"),
+    [
+        # The agent's case: a sqlcommenter block with the traceparent, a line comment, a string that looks like both.
+        (
+            (
+                "/*controller='orders',traceparent='00-4bf9-01'*/ SELECT id\n-- the page's rows\nFROM orders "
+                "WHERE note = '-- not /* a */ comment' AND id IN ($1, $2)"
+            ),
+            (
+                "/*controller='orders',traceparent='00-4bf9-01'*/ SELECT id /* the page's rows */ FROM orders "
+                "WHERE note = '-- not /* a */ comment' AND id IN ($1, $2)"
+            ),
+            "SELECT orders",
+            "SELECT id FROM orders WHERE note = '-- not /* a */ comment' AND id IN (...)",
+        ),
+        (
+            "/*traceparent='00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'*/ SELECT * FROM orders",
+            "/*traceparent='00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'*/ SELECT * FROM orders",
+            "SELECT orders",
+            "SELECT * FROM orders",
+        ),
+        # A line comment mid-statement: a */ in it doesn't end the closed one, an empty one is closed too.
+        (
+            "SELECT count(*)\n  -- the */ count\n  FROM books --\nWHERE id = %s",
+            "SELECT count(*) /* the * / count */ FROM books /* */ WHERE id = %s",
+            "SELECT COUNT books",
+            "SELECT count(*) FROM books WHERE id = %s",
+        ),
+        # -- and /* in a string or a quoted name are its text.
+        (
+            "SELECT \"a--b\", `c/*d` FROM notes WHERE body = 'it''s -- not /* a comment' AND x = \"--\"",
+            "SELECT \"a--b\", `c/*d` FROM notes WHERE body = 'it''s -- not /* a comment' AND x = \"--\"",
+            "SELECT notes",
+            "SELECT \"a--b\", `c/*d` FROM notes WHERE body = 'it''s -- not /* a comment' AND x = \"--\"",
+        ),
+    ],
+)
+def test_comments_name_and_group_nothing(sql: str, one_line: str, name: str, fingerprinted: str) -> None:
+    assert (statement(sql), span_name(sql), fingerprint(sql)) == (one_line, name, fingerprinted)
 
 
 def test_ids_are_ulids_sorted_by_time() -> None:

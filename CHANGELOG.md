@@ -14,6 +14,14 @@
   `traceparent`. The app's own HTTP calls are recorded as before, while a
   statement runs too.
 
+### Fixed
+
+- A query's comments (sqlcommenter's tags, a traceparent, a note) no
+  longer name it or set it apart from its repeats: it is named `SELECT
+  orders` and grouped without them. Its statement keeps them, a line
+  comment (`-- a note`) closed as `/* a note */` when put on one line, so
+  the line it ended still reads as SQL.
+
 ## 0.8.0 (2026-10-29)
 
 Needs `tracepanel-agent` 0.8.0 (installed with it). A shared snapshot holds

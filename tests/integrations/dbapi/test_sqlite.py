@@ -48,6 +48,33 @@ def test_statements_are_recorded_once_each() -> None:
     )
 
 
+def test_a_commented_statement_keeps_its_comments_and_is_named_and_grouped_without_them() -> None:
+    connection = shop()
+
+    def work() -> None:
+        for traceparent in ("00-1", "00-2"):
+            connection.execute(f"/*traceparent='{traceparent}'*/ SELECT name\n-- the authors\nFROM author").fetchall()
+
+    trace = traced(work)
+
+    assert sql_spans(trace) == [("sqlite3", "SELECT author")] * 2
+
+    assert [span.attrs for span in statements(trace)] == [
+        IsPartialDict(
+            {
+                "db.statement": "/*traceparent='00-1'*/ SELECT name /* the authors */ FROM author",
+                "db.fingerprint": "SELECT name FROM author",
+            }
+        ),
+        IsPartialDict(
+            {
+                "db.statement": "/*traceparent='00-2'*/ SELECT name /* the authors */ FROM author",
+                "db.fingerprint": "SELECT name FROM author",
+            }
+        ),
+    ]
+
+
 def outside_the_project(frame: FrameType) -> bool:
     del frame
     return False
