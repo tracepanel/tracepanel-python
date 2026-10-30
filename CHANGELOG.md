@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 (2026-10-30)
+
+Needs `tracepanel-agent` 0.9.0 (installed with it). The agent links Apollo
+Router's calls to its subgraphs over OTLP and folds the Router's own
+stages. A span from OpenTelemetry shows what came over OTLP and why it
+became a call or a step. A project's agent takes OTLP on its own port
+(`TRACEPANEL_OTLP`), and the console names whoever holds a taken one. A
+database driver's own HTTP requests leave the call tree, under any SDK.
 
 ### Changed
 
