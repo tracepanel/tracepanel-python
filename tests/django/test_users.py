@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from dirty_equals import IsPartialDict, IsStr
 from django.contrib.auth.models import User
 from django.test import Client
 from pytest_django.fixtures import Settings
@@ -97,11 +98,17 @@ def test_the_console_offers_what_the_app_said_in_its_hello(client: Client, app_c
     offered = client.get("/__tracepanel__/api/capabilities").json()
 
     # Celery's task events (an agent after 0.3.7 lists them), memory in profiles (a newer one), profiling set by the
-    # settings (newer still): off here.
+    # settings (newer still): off here. The address the agent takes OTLP on (0.9.0).
     assert offered == newer(
         {"explain": True, "users": True, "profile": True, "request": True},
         offered,
-        {"live_tasks": True, "profile_memory": True, "profile_all": False, "profile_memory_all": False},
+        {
+            "live_tasks": True,
+            "profile_memory": True,
+            "profile_all": False,
+            "profile_memory_all": False,
+            "otlp": IsPartialDict(address=IsStr),
+        },
     )
 
 
@@ -116,7 +123,13 @@ def test_the_agent_s_own_console_is_not_offered_what_only_the_app_s_answers(
     assert own == newer(
         {"explain": True, "users": False, "profile": True, "request": True},
         own,
-        {"live_tasks": True, "profile_memory": True, "profile_all": False, "profile_memory_all": False},
+        {
+            "live_tasks": True,
+            "profile_memory": True,
+            "profile_all": False,
+            "profile_memory_all": False,
+            "otlp": IsPartialDict(address=IsStr),
+        },
     )
 
 
