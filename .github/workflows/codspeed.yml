@@ -6,6 +6,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # The pages alone (the README, the changelog, docs/) cost the app nothing.
+    paths-ignore: ["**.md", "LICENSE", "docs/**"]
   workflow_dispatch:
 
 concurrency:

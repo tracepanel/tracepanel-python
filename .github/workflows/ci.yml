@@ -39,7 +39,21 @@ jobs:
       test: ${{ steps.matrix.outputs.test }}
       graphene: ${{ steps.matrix.outputs.graphene }}
       drivers: ${{ github.event_name != 'pull_request' || steps.changes.outputs.drivers == 'true' }}
+      code: ${{ github.event_name != 'pull_request' || steps.code.outputs.code == 'true' }}
     steps:
+      # A pull request that changes only the pages (the README, the changelog, docs/) or the license tests nothing:
+      # the required jobs still run, each step skipped, so their checks pass.
+      - if: github.event_name == 'pull_request'
+        id: code
+        uses: dorny/paths-filter@v4.0.3
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - "**"
+              - "!**/*.md"
+              - "!LICENSE"
+              - "!docs/**"
       # The drivers' job on a pull request: when the SQL and driver code, its tests or the environment changed.
       - if: github.event_name == 'pull_request'
         id: changes
@@ -169,7 +183,7 @@ jobs:
         include: ${{ fromJSON(needs.plan.outputs.test) }}
     services:
       postgres:
-        image: ${{ matrix.db == 'postgres' && 'postgres:17' || '' }}
+        image: ${{ matrix.db == 'postgres' && needs.plan.outputs.code == 'true' && 'postgres:17' || '' }}
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: tracepanel
@@ -183,33 +197,42 @@ jobs:
       run:
         working-directory: tracepanel-python
     steps:
-      - uses: actions/checkout@v7
+      - if: needs.plan.outputs.code == 'true'
+        uses: actions/checkout@v7
         with:
           path: tracepanel-python
-      - uses: actions/checkout@v7
+      - if: needs.plan.outputs.code == 'true'
+        uses: actions/checkout@v7
         with:
           repository: tracepanel/tracepanel
           ref: ${{ needs.agent.outputs.sha }}
           path: tracepanel
-      - uses: actions/download-artifact@v8
+      - if: needs.plan.outputs.code == 'true'
+        uses: actions/download-artifact@v8
         with:
           name: tracepanel-agent
           path: agent
       # A uv cache per Python and set of groups (cache-suffix): with one per Python, the first job to save it would
       # leave the others' packages out.
-      - uses: astral-sh/setup-uv@v10.3.0
+      - if: needs.plan.outputs.code == 'true'
+        uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: ${{ matrix.python }}
           working-directory: tracepanel-python
           cache-suffix: ${{ matrix.db }}
-      - run: uv sync --locked $GROUPS ${{ matrix.db == 'postgres' && '--group postgres' || '' }} --no-install-package tracepanel-agent
-      - run: uv pip install --no-deps ../agent/*.whl
-      - name: Pin Django ${{ matrix.django }}
+      - if: needs.plan.outputs.code == 'true'
+        run: uv sync --locked $GROUPS ${{ matrix.db == 'postgres' && '--group postgres' || '' }} --no-install-package tracepanel-agent
+      - if: needs.plan.outputs.code == 'true'
+        run: uv pip install --no-deps ../agent/*.whl
+      - if: needs.plan.outputs.code == 'true'
+        name: Pin Django ${{ matrix.django }}
         run: uv pip install "django~=${{ matrix.django }}.0"
-      - run: uv run --no-sync python -c "import django, sys; print('django', django.get_version(), 'python', sys.version)"
+      - if: needs.plan.outputs.code == 'true'
+        run: uv run --no-sync python -c "import django, sys; print('django', django.get_version(), 'python', sys.version)"
       # The agent installed from the wheel is the one the tests compare with (tests/storage/test_agent.py). poe runs
       # pytest with a worker per core, through `uv run`: UV_NO_SYNC keeps the environment synced above.
-      - run: uv run --no-sync poe test
+      - if: needs.plan.outputs.code == 'true'
+        run: uv run --no-sync poe test
         env:
           TRACEPANEL_AGENT_BIN: ${{ github.workspace }}/tracepanel-python/.venv/bin/tracepanel-agent
           UV_NO_SYNC: "1"
@@ -227,28 +250,36 @@ jobs:
       run:
         working-directory: tracepanel-python
     steps:
-      - uses: actions/checkout@v7
+      - if: needs.plan.outputs.code == 'true'
+        uses: actions/checkout@v7
         with:
           path: tracepanel-python
-      - uses: actions/checkout@v7
+      - if: needs.plan.outputs.code == 'true'
+        uses: actions/checkout@v7
         with:
           repository: tracepanel/tracepanel
           ref: ${{ needs.agent.outputs.sha }}
           path: tracepanel
-      - uses: actions/download-artifact@v8
+      - if: needs.plan.outputs.code == 'true'
+        uses: actions/download-artifact@v8
         with:
           name: tracepanel-agent
           path: agent
-      - uses: astral-sh/setup-uv@v10.3.0
+      - if: needs.plan.outputs.code == 'true'
+        uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: ${{ matrix.python }}
           working-directory: tracepanel-python
           cache-suffix: graphene
-      - run: uv sync --locked ${GROUPS/--group strawberry/--group graphene} --no-install-package tracepanel-agent
-      - run: uv pip install --no-deps ../agent/*.whl
-      - name: Pin Django ${{ matrix.django }}
+      - if: needs.plan.outputs.code == 'true'
+        run: uv sync --locked ${GROUPS/--group strawberry/--group graphene} --no-install-package tracepanel-agent
+      - if: needs.plan.outputs.code == 'true'
+        run: uv pip install --no-deps ../agent/*.whl
+      - if: needs.plan.outputs.code == 'true'
+        name: Pin Django ${{ matrix.django }}
         run: uv pip install "django~=${{ matrix.django }}.0"
-      - run: uv run --no-sync poe test
+      - if: needs.plan.outputs.code == 'true'
+        run: uv run --no-sync poe test
         env:
           TRACEPANEL_AGENT_BIN: ${{ github.workspace }}/tracepanel-python/.venv/bin/tracepanel-agent
           UV_NO_SYNC: "1"
@@ -256,7 +287,8 @@ jobs:
   snowflake5:
     # Snowflake's connector 5.x (a Rust core, and snowflake-sqlalchemy on it) can't share an environment with 4.x, which
     # the other jobs test: its tests, against the local stand-in for Snowflake's API.
-    needs: [agent]
+    needs: [agent, plan]
+    if: needs.plan.outputs.code == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
