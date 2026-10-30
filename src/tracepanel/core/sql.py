@@ -35,6 +35,9 @@ T = TypeVar("T")
 Params = Sequence[object] | Mapping[str, object] | None
 
 _WHITESPACE = re.compile(r"\s+")
+# A comment (`-- a note` to the line's end, `/* sqlcommenter's tags */`), or a string or quoted name, whose `--` and
+# `/*` are its text: matched so a comment is told from a string that looks like one.
+_COMMENT = re.compile(r"""(--[^\n]*)|(/\*.*?\*/)|'[^']*(?:''[^']*)*'|"[^"]*(?:""[^"]*)*"|`[^`]*`""", re.DOTALL)
 # A placeholder, as each driver writes it: %s and %(name)s (Django, psycopg, PyMySQL, SQLAlchemy on pymssql or
 # psycopg2), ? and ?1 (sqlite3, pyodbc, JDBC), $1 (PostgreSQL), @P1 and @name (SQL Server), :1 and :name (Oracle,
 # SQLAlchemy). The agent's rules, so a statement recorded here and one it maps from OpenTelemetry group alike.
@@ -75,27 +78,58 @@ def _template(parent: Span | None) -> Attrs:
     return {"code.template": place[0] or name, "code.template_line": place[1]}
 
 
+def _commented(sql: str) -> bool:
+    return "--" in sql or "/*" in sql
+
+
+def _closed(found: re.Match[str]) -> str:
+    line = found[1]
+    return found[0] if line is None else f"/* {line[2:].strip().replace('*/', '* /')} */"
+
+
+def statement(sql: str) -> str:
+    """A statement on one line, a line comment (`-- a note`) closed so the line it ended still reads as SQL."""
+    if "--" in sql:
+        sql = _COMMENT.sub(_closed, sql)
+    return " ".join(sql.split())
+
+
+def _stripped(found: re.Match[str]) -> str:
+    return found[0] if found[1] is None and found[2] is None else " "
+
+
+def _uncommented(sql: str) -> str:
+    """The statement without its comments (an ORM's or sqlcommenter's tags, a note, the traceparent), on one line."""
+    return " ".join(_COMMENT.sub(_stripped, sql).split())
+
+
 def fingerprint(sql: str) -> str:
     """Normalize a parametrized query so the same statement maps to one fingerprint.
 
-    It is the span's `db.fingerprint`: what the agent groups queries, and finds N+1 and duplicates, by.
+    It is the span's `db.fingerprint`: what the agent groups queries, and finds N+1 and duplicates, by. Its comments
+    are left out: one that carries the request's traceparent differs in every query.
     """
-    sql = _WHITESPACE.sub(" ", sql).strip()
+    sql = _uncommented(sql) if _commented(sql) else _WHITESPACE.sub(" ", sql).strip()
     return _IN_LIST.sub("IN (...)", sql)
 
 
 @functools.lru_cache(maxsize=2048)
 def _parsed(sql: str) -> tuple[str, str, str]:
     """(span name, one-line statement, fingerprint) of a statement; templates repeat, so they are parsed once."""
-    statement = " ".join(sql.split())
-    return span_name(sql), statement, fingerprint(sql)
+    one_line = statement(sql)
+    bare = _uncommented(sql) if _commented(sql) else one_line
+    return _name(bare), one_line, _IN_LIST.sub("IN (...)", bare)
 
 
 def span_name(sql: str) -> str:
-    """A statement's span name: its verb and its table, its schema and quotes left out (`SELECT orders`).
+    """A statement's span name: its verb and its table, its schema, quotes and comments left out (`SELECT orders`).
 
     The same rule in every SDK, and in the agent for a statement it maps from OpenTelemetry.
     """
+    return _name(_uncommented(sql) if _commented(sql) else sql)
+
+
+def _name(sql: str) -> str:
     words = sql.split(None, 1)
     verb = words[0].upper() if words else "SQL"
     if verb == "SELECT" and _COUNT.match(sql):
@@ -279,7 +313,7 @@ def record(  # noqa: PLR0913 (the statement, where it ran, when, how it went)
     if current_trace() is None:
         return None
     parent = parent or current_span()
-    name, statement, fingerprinted = _parsed(sql)
+    name, one_line, fingerprinted = _parsed(sql)
     return record_span(
         "sql",
         name,
@@ -287,7 +321,7 @@ def record(  # noqa: PLR0913 (the statement, where it ran, when, how it went)
         duration=duration,
         attrs={
             **database(),
-            "db.statement": statement,
+            "db.statement": one_line,
             "db.fingerprint": fingerprinted,
             "db.params_hash": params_hash(params),
             "db.many": many,
