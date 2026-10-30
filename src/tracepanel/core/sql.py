@@ -235,7 +235,7 @@ def run(  # noqa: PLR0913
     started = time.perf_counter_ns()
     status = "ok"
     blocking = blocking_attrs()
-    # What the driver records meanwhile (a driver over HTTP: Snowflake's requests) is the statement's.
+    # What the driver records meanwhile (a driver over HTTP: its requests) is the statement's.
     held = hold()
     try:
         return execute()
