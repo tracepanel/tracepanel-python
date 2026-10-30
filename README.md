@@ -132,37 +132,21 @@ ignore_paths = ["/health*", "/static/*"]
 ```
 
 `tracepanel config` prints each setting, its value and where it comes from.
-The server's access log leaves out tracepanel's own requests (the panel polls
-several times a second): `quiet_access_log = false` keeps them.
 
 ## Profile a request
 
 A profile shows where a request's time went in code, as a flame graph in the
 console. Tracepanel profiles a request that sends an `X-Tracepanel-Profile: 1`
-header, and every request while the panel's Profile button is on (it sets the
-`tracepanel_profile=1` cookie). The tasks a profiled request queues are
-profiled too, on the worker, and so are the requests it makes to your other
-services: each HTTP call that carries a `traceparent` carries the same
-`X-Tracepanel-Profile` too, so a profile asked for in the browser follows the
-whole chain. `profile = true` profiles every trace without asking the
-services it calls, and `profile_enabled = false` turns profiling off.
-
-A frame that waits rather than computes (a sleep, a socket read, a lock) is
-marked as waiting, and an async trace shows what its task awaits instead of
-the idle event loop. Every profile counts garbage collections.
+header, and every request while the panel's Profile button is on. The tasks it
+queues and the calls it makes to your other services are profiled too.
+`profile = true` profiles every trace, and `profile_enabled = false` turns
+profiling off.
 
 A profile counts memory too when asked: `X-Tracepanel-Profile: memory`, the
-`tracepanel_profile=memory` cookie, or `profile_memory = true`. It uses
-Python's tracemalloc, which slows down every allocation of the whole process
-while it runs, so leave it off when you measure time. A trace that isn't
-profiled pays for none of this. It reports the peak above the level at the
-trace's start, what is still allocated at its end, and the 50 sites that held
-the most.
-
-The sampler takes the stack every `profile_interval_ms` (1 by default). Code
-that keeps the CPU busy holds Python's GIL, so it samples less often than
-that. The [Profile tab](https://tracepanel.dev/docs/panel#profile) shows what
-a profile holds.
+button's memory mode, or `profile_memory = true`. It slows down the whole
+process while it runs, so leave it off when you measure time. The
+[Profile tab](https://tracepanel.dev/docs/panel#profile) shows what a profile
+holds.
 
 ## Trace your own code
 
