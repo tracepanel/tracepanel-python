@@ -151,7 +151,7 @@ def _explain_async(
 
 def _before(conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool) -> None:  # noqa: ANN401, ARG001, FBT001, PLR0913, PLR0917 (SQLAlchemy's signature)
     if current_trace() is not None and context is not None:
-        # What the driver records meanwhile (a dialect over HTTP: Snowflake's, Trino's) is the statement's.
+        # What the driver records meanwhile (a dialect over HTTP: Trino's) is the statement's.
         setattr(context, _STARTED, (now_us(), time.perf_counter_ns(), hold()))
 
 

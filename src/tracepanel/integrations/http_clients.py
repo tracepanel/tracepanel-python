@@ -1,8 +1,7 @@
 """Outgoing HTTP calls: every request the app makes as an `http.client` span.
 
 - urllib3, and what is built on it: requests, most API SDKs, and botocore with `boto_enabled` off (on, an AWS call
-  is a span of its own). Snowflake's connector's own copy of them too: its calls are inside the statement or the
-  connection they serve.
+  is a span of its own).
 - httpx and httpx2 (its fork Starlette's test client uses), sync and async: the transport that reaches the network,
   so a test client's in-process transport isn't a call.
 - aiohttp's client.
@@ -11,15 +10,19 @@ A call is recorded where it leaves for the network, once: requests on urllib3 is
 follows itself stays inside it (one PoolManager hop is one call). An AWS call boto3 makes is recorded as itself
 (tracepanel.integrations.boto): its HTTP requests, retries included, are part of its span, not calls of their own. Who
 called decides, as for SQL (tracepanel.core.callers): tracepanel's own calls and OpenTelemetry's exporters are left
-out.
+out, and so are Snowflake's connector's. Its login, its queries' requests, their results' chunks, its certificate
+checks and its telemetry are how a `sql.connect` or a `sql` span does its work, and that span's time: a call each would
+bury the statements under them, and count Snowflake as a service the app calls. 5.x makes them in its Rust core, out
+of Python's sight. Before 5.0 its own copy of requests and urllib3 makes them, which isn't wrapped, and aiohttp for
+asyncio, whose calls from the connector are left out. The app's own calls, made while a statement runs, are recorded.
 
 A call carries the W3C trace context (`traceparent`) unless the request has its own: the app it reaches, traced by
 tracepanel or OpenTelemetry, names this call as its parent, and the agent links the two traces (tracepanel.core.w3c).
 A trace profiled because its request asked (the X-Tracepanel-Profile header, the panel's cookie, a task's carried
 flag) asks the same of the app it calls: the call carries `X-Tracepanel-Profile` with what it asked ("1", or "memory"),
 unless the request has its own, so a profile asked for in the browser follows the whole chain of calls. A trace the
-`profile` setting profiles asks nothing of the apps it calls: their own settings decide. Snowflake's own copy of
-urllib3 only ever reaches Snowflake: its calls carry a traceparent, never the profile request.
+`profile` setting profiles asks nothing of the apps it calls: their own settings decide. A call left out carries
+neither: Snowflake's calls carry no traceparent, which would name a span no trace has, to a service that reads none.
 """
 
 import importlib
@@ -33,7 +36,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from tracepanel.core import profile, w3c
 from tracepanel.core.callers import Callers
-from tracepanel.core.context import Held, adopt_held, blocking_attrs, current_trace, hold, now_us, record_span, release
+from tracepanel.core.context import blocking_attrs, current_trace, now_us, record_span
 from tracepanel.core.frames import origin
 from tracepanel.core.ids import new_id
 from tracepanel.core.imports import when_imported
@@ -46,7 +49,8 @@ T = TypeVar("T")
 CALLERS = Callers(
     own=__name__,
     libraries=("urllib3", "requests", "botocore", "boto3", "s3transfer", "httpx", "httpx2", "httpcore", "aiohttp"),
-    layers=("tracepanel.", "opentelemetry."),
+    # Snowflake's connector: the HTTP calls it makes are its statements' and its connections' work (above).
+    layers=("tracepanel.", "opentelemetry.", "snowflake.connector."),
 )
 # A status from this one on makes the call an error, as OpenTelemetry has it for a client.
 _ERROR_STATUS = 400
@@ -91,13 +95,8 @@ def _finish(  # noqa: PLR0913
     status_code: int | None,
     failed: str | None,
     blocking: Attrs | None = None,
-    held: Held | None = None,
 ) -> None:
-    """Record the call as span `span`: `started` is its start (now_us) and perf_counter_ns() then.
-
-    `held`: what the call recorded while it ran (the certificate checks Snowflake's connector makes for a request),
-    its children.
-    """
+    """Record the call as span `span`: `started` is its start (now_us) and perf_counter_ns() then."""
     start, counter = started
     attrs = {**_attrs(method, url), **(blocking or {})}
     attrs["w3c.span_id"] = w3c.span_id(span)
@@ -107,8 +106,7 @@ def _finish(  # noqa: PLR0913
         attrs["error.type"] = failed
     attrs["code.origin"] = origin()
     error = failed is not None or (status_code is not None and status_code >= _ERROR_STATUS)
-    inside = release(held)
-    recorded = record_span(
+    record_span(
         "http.client",
         _name(method, url),
         start=start,
@@ -117,18 +115,17 @@ def _finish(  # noqa: PLR0913
         status="error" if error else "ok",
         span_id=span,
     )
-    adopt_held(held, inside, recorded)
 
 
 # What a call carries to the app it reaches, by header: its `traceparent`, and the profile its trace asked for.
 Outgoing = dict[str, str]
 
 
-def outgoing(trace: Trace, span: str, *, ours: bool = True) -> Outgoing:
-    """The headers a call made in `trace` as span `span` adds; the profile request only where it may be ours."""
+def outgoing(trace: Trace, span: str) -> Outgoing:
+    """The headers a call made in `trace` as span `span` adds."""
     added = {w3c.HEADER: w3c.outgoing(trace, span)}
     recording = profile.current.get()
-    if ours and recording is not None and recording.asked is not None:
+    if recording is not None and recording.asked is not None:
         added[profile.HEADER] = recording.asked
     return added
 
@@ -148,13 +145,8 @@ def call(
     method: str,
     url: str,
     status: Callable[[T], int | None],
-    *,
-    ours: bool = True,
 ) -> T:
-    """Make the call, recorded when the app made it inside a trace. `send` takes the headers to add (or none).
-
-    `ours`: whether the call may reach one of the app's own services, which a profile request goes to.
-    """
+    """Make the call, recorded when the app made it inside a trace. `send` takes the headers to add (or none)."""
     trace = current_trace()
     if trace is None or covered.get() or not CALLERS.app_called(sys._getframe(1)):  # noqa: SLF001 (who called)
         return send(None)
@@ -162,24 +154,12 @@ def call(
     start, counter = now_us(), time.perf_counter_ns()
     # A synchronous client on an event loop's thread blocks it until the answer comes.
     blocking = blocking_attrs()
-    held = hold()
     try:
-        response = send(outgoing(trace, span, ours=ours))
+        response = send(outgoing(trace, span))
     except Exception as exc:
-        _finish(
-            method,
-            url,
-            (start, counter),
-            span,
-            status_code=None,
-            failed=type(exc).__name__,
-            blocking=blocking,
-            held=held,
-        )
+        _finish(method, url, (start, counter), span, status_code=None, failed=type(exc).__name__, blocking=blocking)
         raise
-    _finish(
-        method, url, (start, counter), span, status_code=status(response), failed=None, blocking=blocking, held=held
-    )
+    _finish(method, url, (start, counter), span, status_code=status(response), failed=None, blocking=blocking)
     return response
 
 
@@ -191,20 +171,19 @@ async def call_async(
         return await send(None)
     span = new_id()
     start, counter = now_us(), time.perf_counter_ns()
-    held = hold()
     try:
         response = await send(outgoing(trace, span))
     except Exception as exc:
-        _finish(method, url, (start, counter), span, status_code=None, failed=type(exc).__name__, held=held)
+        _finish(method, url, (start, counter), span, status_code=None, failed=type(exc).__name__)
         raise
-    _finish(method, url, (start, counter), span, status_code=status(response), failed=None, held=held)
+    _finish(method, url, (start, counter), span, status_code=status(response), failed=None)
     return response
 
 
 # ---------- urllib3 ----------
 
 
-def _urllib3(urllib3: ModuleType, *, ours: bool = True) -> None:
+def _urllib3(urllib3: ModuleType) -> None:
     pool = urllib3.connectionpool.HTTPConnectionPool
     urlopen = pool.urlopen
 
@@ -223,7 +202,7 @@ def _urllib3(urllib3: ModuleType, *, ours: bool = True) -> None:
             headers = with_outgoing(given if given is not None else self.headers, added)
             return urlopen(self, method, url, *args, **{**kwargs, "headers": headers})
 
-        return call(send, method, full, lambda r: r.status, ours=ours)
+        return call(send, method, full, lambda r: r.status)
 
     patch(pool, "urlopen", traced)
 
@@ -285,21 +264,15 @@ def _aiohttp(aiohttp: ModuleType) -> None:
     patch(session, "_request", traced)
 
 
-def _urllib3_imported(urllib3: ModuleType, *, ours: bool = True) -> None:
+def _urllib3_imported(urllib3: ModuleType) -> None:
     importlib.import_module(f"{urllib3.__name__}.connectionpool")
-    _urllib3(urllib3, ours=ours)
-
-
-def _snowflake_urllib3_imported(urllib3: ModuleType) -> None:
-    _urllib3_imported(urllib3, ours=False)
+    _urllib3(urllib3)
 
 
 def install() -> None:
     """Wrap each HTTP client once the app imports it (requests through urllib3)."""
+    # Not Snowflake's connector's own copy (snowflake.connector.vendored, before 5.0): its calls are left out (above).
     when_imported("urllib3", _urllib3_imported)
-    # Snowflake's connector (before 5.0) has its own copy of requests and urllib3: its login, queries and certificate
-    # checks go through that one.
-    when_imported("snowflake.connector.vendored.urllib3", _snowflake_urllib3_imported)
     for name in ("httpx", "httpx2"):
         when_imported(name, _httpx)
     when_imported("aiohttp", _aiohttp)
