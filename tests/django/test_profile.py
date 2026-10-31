@@ -42,6 +42,19 @@ def test_a_request_asking_by_header_is_profiled(
     validator.validate(trace.to_dict())
     assert "Set-Cookie" not in response.headers
 
+    assert trace.spans[0].attrs["profile.reason"] == "header"
+
+
+def test_a_call_from_a_profiled_trace_is_profiled_for_its_parent(client: Client, traces: list[Trace]) -> None:
+    # Another app's profiled trace calls this one: its call carries the header and its traceparent.
+    traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+
+    client.get("/busy/", headers={"X-Tracepanel-Profile": "1", "traceparent": traceparent})
+    (trace,) = traces
+
+    assert "spin" in in_app(trace)
+    assert trace.spans[0].attrs["profile.reason"] == "parent"
+
 
 def test_a_sync_view_under_an_asgi_server_is_profiled_in_the_thread_that_runs_it(traces: list[Trace]) -> None:
     # As uvicorn serves it: the event loop in this thread, the view in sync_to_async's worker thread.
@@ -66,8 +79,10 @@ def test_the_panels_cookie_profiles_each_request_while_it_is_set(client: Client,
     assert "spin" in in_app(first)
     assert "spin" in in_app(second)
     assert "tracepanel_profile" not in response.cookies
+    assert (first.spans[0].attrs["profile.reason"], second.spans[0].attrs["profile.reason"]) == ("cookie", "cookie")
 
     assert after.profile is None
+    assert "profile.reason" not in after.spans[0].attrs
 
 
 def test_a_request_asking_for_memory_has_it(client: Client, traces: list[Trace]) -> None:
@@ -94,15 +109,18 @@ def test_a_request_is_not_profiled_unless_asked(client: Client, traces: list[Tra
 
     assert trace.profile is None
     assert "profile" not in trace.to_dict()
+    assert "profile.reason" not in trace.spans[0].attrs
 
 
 def test_the_setting_profiles_every_request(client: Client, traces: list[Trace], settings: Settings) -> None:
     settings.TRACEPANEL = {"profile": True}
 
-    client.get("/busy/")
+    client.get("/busy/", headers={"X-Tracepanel-Profile": "1"})
     (trace,) = traces
 
     assert "spin" in in_app(trace)
+    # Every request is profiled: the setting is why, not what this one asked.
+    assert trace.spans[0].attrs["profile.reason"] == "setting"
 
 
 def test_with_profiling_off_nothing_is_profiled(client: Client, traces: list[Trace], settings: Settings) -> None:

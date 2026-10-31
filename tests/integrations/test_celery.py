@@ -776,7 +776,7 @@ def interrupt(where: str, monkeypatch: pytest.MonkeyPatch) -> None:
     if where == "before its trace":
         monkeypatch.setattr(celery_integration, "_scheduling", cut_short_once(celery_integration._scheduling))  # noqa: SLF001
     elif where == "as its trace begins":
-        monkeypatch.setattr(profile, "wanted", cut_short_once(profile.wanted))
+        monkeypatch.setattr(profile, "reason", cut_short_once(profile.reason))
     elif where == "once its trace began":
         monkeypatch.setattr(celery_integration, "TaskRun", cut_short_once(TaskRun))
     else:
@@ -1093,6 +1093,11 @@ def test_a_task_a_profiled_request_queues_is_profiled_too(traces: list[Trace]) -
     run_all(asked, plain)
 
     assert profiled(traces) == {"('asked',)": True, "('plain',)": False}
+
+    reasons = {
+        str(trace.attrs["task.args"]): trace.spans[0].attrs.get("profile.reason") for trace in by_kind(traces, "task")
+    }
+    assert reasons == {"('asked',)": "parent", "('plain',)": None}
 
 
 def test_a_task_a_request_asking_for_memory_queues_counts_memory_too(traces: list[Trace]) -> None:

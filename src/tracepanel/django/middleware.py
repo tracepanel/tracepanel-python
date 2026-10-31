@@ -164,9 +164,10 @@ def _session(request: HttpRequest) -> Attrs:
     return details.session(loaded.items()) if isinstance(loaded, dict) else {}
 
 
-def _profiled(request: HttpRequest) -> profile.Asked | None:
+def _profiled(request: HttpRequest) -> profile.Ask | None:
     """What the request asks for, by header or by the cookie a browser sends: the profile, with its memory or not."""
-    return profile.requested(request.headers.get(profile.HEADER), request.headers.get("cookie"))
+    headers = request.headers
+    return profile.requested(headers.get(profile.HEADER), headers.get("cookie"), headers.get(w3c.HEADER))
 
 
 class TracepanelMiddleware:

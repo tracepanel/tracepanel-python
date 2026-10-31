@@ -110,7 +110,7 @@ class TracepanelMiddleware:
             **w3c.incoming(headers.get(w3c.HEADER)),
         }
         reader = _capture(environ, headers, attrs) if config.capture_request else None
-        asked = profile.requested(headers.get(profile.HEADER), headers.get("cookie"))
+        asked = profile.requested(headers.get(profile.HEADER), headers.get("cookie"), headers.get(w3c.HEADER))
         script: widget.Stream | None = None
         with start_trace("http", f"{method} {path}", attrs, profile=asked) as trace:
             try:

@@ -182,6 +182,8 @@ def test_a_sync_endpoint_is_profiled_in_the_thread_that_runs_it(
     # The thread the endpoint runs in, not the event loop's, which waits in its selector meanwhile.
     assert share_meanwhile(trace, "spin") == 1
 
+    assert trace.spans[0].attrs["profile.reason"] == "header"
+
 
 def test_unhandled_error(client: TestClient, traces: list[Trace]) -> None:
     response = client.get("/boom")

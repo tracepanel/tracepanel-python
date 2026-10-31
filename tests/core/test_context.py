@@ -19,7 +19,7 @@ class Stopped(BaseException):
     """What a signal handler or another thread raises in the code it stops: anywhere, a time limit say."""
 
 
-def stopped(*, asked: bool) -> bool:
+def stopped(*, asked: object) -> str:
     del asked
     raise Stopped
 
@@ -28,7 +28,7 @@ def test_a_trace_stopped_as_it_begins_leaves_the_context_as_it_was(monkeypatch: 
     before = (current_trace(), current_span(), profile.current.get())
     with start_trace("command", "outer") as outer:
         # Profiling is decided once the trace is current: stopped there, it was current already.
-        monkeypatch.setattr(profile, "wanted", stopped)
+        monkeypatch.setattr(profile, "reason", stopped)
         with pytest.raises(Stopped), start_trace("task", "inner"):
             pass
 

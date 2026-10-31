@@ -158,6 +158,10 @@ queues and the calls it makes to your other services are profiled too.
 `profile = true` profiles every trace, and `profile_enabled = false` turns
 profiling off.
 
+A profiled trace's root span says why in `profile.reason`: `setting` (the
+`profile` setting), `header`, `cookie` (the panel's button), or `parent` (a
+profiled trace queued the task or made the call).
+
 A profile counts memory too when asked: `X-Tracepanel-Profile: memory`, the
 button's memory mode, or `profile_memory = true`. It slows down the whole
 process while it runs, so leave it off when you measure time. The

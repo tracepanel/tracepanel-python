@@ -101,12 +101,12 @@ def test_a_profiled_trace_no_sample_saw_still_has_a_profile(validator: Draft2020
 
 
 def test_a_request_asks_by_header_or_by_the_panels_cookie() -> None:
-    assert profile.requested("1", None) == "1"
-    assert profile.requested(" memory ", None) == "memory"
-    assert profile.requested(None, "theme=dark; tracepanel_profile=1") == "1"
-    assert profile.requested(None, "tracepanel_profile=memory") == "memory"
-    assert profile.requested("1", "tracepanel_profile=memory") == "1"
-    assert profile.requested("yes", "tracepanel_profile=memory") == "memory"
+    assert profile.requested("1", None) == profile.Ask("1", "header")
+    assert profile.requested(" memory ", None) == profile.Ask("memory", "header")
+    assert profile.requested(None, "theme=dark; tracepanel_profile=1") == profile.Ask("1", "cookie")
+    assert profile.requested(None, "tracepanel_profile=memory") == profile.Ask("memory", "cookie")
+    assert profile.requested("1", "tracepanel_profile=memory") == profile.Ask("1", "header")
+    assert profile.requested("yes", "tracepanel_profile=memory") == profile.Ask("memory", "cookie")
     assert profile.by_cookie("tracepanel_profile=1") == "1"
 
     assert profile.requested(None, None) is None
@@ -114,6 +114,17 @@ def test_a_request_asks_by_header_or_by_the_panels_cookie() -> None:
     assert profile.requested("Memory", "tracepanel_profile=memory,1") is None
     assert profile.requested("true", "tracepanel_profile=2") is None
     assert profile.by_cookie("not_tracepanel_profile=1; =broken") is None
+
+
+def test_the_header_on_a_call_from_a_profiled_trace_is_its_parents_ask() -> None:
+    # A profiled trace's call carries its traceparent along (http_clients): an invalid one is no caller.
+    traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+
+    assert profile.requested("1", None, traceparent) == profile.Ask("1", "parent")
+    assert profile.requested("memory", None, traceparent) == profile.Ask("memory", "parent")
+
+    assert profile.requested("1", None, "00-broken") == profile.Ask("1", "header")
+    assert profile.requested(None, "tracepanel_profile=1", traceparent) == profile.Ask("1", "cookie")
 
 
 def test_profiling_follows_the_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -127,6 +138,51 @@ def test_profiling_follows_the_settings(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("TRACEPANEL_PROFILE_ENABLED", "0")
     conf.reset()
     assert not profile.wanted(asked=True)
+
+
+def test_the_reason_a_trace_is_profiled(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert profile.reason(asked=profile.Ask("1", "header")) == "header"
+    assert profile.reason(asked=profile.Ask("memory", "cookie")) == "cookie"
+    assert profile.reason(asked=profile.asked_by_parent("1")) == "parent"
+    assert profile.reason(asked=True) == "code"
+    assert profile.reason(asked="memory") == "code"
+    assert profile.reason(asked=None) is None
+
+    # The setting profiles every trace, whatever it asked.
+    monkeypatch.setenv("TRACEPANEL_PROFILE", "1")
+    conf.reset()
+
+    assert profile.reason(asked=None) == "setting"
+    assert profile.reason(asked=profile.Ask("1", "header")) == "setting"
+
+    monkeypatch.setenv("TRACEPANEL_PROFILE_ENABLED", "0")
+    conf.reset()
+
+    assert profile.reason(asked=profile.Ask("1", "header")) is None
+
+
+def test_a_profiled_traces_root_span_says_why(monkeypatch: pytest.MonkeyPatch) -> None:
+    with start_trace("http", "GET /", profile=profile.Ask("1", "cookie")) as by_cookie:
+        pass
+    with start_trace("task", "build_report", profile=profile.asked_by_parent("memory")) as by_parent:
+        pass
+    with start_trace("job", "rebuild", profile=True) as by_code:
+        pass
+    with start_trace("http", "GET /") as plain:
+        pass
+
+    assert by_cookie.spans[0].attrs == {"profile.reason": "cookie"}
+    assert by_parent.spans[0].attrs == {"profile.reason": "parent"}
+    assert by_code.spans[0].attrs == {"profile.reason": "code"}
+    assert plain.spans[0].attrs == {}
+
+    monkeypatch.setenv("TRACEPANEL_PROFILE", "1")
+    conf.reset()
+
+    with start_trace("http", "GET /", profile=profile.Ask("1", "header")) as by_setting:
+        pass
+
+    assert by_setting.spans[0].attrs == {"profile.reason": "setting"}
 
 
 def carried() -> dict[str, object]:
@@ -172,10 +228,10 @@ def test_nothing_is_handed_on_while_profiling_is_off(monkeypatch: pytest.MonkeyP
 
 
 def test_a_run_asks_when_its_work_carries_the_flag_unless_it_runs_inside_a_profiled_trace() -> None:
-    assert profile.asked_by_parent("1") == "1"
-    assert profile.asked_by_parent(b"1") == "1"
-    assert profile.asked_by_parent("memory") == "memory"
-    assert profile.asked_by_parent(b"memory") == "memory"
+    assert profile.asked_by_parent("1") == profile.Ask("1", "parent")
+    assert profile.asked_by_parent(b"1") == profile.Ask("1", "parent")
+    assert profile.asked_by_parent("memory") == profile.Ask("memory", "parent")
+    assert profile.asked_by_parent(b"memory") == profile.Ask("memory", "parent")
 
     assert profile.asked_by_parent(None) is None
     assert profile.asked_by_parent("0") is None

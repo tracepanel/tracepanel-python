@@ -101,7 +101,13 @@ class TraceBlock:
     """
 
     def __init__(
-        self, kind: str, name: str, attrs: Attrs | None, *, root_kind: str | None, profile: bool | str | None
+        self,
+        kind: str,
+        name: str,
+        attrs: Attrs | None,
+        *,
+        root_kind: str | None,
+        profile: bool | str | profiling.Ask | None,
     ) -> None:
         self.kind, self.name, self.attrs, self.root_kind, self.profile = kind, name, attrs, root_kind, profile
         self.trace: Trace | None = None
@@ -123,9 +129,11 @@ class TraceBlock:
             profiling.LIVE.add(self)
             if profiling.SAMPLER.running:
                 profiling.SAMPLER.overlap()
-            self._recording = (
-                profiling.SAMPLER.start(asked=self.profile) if profiling.wanted(asked=self.profile) else None
-            )
+            # Why it is profiled, on its root span: the console says it with the profile.
+            why = profiling.reason(asked=self.profile)
+            self._recording = profiling.SAMPLER.start(asked=self.profile) if why is not None else None
+            if why is not None:
+                root.attrs["profile.reason"] = why
             profiling.current.set(self._recording)
         except BaseException:
             saved.put_back()
@@ -175,13 +183,13 @@ def start_trace(
     attrs: Attrs | None = None,
     *,
     root_kind: str | None = None,
-    profile: bool | str | None = False,
+    profile: bool | str | profiling.Ask | None = False,
 ) -> TraceBlock:
     """Run the block as a new trace whose root span has the same name (and kind, unless `root_kind` says).
 
-    `profile`: what the request asked for (profile.requested: "1", or "memory" with its memory; True is "1"), or what
-    the work it runs carries from a profiled trace's request (profile.asked_by_parent); the setting profiles every
-    trace anyway.
+    `profile`: what the request asked for (profile.requested: "1", or "memory" with its memory), or what the work it
+    runs carries from a profiled trace's request (profile.asked_by_parent); True or "1" is code that profiles it. The
+    setting profiles every trace anyway. A profiled trace's root span says why in `profile.reason`.
     """
     return TraceBlock(kind, name, attrs, root_kind=root_kind, profile=profile)
 

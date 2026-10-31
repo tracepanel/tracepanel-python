@@ -201,7 +201,7 @@ class TracepanelMiddleware:
         reader = _BodyReader(receive) if config.capture_request else None
         if reader is not None:
             attrs.update(_request_details(scope))
-        asked = profile.requested(headers.get(profile.HEADER), headers.get("cookie"))
+        asked = profile.requested(headers.get(profile.HEADER), headers.get("cookie"), headers.get(w3c.HEADER))
         with start_trace("http", f"{method} {path}", attrs, profile=asked) as trace:
             responder = _Responder(scope, send, trace, config)
             try:
