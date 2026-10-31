@@ -11,6 +11,11 @@
   its block as a span. devtools prints and returns as before.
   `devtools_enabled = false` (`TRACEPANEL_DEVTOOLS_ENABLED=0`) turns it
   off.
+- The slow query and long transaction limits per database, by its
+  `db.system`: `TRACEPANEL_SLOW_SQL_MS=100,snowflake=3000`, and
+  `slow_sql_ms_by_db` and `long_transaction_ms_by_db` as mappings in
+  `pyproject.toml`, `tracepanel.toml` or Django's settings. They win over
+  the limit for every database and the agent's own for a warehouse.
 
 ## 0.9.0 (2026-10-30)
 

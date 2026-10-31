@@ -1,6 +1,6 @@
 import os
 import threading
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from dataclasses import fields
 from pathlib import Path
 
@@ -105,6 +105,74 @@ def test_bad_variables_are_explained(
         conf.get_config()
 
 
+def test_limits_per_database_in_a_variable(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # As the Go SDK's: the limit for every database, then one per database by its db.system.
+    monkeypatch.setenv("TRACEPANEL_SLOW_SQL_MS", "100, Snowflake=3000,bigquery=5000")
+    monkeypatch.setenv("TRACEPANEL_LONG_TRANSACTION_MS", "snowflake=20000")
+
+    explained = {name: (value, origin) for name, value, origin in conf.explain()}
+
+    assert explained["slow_sql_ms"] == (100, "env TRACEPANEL_SLOW_SQL_MS")
+    assert explained["slow_sql_ms_by_db"] == ({"snowflake": 3000, "bigquery": 5000}, "env TRACEPANEL_SLOW_SQL_MS")
+
+    # Without the limit for every database, the default stays.
+    assert explained["long_transaction_ms"] == (500, "default")
+    assert explained["long_transaction_ms_by_db"] == ({"snowflake": 20000}, "env TRACEPANEL_LONG_TRANSACTION_MS")
+
+
+def test_limits_per_database_in_the_file(project: Path) -> None:
+    (project / "pyproject.toml").write_text(
+        "[tool.tracepanel]\nslow_sql_ms = 50\n"
+        "[tool.tracepanel.slow_sql_ms_by_db]\nSnowflake = 3000\n"
+        "[tool.tracepanel.long_transaction_ms_by_db]\nsnowflake = 20000\n"
+    )
+
+    config = conf.get_config()
+
+    assert (config.slow_sql_ms, config.slow_sql_ms_by_db, config.long_transaction_ms_by_db) == (
+        50,
+        {"snowflake": 3000},
+        {"snowflake": 20000},
+    )
+
+
+def test_limits_per_database_from_the_framework_and_configure(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    conf.use_source(lambda: {"root": str(project), "slow_sql_ms_by_db": {"snowflake": 3000}})
+
+    assert conf.get_config().slow_sql_ms_by_db == {"snowflake": 3000}
+
+    monkeypatch.setattr(conf, "_configured", {})
+    conf.configure(slow_sql_ms_by_db={"bigquery": 4000})
+
+    assert conf.get_config().slow_sql_ms_by_db == {"bigquery": 4000}
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("100,200", "TRACEPANEL_SLOW_SQL_MS: expected a whole number, then database=number pairs, got '100,200'"),
+        ("100,snowflake=slow", r"TRACEPANEL_SLOW_SQL_MS: expected database=number pairs \(snowflake=3000\)"),
+        ("=3000", r"TRACEPANEL_SLOW_SQL_MS: expected database=number pairs \(snowflake=3000\)"),
+        ("snowflake=-1", r"TRACEPANEL_SLOW_SQL_MS: expected database=number pairs \(snowflake=3000\)"),
+        ("", "TRACEPANEL_SLOW_SQL_MS: expected a whole number, got ''"),
+    ],
+)
+def test_bad_limits_per_database_are_explained(
+    project: Path, monkeypatch: pytest.MonkeyPatch, value: str, message: str
+) -> None:
+    monkeypatch.setenv("TRACEPANEL_SLOW_SQL_MS", value)
+
+    with pytest.raises(ConfigError, match=message):
+        conf.get_config()
+
+
+def test_a_bad_limit_per_database_in_the_file_names_the_file(project: Path) -> None:
+    (project / "tracepanel.toml").write_text('[slow_sql_ms_by_db]\nsnowflake = "slow"\n')
+
+    with pytest.raises(ConfigError, match=r"tracepanel.toml: slow_sql_ms_by_db must be a mapping of database"):
+        conf.get_config()
+
+
 def test_bad_file_values_name_the_file(project: Path) -> None:
     (project / "tracepanel.toml").write_text('slow_sql_ms = "fast"\nwidgets = true\n')
 
@@ -131,9 +199,14 @@ def test_integrations_can_be_turned_off(project: Path, monkeypatch: pytest.Monke
 def test_settings_are_the_config_fields() -> None:
     # install(app, **settings) and configure() take these: a field added to Config is a keyword argument too.
     plain = {f.name: f.type for f in fields(conf.Config) if f.type in {bool, int, str}}
-    lists = {f.name for f in fields(conf.Config)} - plain.keys()
+    by_db = {f.name for f in fields(conf.Config) if f.type == dict[str, int]}
+    lists = {f.name for f in fields(conf.Config)} - plain.keys() - by_db
 
-    assert {name: kind for name, kind in conf.Settings.__annotations__.items() if name not in lists} == plain
+    assert {name: kind for name, kind in conf.Settings.__annotations__.items() if name not in lists | by_db} == plain
+    assert {name: conf.Settings.__annotations__[name] for name in by_db} == {
+        "slow_sql_ms_by_db": Mapping[str, int],
+        "long_transaction_ms_by_db": Mapping[str, int],
+    }
     assert {name: conf.Settings.__annotations__[name] for name in lists} == dict.fromkeys(
         lists, list[str] | tuple[str, ...]
     )

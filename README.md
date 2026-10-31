@@ -133,6 +133,22 @@ ignore_paths = ["/health*", "/static/*"]
 
 `tracepanel config` prints each setting, its value and where it comes from.
 
+The slow query and long transaction limits can be set per database too, by
+its kind (`db.system`): `TRACEPANEL_SLOW_SQL_MS=100,snowflake=3000` holds
+every database to 100 ms but Snowflake, to 3 s. In a file or in Django's
+settings it is a mapping of its own:
+
+```toml
+[tool.tracepanel.slow_sql_ms_by_db]
+snowflake = 3000
+
+[tool.tracepanel.long_transaction_ms_by_db]
+snowflake = 20000
+```
+
+Without one, an analytical warehouse (Snowflake, BigQuery, Databricks,
+Redshift, ClickHouse) is held to 2 s per query and 10 s per transaction.
+
 ## Profile a request
 
 A profile shows where a request's time went in code, as a flame graph in the
