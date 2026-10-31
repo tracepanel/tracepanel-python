@@ -15,7 +15,7 @@ import fnmatch
 import os
 import tomllib
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import TypedDict, Unpack
 
@@ -57,10 +57,15 @@ class Config:
     n_plus_one_min_ms: int = 5
     # Queries slower than this are reported as slow SQL.
     slow_sql_ms: int = 100
+    # slow_sql_ms for one database, by its db.system (`{snowflake = 3000}`): it wins over slow_sql_ms and the agent's
+    # own limit for an analytical warehouse (2 s). TRACEPANEL_SLOW_SQL_MS=100,snowflake=3000 sets both.
+    slow_sql_ms_by_db: dict[str, int] = field(default_factory=dict)
     # Outgoing HTTP calls slower than this are reported as slow.
     slow_http_ms: int = 500
     # Outer transactions (atomic blocks) longer than this are reported: they hold their locks until COMMIT.
     long_transaction_ms: int = 500
+    # long_transaction_ms for one database, as slow_sql_ms_by_db (the agent holds a warehouse to 10 s otherwise).
+    long_transaction_ms_by_db: dict[str, int] = field(default_factory=dict)
     # Keep repr() of local variables in project frames of errors (development only, masked).
     capture_locals: bool = True
     # Keep the text and HTML of sent emails (development only; they never leave this machine).
@@ -192,8 +197,10 @@ class Settings(TypedDict, total=False):
     n_plus_one_threshold: int
     n_plus_one_min_ms: int
     slow_sql_ms: int
+    slow_sql_ms_by_db: Mapping[str, int]
     slow_http_ms: int
     long_transaction_ms: int
+    long_transaction_ms_by_db: Mapping[str, int]
     capture_locals: bool
     capture_mail_body: bool
     capture_sql_params: bool
@@ -334,27 +341,78 @@ def _field_kind(name: str) -> object:
     return next(f.type for f in fields(Config) if f.name == name)
 
 
-def _from_env(name: str, raw: str) -> object:
-    """A TRACEPANEL_<NAME> value as its field's type; lists are comma-separated."""
+# The limits that may be set per database too, in their own variable: `TRACEPANEL_SLOW_SQL_MS=100,snowflake=3000`.
+BY_DB = ("slow_sql_ms", "long_transaction_ms")
+
+
+def _from_env(name: str, raw: str) -> dict[str, object]:
+    """A TRACEPANEL_<NAME> value as its field's type, by field; lists are comma-separated.
+
+    A limit per database is `system=ms` (`snowflake=3000,bigquery=5000`); TRACEPANEL_SLOW_SQL_MS and
+    TRACEPANEL_LONG_TRANSACTION_MS take them after the limit for every database, or without it.
+    """
     kind = _field_kind(name)
     where = f"TRACEPANEL_{name.upper()}"
     if kind is bool:
-        lowered = raw.strip().lower()
-        if lowered in TRUE:
-            return True
-        if lowered in FALSE:
-            return False
+        return {name: _bool(raw, where)}
+    if kind is int and name in BY_DB:
+        return _limits_from_env(name, raw, where)
+    if kind is int:
+        return {name: _whole(raw, where, raw)}
+    if kind is str:
+        return {name: raw}
+    if kind == dict[str, int]:
+        return {name: _by_db(raw, where)}
+    return {name: tuple(item.strip() for item in raw.split(",") if item.strip())}
+
+
+def _bool(raw: str, where: str) -> bool:
+    lowered = raw.strip().lower()
+    if lowered not in TRUE + FALSE:
         msg = f"{where}: expected one of {', '.join(TRUE + FALSE)}, got {raw!r}"
         raise ConfigError(msg)
-    if kind is int:
+    return lowered in TRUE
+
+
+def _limits_from_env(name: str, raw: str, where: str) -> dict[str, object]:
+    """`100,snowflake=3000`: the limit for every database, then one per database (either may be left out)."""
+    entries = [entry.strip() for entry in raw.split(",") if entry.strip()]
+    plain = [entry for entry in entries if "=" not in entry]
+    pairs = [entry for entry in entries if "=" in entry]
+    if len(plain) > 1:
+        msg = f"{where}: expected a whole number, then database=number pairs, got {raw!r}"
+        raise ConfigError(msg)
+    values: dict[str, object] = {name: _whole(plain[0] if plain else raw, where, raw)} if plain or not pairs else {}
+    if pairs:
+        values[f"{name}_by_db"] = _by_db(",".join(pairs), where)
+    return values
+
+
+def _whole(text: str, where: str, raw: str) -> int:
+    try:
+        return int(text)
+    except ValueError:
+        msg = f"{where}: expected a whole number, got {raw!r}"
+        raise ConfigError(msg) from None
+
+
+def _by_db(raw: str, where: str) -> dict[str, int]:
+    """`snowflake=3000,bigquery=5000` as {system: ms}, the system lowercased."""
+    by_db: dict[str, int] = {}
+    for entry in (item.strip() for item in raw.split(",")):
+        if not entry:
+            continue
+        system, _, value = entry.partition("=")
+        system = system.strip().lower()
         try:
-            return int(raw)
+            number = int(value)
         except ValueError:
-            msg = f"{where}: expected a whole number, got {raw!r}"
-            raise ConfigError(msg) from None
-    if kind is str:
-        return raw
-    return tuple(item.strip() for item in raw.split(",") if item.strip())
+            number = -1
+        if not system or number < 0:
+            msg = f"{where}: expected database=number pairs (snowflake=3000), got {raw!r}"
+            raise ConfigError(msg)
+        by_db[system] = number
+    return by_db
 
 
 def _checked(name: str, value: object, origin: str) -> object:
@@ -364,6 +422,14 @@ def _checked(name: str, value: object, origin: str) -> object:
         return value
     if kind in {bool, str} and isinstance(value, kind):  # type: ignore[arg-type]
         return value
+    if kind == dict[str, int]:
+        if isinstance(value, Mapping) and all(
+            isinstance(k, str) and k and isinstance(v, int) and not isinstance(v, bool) and v >= 0
+            for k, v in value.items()
+        ):
+            return {k.lower(): v for k, v in value.items()}
+        msg = f"{origin}: {name} must be a mapping of database to whole number ({{snowflake = 3000}}), got {value!r}"
+        raise ConfigError(msg)
     if kind not in {bool, int, str} and isinstance(value, (list, tuple)) and all(isinstance(i, str) for i in value):
         return tuple(value)
     expected = {bool: "true or false", int: "a whole number", str: "a string"}.get(kind, "a list of strings")  # type: ignore[call-overload]
@@ -393,10 +459,13 @@ def _layers() -> list[tuple[str, dict[str, object]]]:
             msg = f"{origin}: unknown settings {', '.join(sorted(unknown))}"
             raise ConfigError(msg)
         checked.append((origin, {name: _checked(name, value, origin) for name, value in values.items()}))
+    # Sorted: TRACEPANEL_SLOW_SQL_MS_BY_DB, if set, wins over the limits per database in TRACEPANEL_SLOW_SQL_MS.
     env = {
-        name: os.environ[f"TRACEPANEL_{name.upper()}"] for name in names if f"TRACEPANEL_{name.upper()}" in os.environ
+        name: os.environ[f"TRACEPANEL_{name.upper()}"]
+        for name in sorted(names)
+        if f"TRACEPANEL_{name.upper()}" in os.environ
     }
-    checked += [(f"env TRACEPANEL_{name.upper()}", {name: _from_env(name, raw)}) for name, raw in env.items()]
+    checked += [(f"env TRACEPANEL_{name.upper()}", _from_env(name, raw)) for name, raw in env.items()]
     return checked
 
 

@@ -327,10 +327,27 @@ def console_offers() -> list[str]:
     return [name for name, check in CONSOLE.items() if check()]
 
 
+def thresholds(config: conf.Config) -> dict[str, object]:
+    """The limits the agent finds this project's issues with, as the hello sends them."""
+    limits: dict[str, object] = {
+        "n_plus_one": config.n_plus_one_threshold,
+        "n_plus_one_min_ms": config.n_plus_one_min_ms,
+        "slow_sql_ms": config.slow_sql_ms,
+        "slow_http_ms": config.slow_http_ms,
+        "long_transaction_ms": config.long_transaction_ms,
+    }
+    # The limits for one database, by its db.system: agents before 0.9.4 ignore them.
+    if config.slow_sql_ms_by_db:
+        limits["slow_sql_ms_by_db"] = dict(config.slow_sql_ms_by_db)
+    if config.long_transaction_ms_by_db:
+        limits["long_transaction_ms_by_db"] = dict(config.long_transaction_ms_by_db)
+    return limits
+
+
 def connect(  # noqa: PLR0913 (the hello's fields)
     addr: str,
     max_traces: int,
-    thresholds: dict[str, int] | None = None,
+    thresholds: dict[str, object] | None = None,
     can: list[str] | None = None,
     *,
     console: list[str] | None = None,
@@ -471,19 +488,13 @@ class AgentWriter(BatchWriter):
             self._retry_at = 0.0
         if self._sock is not None or time.monotonic() < self._retry_at:
             return
-        thresholds = {
-            "n_plus_one": self.config.n_plus_one_threshold,
-            "n_plus_one_min_ms": self.config.n_plus_one_min_ms,
-            "slow_sql_ms": self.config.slow_sql_ms,
-            "slow_http_ms": self.config.slow_http_ms,
-            "long_transaction_ms": self.config.long_transaction_ms,
-        }
+        limits = thresholds(self.config)
         can, console = capabilities(self.config), console_offers()
         app = appinfo.describe(self.config)
 
         def hello(addr: str) -> socket.socket | None:
             return connect(
-                addr, self.config.max_traces, thresholds, can, console=console, service=self.config.service, app=app
+                addr, self.config.max_traces, limits, can, console=console, service=self.config.service, app=app
             )
 
         addr = address(self.config)

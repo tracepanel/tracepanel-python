@@ -145,6 +145,8 @@ def show_config() -> None:
     for name, value, origin in rows:
         if isinstance(value, tuple):
             shown: object = ", ".join(value)
+        elif isinstance(value, dict):
+            shown = ", ".join(f"{system}={ms}" for system, ms in value.items())
         else:
             shown = str(value).lower() if isinstance(value, bool) else value
         sys.stdout.write(f"{name:<{width}}  {shown!s:<40}  {origin}\n")

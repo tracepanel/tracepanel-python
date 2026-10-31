@@ -169,7 +169,9 @@ def test_run_rejects_unknown_settings(tmp_path: Path) -> None:
 
 
 def test_config_shows_where_values_come_from(tmp_path: Path) -> None:
-    (tmp_path / "tracepanel.toml").write_text("slow_sql_ms = 250\n")
+    (tmp_path / "tracepanel.toml").write_text(
+        "slow_sql_ms = 250\n[slow_sql_ms_by_db]\nsnowflake = 3000\nbigquery = 5000\n"
+    )
 
     result = tracepanel(
         "config", cwd=tmp_path, env={"TRACEPANEL_CAPTURE_LOCALS": "0", "TRACEPANEL_CELERY_ENABLED": "0"}
@@ -179,6 +181,8 @@ def test_config_shows_where_values_come_from(tmp_path: Path) -> None:
     states = dict(line.strip().split("  ", 1) for line in integrations.splitlines())
 
     assert rows["slow_sql_ms"] == ["250", "tracepanel.toml"]
+    assert rows["slow_sql_ms_by_db"] == ["snowflake=3000,", "bigquery=5000", "tracepanel.toml"]
+    assert rows["long_transaction_ms_by_db"] == ["default"]
     assert rows["capture_locals"] == ["false", "env", "TRACEPANEL_CAPTURE_LOCALS"]
     assert rows["widget"] == ["true", "default"]
 

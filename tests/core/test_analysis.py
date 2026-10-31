@@ -1,4 +1,5 @@
 import re
+from collections.abc import Iterator
 
 import pytest
 from dirty_equals import IsStr
@@ -6,6 +7,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 
 from tests.agentstore import issues
+from tracepanel.core import conf
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Error, Span, Trace
 from tracepanel.core.sql import fingerprint, span_name, statement
@@ -211,6 +213,33 @@ def _sql(statement: str, params_hash: str, origin: str | None) -> Span:
 
 def _trace(*spans: Span) -> Trace:
     return Trace(id=new_id(), kind="http", name="GET /", start=0, spans=list(spans))
+
+
+@pytest.fixture
+def configured(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """configure() for one test: what it set is gone after it."""
+    monkeypatch.setattr(conf, "_configured", {})
+    yield
+    monkeypatch.undo()
+    conf.reset()
+
+
+def test_a_limit_per_database_holds_its_queries(configured: None) -> None:
+    query = _sql('SELECT * FROM "t"', "a", "app/views.py:3 in v")
+    query.duration = 300_000  # µs
+    query.attrs["db.system"] = "postgresql"
+    conf.configure(slow_sql_ms=100)
+
+    assert [i.kind for i in issues(_trace(query))] == ["slow-sql"]
+
+    # The agent holds PostgreSQL's queries to 1 s, the others still to 100 ms.
+    conf.configure(slow_sql_ms_by_db={"postgresql": 1000})
+
+    assert issues(_trace(query)) == []
+
+    query.attrs["db.system"] = "mysql"
+
+    assert [i.kind for i in issues(_trace(query))] == ["slow-sql"]
 
 
 def test_only_project_code_patterns_are_issues() -> None:

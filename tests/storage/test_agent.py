@@ -341,6 +341,41 @@ def test_the_hello_says_what_the_app_offers_the_console(tmp_path: Path, monkeypa
     )
 
 
+def test_the_hello_carries_the_limits_per_database(tmp_path: Path) -> None:
+    config = dataclasses.replace(
+        conf.get_config(),
+        slow_sql_ms=50,
+        slow_sql_ms_by_db={"snowflake": 3000, "postgresql": 20},
+        long_transaction_ms_by_db={"snowflake": 20000},
+    )
+
+    hello = _hello(tmp_path, config)
+
+    assert hello["thresholds"] == {
+        "n_plus_one": config.n_plus_one_threshold,
+        "n_plus_one_min_ms": config.n_plus_one_min_ms,
+        "slow_sql_ms": 50,
+        "slow_http_ms": config.slow_http_ms,
+        "long_transaction_ms": config.long_transaction_ms,
+        "slow_sql_ms_by_db": {"snowflake": 3000, "postgresql": 20},
+        "long_transaction_ms_by_db": {"snowflake": 20000},
+    }
+
+
+def test_without_limits_per_database_the_hello_has_none(tmp_path: Path) -> None:
+    config = dataclasses.replace(conf.get_config(), slow_sql_ms_by_db={}, long_transaction_ms_by_db={})
+
+    hello = _hello(tmp_path, config)
+
+    assert hello["thresholds"] == {
+        "n_plus_one": config.n_plus_one_threshold,
+        "n_plus_one_min_ms": config.n_plus_one_min_ms,
+        "slow_sql_ms": config.slow_sql_ms,
+        "slow_http_ms": config.slow_http_ms,
+        "long_transaction_ms": config.long_transaction_ms,
+    }
+
+
 def test_an_app_that_offers_nothing_says_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(agent, "CONSOLE", {})
     monkeypatch.setattr(agent, "SENDS", set())
