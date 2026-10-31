@@ -98,16 +98,26 @@ class Tracer:
         self._owned = False
         # Sampler ticks since the last trace whose memory is counted ended.
         self._idle = 0
+        # Traces in begin(), between starting tracemalloc and joining _live (their baseline snapshot takes a while):
+        # a sampler leaving meanwhile (idle()) must not stop tracemalloc under them.
+        self._beginning = 0
 
     def begin(self) -> Memory | None:
         """A trace's memory from now; tracemalloc starts if nothing traces yet. None if it couldn't trace."""
         with self._lock:
             self._idle = 0
+            self._beginning += 1
             if not tracemalloc.is_tracing():
                 tracemalloc.start(FRAMES)
                 self._owned = True
-        baseline = _snapshot()
+        try:
+            baseline = _snapshot()
+        except BaseException:
+            with self._lock:
+                self._beginning -= 1
+            raise
         with self._lock:
+            self._beginning -= 1
             if baseline is None or not tracemalloc.is_tracing():
                 return None
             level, peak = tracemalloc.get_traced_memory()
@@ -174,7 +184,7 @@ class Tracer:
     def idle(self) -> None:
         """No trace whose memory is counted runs: tracemalloc stops, if this package started it."""
         with self._lock:
-            if self._owned and not self._live:
+            if self._owned and not self._live and not self._beginning:
                 tracemalloc.stop()
                 self._owned = False
                 self._idle = 0

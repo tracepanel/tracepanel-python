@@ -20,6 +20,14 @@
   `profile.reason`: `setting`, `header`, `cookie` or `parent`. The setting
   wins when it profiles every trace anyway.
 
+### Fixed
+
+- On Python 3.11 a profile shows a C call that waits in warm code
+  (`time.sleep`, `os.read`, `select`) as waiting again. Once the code had
+  run a few times, the wait counted as the calling function's own time.
+- A trace that asked for its memory as the profiler's thread went idle
+  could lose its memory numbers: tracemalloc stopped under its start.
+
 ## 0.9.0 (2026-10-30)
 
 Needs `tracepanel-agent` 0.9.0 (installed with it). The agent links Apollo

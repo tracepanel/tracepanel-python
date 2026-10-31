@@ -16,6 +16,9 @@ from tracepanel.core.profile import MEMORY
 # A list of 5 million items: 40 MB of pointers.
 COUNT = 5_000_000
 SIZE = 8 * COUNT
+# A trace's numbers with the list in them: tracemalloc counts the whole process, and its other threads (the sampler,
+# pytest-xdist's) free a little of what they had before the trace meanwhile, far under a megabyte.
+HELD = SIZE - (1 << 20)
 
 
 @pytest.fixture(autouse=True)
@@ -73,8 +76,8 @@ def test_a_profiled_trace_has_its_peak_and_where_the_memory_went() -> None:
     line = hold.__code__.co_firstlineno
 
     assert memory_of(trace) == {
-        "peak": IsInt(ge=SIZE),
-        "net": IsInt(ge=SIZE),
+        "peak": IsInt(ge=HELD),
+        "net": IsInt(ge=HELD),
         "sites_at": "peak",
         "sites": IsList(length=(1, 50)),
         "shared": False,
@@ -99,7 +102,7 @@ def test_memory_freed_before_the_end_is_in_the_peak_not_the_net() -> None:
         busy(0.02)
 
     assert memory_of(trace) == {
-        "peak": IsInt(ge=SIZE),
+        "peak": IsInt(ge=HELD),
         "net": IsInt(lt=SIZE // 100),
         "sites_at": "peak",
         "sites": IsList(length=(1, 50)),
@@ -180,7 +183,7 @@ def test_the_setting_counts_every_profiled_traces_memory(monkeypatch: pytest.Mon
         hold()
     del numbers
 
-    assert memory_of(trace) == IsPartialDict({"peak": IsInt(ge=SIZE), "net": IsInt(ge=SIZE)})
+    assert memory_of(trace) == IsPartialDict({"peak": IsInt(ge=HELD), "net": IsInt(ge=HELD)})
 
     assert plain.profile is None
 
@@ -202,6 +205,32 @@ def test_tracemalloc_stops_while_only_time_is_profiled() -> None:
 
     assert started
     assert still
+    assert not tracemalloc.is_tracing()
+
+
+@pytest.mark.usefixtures("untraced")
+def test_a_sampler_leaving_while_a_trace_begins_leaves_its_tracemalloc_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A sampler thread idle long enough leaves (idle()) as a trace's memory begins: tracemalloc has started for that
+    # trace, which takes its baseline snapshot before it is counted as running.
+    tracer = memory.Tracer()
+    snapshot = memory._snapshot  # noqa: SLF001
+
+    def leaving_meanwhile() -> tracemalloc.Snapshot | None:
+        tracer.idle()
+        return snapshot()
+
+    monkeypatch.setattr(memory, "_snapshot", leaving_meanwhile)
+    counted = tracer.begin()
+    tracing = tracemalloc.is_tracing()
+    monkeypatch.undo()
+
+    assert counted is not None
+    assert tracing
+
+    # Ended, the trace leaves it to the next idle() to stop.
+    tracer.end(counted)
+    tracer.idle()
+
     assert not tracemalloc.is_tracing()
 
 
@@ -254,8 +283,8 @@ def test_an_app_tracing_memory_itself_is_left_as_it_was() -> None:
 
     # The trace's peak is the highest level the sampler saw.
     assert memory_of(trace) == {
-        "peak": IsInt(ge=SIZE),
-        "net": IsInt(ge=SIZE),
+        "peak": IsInt(ge=HELD),
+        "net": IsInt(ge=HELD),
         "sites_at": "peak",
         "sites": IsList(length=(1, 50)),
         "shared": False,

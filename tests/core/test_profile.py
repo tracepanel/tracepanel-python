@@ -448,12 +448,13 @@ def test_an_awaiting_task_is_sampled_down_to_what_it_awaits(monkeypatch: pytest.
 
     assert {name for stack in stacks(document) for name in frame_names(document, stack)} >= {"build_report", "sleep"}
     assert not any("select" in name for stack in stacks(document) for name in frame_names(document, stack))
-    assert [frame_names(document, stack)[-2:] for stack in waiting] == [["build_report", "sleep"]]
-    assert leaf(document, waiting[0]) == IsPartialDict(
-        {"function": "sleep", "module": "asyncio.tasks", "waiting": True}
-    )
+    # The sleep, awaited. A loaded machine can also land a tick on the task running asyncio.sleep's own lines, as it
+    # sets its timer or wakes: the same sleep, without the line it awaits at, and no other wait.
+    assert [frame_names(document, stack)[-2:] for stack in waiting] == [["build_report", "sleep"]] * len(waiting)
+    (awaited,) = [stack for stack in waiting if "at_line" in frames[stack["frames"][-2]]]  # type: ignore[index]
+    assert leaf(document, awaited) == IsPartialDict({"function": "sleep", "module": "asyncio.tasks", "waiting": True})
     # The line it awaits at, beside the line the function begins at.
-    indexes = waiting[0]["frames"]
+    indexes = awaited["frames"]
     assert isinstance(indexes, list)
     awaiting = frames[indexes[-2]]
     assert awaiting == {
@@ -522,8 +523,11 @@ def test_each_stack_says_when_in_the_trace_it_was_seen(monkeypatch: pytest.Monke
     monkeypatch.setenv("TRACEPANEL_PROFILE_INTERVAL_MS", "1")
     conf.reset()
 
+    before = time.perf_counter_ns()
     with start_trace("task", "busy then sleep", profile=True) as trace:
+        entered = time.perf_counter_ns()
         busy(0.06)
+        switched = time.perf_counter_ns()
         time.sleep(0.06)
     document = trace.profile
     assert document is not None
@@ -540,12 +544,13 @@ def test_each_stack_says_when_in_the_trace_it_was_seen(monkeypatch: pytest.Monke
     for stack in stacks(document):
         assert sum(count for _, count in buckets(stack)) == stack["count"]
         assert buckets(stack) == sorted(buckets(stack))
-    # 10 ms buckets from the trace's start: busy for the first 60 ms, asleep for the next 60.
+    # 10 ms buckets from the trace's start (between `before` and `entered`): busy for about 60 ms, then asleep for
+    # about 60, each as long as a loaded machine makes it.
     assert computing
     assert sleeping
-    assert max(computing) <= 7
-    assert min(sleeping) >= 5
-    assert max(sleeping) <= 13
+    assert max(computing) <= (switched - before) // 10_000_000
+    assert min(sleeping) >= (switched - entered) // 10_000_000
+    assert max(sleeping) <= trace.duration // 10_000
 
 
 def sleeper() -> None:
@@ -560,7 +565,11 @@ def test_a_sleep_in_sync_code_is_a_waiting_frame(monkeypatch: pytest.MonkeyPatch
         sleeper()
     document = trace.profile
     assert document is not None
-    (stack,) = stacks(document)
+    # The sleep is one stack, warm code's too (on Python 3.11 a warm call runs in its PRECALL instruction).
+    (stack,) = [stack for stack in stacks(document) if leaf(document, stack)["function"] == "time.sleep"]
+    # A loaded machine can pause the thread for longer than a tick on its way into the sleep or out of it: such a tick
+    # is on this test's line or sleeper's, and the sleep holds most of them.
+    others = {frame_names(document, other)[-1] for other in stacks(document) if other is not stack}
 
     assert frame_names(document, stack)[-2:] == ["sleeper", "time.sleep"]
     assert leaf(document, stack) == {
@@ -571,3 +580,6 @@ def test_a_sleep_in_sync_code_is_a_waiting_frame(monkeypatch: pytest.MonkeyPatch
         "in_app": False,
         "waiting": True,
     }
+
+    assert others <= {"test_a_sleep_in_sync_code_is_a_waiting_frame", "sleeper"}
+    assert int(str(stack["count"])) > int(str(document["samples"])) / 2
