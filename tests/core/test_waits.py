@@ -62,6 +62,21 @@ def test_a_c_call_that_waits_is_read_from_the_innermost_frame() -> None:
         assert (target.__name__, called) == (target.__name__, expected)
 
 
+def dozes(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def test_a_c_call_that_waits_in_warm_code_is_read_too() -> None:
+    # Warm code is specialized: on Python 3.11 a builtin's call then runs in its PRECALL instruction, not its CALL.
+    for _ in range(64):
+        dozes(0)
+    frame, done = frame_of(lambda: dozes(0.2))
+    called = waits.calling(frame)
+    done()
+
+    assert (frame.f_code.co_name, called) == ("dozes", "time.sleep")
+
+
 def test_a_method_that_waits_on_a_local_object_is_known_by_its_name() -> None:
     left, right = socket.socketpair()
     reader, writer = os.pipe()

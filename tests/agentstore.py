@@ -360,8 +360,9 @@ def issues(trace: Trace) -> list[Issue]:
     return [Issue(**{name: item[name] for name in names if name in item}) for item in found]
 
 
-# The issues a slow machine finds: a call past its threshold (a mock AWS or a database server under CI load).
-TIMED = frozenset({"slow-sql", "slow-http", "slow-call"})
+# The issues a slow machine finds: a call or a transaction past its threshold (a mock AWS or a database server under
+# CI load).
+TIMED = frozenset({"slow-sql", "slow-http", "slow-call", "long-transaction"})
 
 
 def untimed(trace: Trace) -> list[Issue]:

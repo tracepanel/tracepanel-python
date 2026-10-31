@@ -116,9 +116,14 @@ def _resolved(frame: FrameType, path: tuple[str, ...]) -> str | None:
     return _C_WAITS.get(id(target))
 
 
+# The instructions a frame is at while it calls. Python 3.11's call is PRECALL then CALL, and once the code is warm a
+# specialized PRECALL makes a C function's call itself, without the CALL: the frame waits at the PRECALL.
+_CALLING = ("CALL", "PRECALL")
+
+
 def _call_path(code: CodeType, offset: int) -> tuple[str, ...] | None:
     """The dotted name a call instruction calls, from its source text: None for anything but a call by name."""
-    if offset < 0 or offset >= len(code.co_code) or not dis.opname[code.co_code[offset]].startswith("CALL"):
+    if offset < 0 or offset >= len(code.co_code) or not dis.opname[code.co_code[offset]].startswith(_CALLING):
         return None
     with contextlib.suppress(IndexError, ValueError, TypeError):
         line, _, column, _ = list(code.co_positions())[offset // 2]
