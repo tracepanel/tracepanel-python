@@ -158,9 +158,21 @@ queues and the calls it makes to your other services are profiled too.
 `profile = true` profiles every trace, and `profile_enabled = false` turns
 profiling off.
 
+To profile from code, call `tracepanel.profile()` inside a trace: it
+profiles the rest of it, and the tasks it queues and the calls it makes
+from there. `tracepanel.profile(memory=True)` counts memory too.
+
+```python
+def rebuild_report(request):
+    if request.user.is_staff:
+        tracepanel.profile()
+    ...
+```
+
 A profiled trace's root span says why in `profile.reason`: `setting` (the
-`profile` setting), `header`, `cookie` (the panel's button), or `parent` (a
-profiled trace queued the task or made the call).
+`profile` setting), `header`, `cookie` (the panel's button), `parent` (a
+profiled trace queued the task or made the call), or `code`
+(`tracepanel.profile()`).
 
 A profile counts memory too when asked: `X-Tracepanel-Profile: memory`, the
 button's memory mode, or `profile_memory = true`. It slows down the whole

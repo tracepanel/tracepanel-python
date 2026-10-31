@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
+from tracepanel.core import conf
 from tracepanel.core import profile as profiling
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Attrs, Span, Trace
@@ -19,6 +20,8 @@ TEST = "test"
 
 _trace: ContextVar[Trace | None] = ContextVar("tracepanel_trace", default=None)
 _span: ContextVar[Span | None] = ContextVar("tracepanel_span", default=None)
+# The block running the current trace (start_trace): profile_current() starts its profile.
+_block: ContextVar["TraceBlock | None"] = ContextVar("tracepanel_block", default=None)
 
 
 @dataclass(slots=True, eq=False)
@@ -121,9 +124,10 @@ class TraceBlock:
         trace = Trace(id=new_id(), kind=self.kind, name=self.name, start=start, attrs=dict(self.attrs or {}))
         root = Span(id=new_id(), parent_id=None, kind=self.root_kind or self.kind, name=self.name, start=start)
         trace.spans.append(root)
-        saved = _Saved(_trace.get(), _Outer(_span.get(), _outer.get()), profiling.current.get())
+        saved = _Saved(_trace.get(), _Outer(_span.get(), _outer.get()), profiling.current.get(), _block.get())
         try:
             _trace.set(trace)
+            _block.set(self)
             _outer.set(saved.outer)
             _span.set(root)
             profiling.LIVE.add(self)
@@ -160,6 +164,20 @@ class TraceBlock:
         saved.put_back()
         self._saved = None
 
+    def profile_rest(self, asked: profiling.Asked) -> bool:
+        """Profile the rest of this trace from the calling thread, as code asked; whether it is profiled now."""
+        trace = self.trace
+        if trace is None or self._saved is None:
+            return False
+        if self._recording is not None:
+            return True
+        if not conf.get_config().profile_enabled:
+            return False
+        self._recording = profiling.SAMPLER.start(asked=asked)
+        trace.spans[0].attrs["profile.reason"] = "code"
+        profiling.current.set(self._recording)
+        return True
+
 
 @dataclass(slots=True, eq=False)
 class _Saved:
@@ -168,9 +186,11 @@ class _Saved:
     trace: Trace | None
     outer: _Outer
     recording: profiling.Recording | None
+    block: "TraceBlock | None"
 
     def put_back(self) -> None:
         _trace.set(self.trace)
+        _block.set(self.block)
         _outer.set(self.outer.previous)
         # The span current where the trace began, or its parent when it ended meanwhile (_over).
         _span.set(self.outer.span)
@@ -192,6 +212,17 @@ def start_trace(
     setting profiles every trace anyway. A profiled trace's root span says why in `profile.reason`.
     """
     return TraceBlock(kind, name, attrs, root_kind=root_kind, profile=profile)
+
+
+def profile_current(asked: profiling.Asked = profiling.TIME) -> bool:
+    """Profile the rest of the current trace (`tracepanel.profile()`); whether it is profiled.
+
+    Not a trace held from outside its block (holding()): its block profiles it, or doesn't.
+    """
+    block = _block.get()
+    if block is None or block.trace is None or block.trace is not _trace.get():
+        return False
+    return block.profile_rest(asked)
 
 
 @contextmanager

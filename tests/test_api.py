@@ -10,6 +10,8 @@ from pytest_django.fixtures import Settings
 
 import tracepanel
 from tests.agentstore import issues
+from tests.profiles import sampled
+from tracepanel.core import profile
 from tracepanel.core.model import Span, Trace
 
 
@@ -140,3 +142,74 @@ def test_ignored_commands(traces: list[Trace], settings: Settings) -> None:
     call_command("showmigrations", "auth", verbosity=0)
 
     assert traces == []
+
+
+def handed_on() -> dict[str, object]:
+    """What a task queued now carries."""
+    headers: dict[str, object] = {}
+    profile.carry(headers, "tracepanel_profile")
+    return headers
+
+
+def test_profile_profiles_the_rest_of_the_trace_from_code(traces: list[Trace]) -> None:
+    with tracepanel.trace("rebuild-index"):
+        before = handed_on()
+        profiled = tracepanel.profile()
+        sampled(0.02)
+        after = handed_on()
+        again = tracepanel.profile()
+    (trace,) = traces
+
+    assert (profiled, again) == (True, True)
+    # The tasks it queues and the calls it makes from here ask for a profile too.
+    assert (before, after) == ({}, {"tracepanel_profile": "1"})
+
+    assert trace.spans[0].attrs["profile.reason"] == "code"
+    assert trace.profile == IsPartialDict({"samples": IsInt(gt=0)})
+    assert "memory" not in (trace.profile or {})
+
+
+def test_profile_with_memory_counts_it_too(traces: list[Trace]) -> None:
+    with tracepanel.trace("rebuild-index"):
+        tracepanel.profile(memory=True)
+        kept = [bytearray(1000) for _ in range(100)]
+        sampled(0.02)
+        sent = handed_on()
+    (trace,) = traces
+
+    assert len(kept) == 100
+    assert sent == {"tracepanel_profile": "memory"}
+
+    assert trace.profile == IsPartialDict({"memory": IsPartialDict({"peak": IsInt(ge=0)})})
+
+
+def test_profile_outside_a_trace_or_with_profiling_off_does_nothing(traces: list[Trace], settings: Settings) -> None:
+    assert tracepanel.profile() is False
+
+    settings.TRACEPANEL = {"profile_enabled": False}
+    with tracepanel.trace("rebuild-index"):
+        profiled = tracepanel.profile()
+    (trace,) = traces
+
+    assert profiled is False
+    assert (trace.profile, trace.spans[0].attrs) == (None, {})
+
+
+def test_a_trace_the_setting_profiles_keeps_its_reason(traces: list[Trace], settings: Settings) -> None:
+    settings.TRACEPANEL = {"profile": True}
+
+    with tracepanel.trace("rebuild-index"):
+        profiled = tracepanel.profile()
+    (trace,) = traces
+
+    assert profiled is True
+    assert trace.spans[0].attrs["profile.reason"] == "setting"
+
+
+@pytest.mark.django_db
+def test_a_view_profiles_its_request_from_code(client: Client, traces: list[Trace]) -> None:
+    client.get("/profiled-by-code/")
+    (trace,) = traces
+
+    assert trace.spans[0].attrs["profile.reason"] == "code"
+    assert trace.profile == IsPartialDict({"samples": IsInt(gt=0)})
