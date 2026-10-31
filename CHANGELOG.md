@@ -6,9 +6,14 @@
 
 - python-devtools: each `debug()` call is also a dump in the trace, a log
   record on the span it ran in. It keeps what devtools prints, plain, and
-  each argument's expression, value, type and length. A value named like a
-  secret (`password`, `token`, `api_key`) is masked. `debug.timer()` times
-  its block as a span. devtools prints and returns as before.
+  each argument's expression, value, type and length. It masks a value
+  named like a secret (`password`, `token`, `api_key`), and the secrets
+  inside a value by their names: a dict's keys, the fields of a dataclass,
+  an attrs class, a pydantic model or a namedtuple, an object's
+  attributes, an ORM's columns as devtools prints them. A card's number
+  and a URL's credentials too. The terminal still shows devtools' own
+  text. `debug.timer()` times its block as a span. devtools prints and
+  returns as before.
   `devtools_enabled = false` (`TRACEPANEL_DEVTOOLS_ENABLED=0`) turns it
   off.
 - The slow query and long transaction limits per database, by its
