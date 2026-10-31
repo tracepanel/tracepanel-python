@@ -1,7 +1,11 @@
+import collections
+import copy
+import dataclasses
 import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 from dirty_equals import IsPositiveInt, IsStr
@@ -81,6 +85,160 @@ def test_a_secret_is_masked_by_its_expression_keyword_or_variable(capsys: pytest
         "    api_key: ******** (str)\n"
         "    value: ******** (str)"
     )
+
+
+def test_secrets_inside_a_value_are_masked_in_the_record_not_in_the_value_or_the_terminal(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cart = {
+        "user": "a",
+        "password": "hunter2",
+        "payment": {"card": {"number": "4242424242424242", "exp_month": 12}},
+        # A model's counts, not credentials.
+        "tokens": 12,
+        "db": "postgres://shop:pw@db/shop",
+    }
+    before = copy.deepcopy(cart)
+
+    with start_trace("http", "GET /cart") as trace:
+        line = sys._getframe().f_lineno + 1  # noqa: SLF001
+        debug(cart)
+
+    assert cart == before
+    assert "hunter2" in capsys.readouterr().out
+
+    masked = (
+        "{\n"
+        "    'user': 'a',\n"
+        "    'password': ********,\n"
+        "    'payment': {\n"
+        "        'card': {\n"
+        "            'number': ********,\n"
+        "            'exp_month': 12,\n"
+        "        },\n"
+        "    },\n"
+        "    'tokens': 12,\n"
+        "    'db': 'postgres://********@db/shop',\n"
+        "}"
+    )
+    [log] = trace.logs
+    assert log.attrs["dump.args"] == [{"expr": "cart", "repr": masked, "type": "dict", "len": 5}]
+
+    assert log.message == (
+        f"{HERE}:{line} test_secrets_inside_a_value_are_masked_in_the_record_not_in_the_value_or_the_terminal\n"
+        f"    cart: {masked.replace(chr(10), chr(10) + '    ')} (dict) len=5"
+    )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class Login:
+    user: str
+    password: str
+
+
+class Point(NamedTuple):
+    x: int
+    token: str
+
+
+class Visit:
+    def __init__(self, user: str, session_key: str) -> None:
+        self.user = user
+        self.session_key = session_key
+
+    def __repr__(self) -> str:
+        return f"Visit(user={self.user!r}, session_key={self.session_key!r})"
+
+
+def test_fields_attributes_and_items_named_as_secrets_are_masked() -> None:
+    login, point, visit = Login("a", "pw"), Point(1, "t-1"), Visit("a", "k-1")
+    od = collections.OrderedDict(api_key="sk-1")
+
+    with start_trace("http", "GET /") as trace:
+        debug(login, point, visit, od, [login])
+
+    assert (login.password, point.token, visit.session_key, od["api_key"]) == ("pw", "t-1", "k-1", "sk-1")
+
+    [log] = trace.logs
+    assert log.attrs["dump.args"] == [
+        {"expr": "login", "repr": "Login(\n    user='a',\n    password=********,\n)", "type": "Login", "len": None},
+        {"expr": "point", "repr": "Point(\n    x=1,\n    token=********,\n)", "type": "Point", "len": 2},
+        {"expr": "visit", "repr": "Visit(user='a', session_key=********)", "type": "Visit", "len": None},
+        {"expr": "od", "repr": "OrderedDict([\n    ('api_key', ********),\n])", "type": "OrderedDict", "len": 1},
+        {
+            "expr": "[login]",
+            "repr": "[\n    Login(\n        user='a',\n        password=********,\n    ),\n]",
+            "type": "list",
+            "len": 1,
+        },
+    ]
+
+    assert "pw" not in log.message
+    assert "t-1" not in log.message
+    assert "k-1" not in log.message
+    assert "sk-1" not in log.message
+
+
+def test_attrs_and_pydantic_fields_named_as_secrets_are_masked() -> None:
+    pytest.importorskip("attrs")
+    pytest.importorskip("pydantic")
+    import attrs  # noqa: PLC0415 (optional here)
+    import pydantic  # noqa: PLC0415 (optional here)
+
+    @attrs.frozen
+    class Key:
+        name: str
+        api_key: str
+
+    class Account(pydantic.BaseModel):
+        email: str
+        secret: str
+
+    key, account = Key(name="k", api_key="sk-1"), Account(email="e", secret="s-1")
+
+    with start_trace("http", "GET /") as trace:
+        debug(key, account)
+
+    assert (key.api_key, account.secret) == ("sk-1", "s-1")
+
+    [log] = trace.logs
+    assert log.attrs["dump.args"] == [
+        {"expr": "key", "repr": "Key(name='k', api_key=********)", "type": "Key", "len": None},
+        {
+            "expr": "account",
+            "repr": "Account(\n    email='e',\n    secret=********,\n)",
+            "type": "Account",
+            "len": None,
+        },
+    ]
+
+
+def test_what_the_copy_cant_reach_is_masked_in_the_text() -> None:
+    orm = pytest.importorskip("sqlalchemy.orm")
+
+    class Base(orm.DeclarativeBase):
+        pass
+
+    class Member(Base):
+        __tablename__ = "member"
+        id: orm.Mapped[int] = orm.mapped_column(primary_key=True)
+        password: orm.Mapped[str]
+
+    # An ORM's columns are descriptors over state the copy would share: devtools' text is masked instead.
+    member = Member(id=1, password="hunter2")
+
+    with start_trace("http", "GET /") as trace:
+        debug(member, "/reset?token=t-1&next=/")
+
+    assert member.password == "hunter2"
+
+    [log] = trace.logs
+    assert log.attrs["dump.args"] == [
+        {"expr": "member", "repr": "Member(\n    id=1,\n    password=********,\n)", "type": "Member", "len": None},
+        {"expr": None, "repr": "'/reset?token=********&next=/'", "type": "str", "len": 23},
+    ]
+    assert "hunter2" not in log.message
+    assert "t-1" not in log.message
 
 
 def test_a_long_value_is_cut_and_marked() -> None:
