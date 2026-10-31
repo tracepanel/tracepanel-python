@@ -8,7 +8,7 @@ import pytest
 from dirty_equals import IsInt, IsList, IsPartialDict, IsStr
 
 from tests.profiles import busy
-from tracepanel.core import conf, memory
+from tracepanel.core import conf, memory, profile
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Trace
 from tracepanel.core.profile import MEMORY
@@ -35,6 +35,21 @@ def untraced() -> Generator[None, None, None]:
     yield
     if tracemalloc.is_tracing():
         tracemalloc.stop()
+
+
+def collect() -> None:
+    """A full collection inside the current profiled trace, counted by its profile.
+
+    gc.collect() returns at once while another thread's collection runs: one that began before the trace, before the
+    profiler listened for collections, isn't the trace's. Collect until one was.
+    """
+    recording = profile.current.get()
+    assert recording is not None
+    counted = recording.collections
+    for _ in range(100):
+        gc.collect()
+        if recording.collections > counted:
+            return
 
 
 def profile_of(trace: Trace) -> dict[str, object]:
@@ -158,7 +173,7 @@ def test_an_unprofiled_trace_has_no_memory_or_gc() -> None:
 def test_a_profiled_trace_counts_memory_only_when_asked() -> None:
     with start_trace("command", "build", profile=True) as trace:
         hold()
-        gc.collect()
+        collect()
     tracing = tracemalloc.is_tracing()
 
     assert profile_of(trace) == IsPartialDict(
@@ -237,7 +252,7 @@ def test_a_sampler_leaving_while_a_trace_begins_leaves_its_tracemalloc_on(monkey
 def test_garbage_collections_during_a_profiled_trace_are_its_pauses() -> None:
     with start_trace("command", "collects", profile=True) as trace:
         busy(0.01)
-        gc.collect()
+        collect()
         busy(0.01)
     pauses = profile_of(trace)["gc"]
 
