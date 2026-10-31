@@ -9,4 +9,4 @@ from tracepanel.api import SpanHandle, event, profile, set_attr, span, trace, tr
 from tracepanel.testing import max_queries
 
 __all__ = ["SpanHandle", "event", "max_queries", "profile", "set_attr", "span", "trace", "traced"]
-__version__ = "0.9.0"
+__version__ = "0.10.0"
