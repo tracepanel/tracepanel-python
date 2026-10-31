@@ -552,3 +552,24 @@ def test_the_agent_serves_what_the_checks_found(
 
     assert before == IsPartialDict({"checks": None, "migrations": None})
     assert after == IsPartialDict({"connected": True, **FOUND})
+
+
+def test_a_tests_writer_waits_for_what_was_submitted_not_only_written(
+    store: AgentStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A loaded machine: the writer thread hasn't sent the batch when BatchWriter's flush() stops waiting for its
+    # queue. The test's writer still returns only once the agent has the trace.
+    write = agent.AgentWriter.write
+
+    def slow(self: agent.AgentWriter, batch: list[Trace]) -> None:
+        time.sleep(0.5)
+        write(self, batch)
+
+    monkeypatch.setattr(agent.AgentWriter, "write", slow)
+    writer = store.writer()
+    (trace,) = requests(1)
+
+    writer.submit(trace)
+    writer.flush(timeout=0.01)
+
+    assert [found["id"] for found in store.list_traces(ids=[trace.id])] == [trace.id]

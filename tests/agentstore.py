@@ -324,7 +324,12 @@ def free_port() -> int:
 
 
 class SyncedWriter(agent.AgentWriter):
-    """The SDK's writer to a test's agent, whose flush() also waits until the agent has stored what was sent."""
+    """The SDK's writer to a test's agent, whose flush() also waits until the agent has stored what was submitted.
+
+    It waits for the last trace submitted, not the last one written: under load the writer thread may not have sent
+    it (or anything) yet when BatchWriter's own flush() gives up waiting for its queue. One connection's traces are
+    stored in the order they were sent, so the last one stored means all before it are.
+    """
 
     def __init__(self, store: AgentStore) -> None:
         self.store = store
@@ -332,9 +337,9 @@ class SyncedWriter(agent.AgentWriter):
         super().__init__(store.config())
 
     @override
-    def write(self, batch: list[Trace]) -> None:
-        super().write(batch)
-        self.last = batch[-1].id
+    def submit(self, trace: Trace) -> None:
+        self.last = trace.id
+        super().submit(trace)
 
     @override
     def flush(self, timeout: float = 5.0) -> None:
