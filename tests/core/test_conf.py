@@ -22,14 +22,21 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[Path, 
     conf.use_source(previous)
 
 
+def loaded() -> conf.Config:
+    """The configuration read now, not one cached before the test wrote its files and variables."""
+    # A heartbeat or writer thread an earlier test left running may load it between the fixture's reset and the test.
+    conf.reset()
+    return conf.get_config()
+
+
 def test_defaults_without_a_file(project: Path) -> None:
-    assert (conf.get_config().slow_sql_ms, conf.get_config().service) == (100, "app")
+    assert (loaded().slow_sql_ms, loaded().service) == (100, "app")
 
 
 def test_pyproject_section(project: Path) -> None:
     (project / "pyproject.toml").write_text('[tool.tracepanel]\nslow_sql_ms = 200\nignore_paths = ["/health*"]\n')
 
-    config = conf.get_config()
+    config = loaded()
 
     assert (config.slow_sql_ms, config.ignore_paths) == (200, ("/health*",))
 
@@ -39,14 +46,14 @@ def test_tracepanel_toml_wins_and_is_found_upward(project: Path) -> None:
     (project / "sub").mkdir()
     conf.use_source(lambda: {"root": str(project / "sub")})
 
-    assert conf.get_config().service == "shop"
+    assert loaded().service == "shop"
 
 
 def test_a_pyproject_without_the_section_ends_the_search(project: Path) -> None:
     (project.parent / "tracepanel.toml").write_text('service = "not ours"\n')
     (project / "pyproject.toml").write_text('[project]\nname = "app"\n')
 
-    assert conf.get_config().service == "app"
+    assert loaded().service == "app"
 
 
 def test_a_load_from_before_a_new_source_is_not_kept(project: Path) -> None:
@@ -102,7 +109,7 @@ def test_bad_variables_are_explained(
     monkeypatch.setenv(variable, value)
 
     with pytest.raises(ConfigError, match=message):
-        conf.get_config()
+        loaded()
 
 
 def test_limits_per_database_in_a_variable(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -127,7 +134,7 @@ def test_limits_per_database_in_the_file(project: Path) -> None:
         "[tool.tracepanel.long_transaction_ms_by_db]\nsnowflake = 20000\n"
     )
 
-    config = conf.get_config()
+    config = loaded()
 
     assert (config.slow_sql_ms, config.slow_sql_ms_by_db, config.long_transaction_ms_by_db) == (
         50,
@@ -139,12 +146,12 @@ def test_limits_per_database_in_the_file(project: Path) -> None:
 def test_limits_per_database_from_the_framework_and_configure(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     conf.use_source(lambda: {"root": str(project), "slow_sql_ms_by_db": {"snowflake": 3000}})
 
-    assert conf.get_config().slow_sql_ms_by_db == {"snowflake": 3000}
+    assert loaded().slow_sql_ms_by_db == {"snowflake": 3000}
 
     monkeypatch.setattr(conf, "_configured", {})
     conf.configure(slow_sql_ms_by_db={"bigquery": 4000})
 
-    assert conf.get_config().slow_sql_ms_by_db == {"bigquery": 4000}
+    assert loaded().slow_sql_ms_by_db == {"bigquery": 4000}
 
 
 @pytest.mark.parametrize(
@@ -163,21 +170,21 @@ def test_bad_limits_per_database_are_explained(
     monkeypatch.setenv("TRACEPANEL_SLOW_SQL_MS", value)
 
     with pytest.raises(ConfigError, match=message):
-        conf.get_config()
+        loaded()
 
 
 def test_a_bad_limit_per_database_in_the_file_names_the_file(project: Path) -> None:
     (project / "tracepanel.toml").write_text('[slow_sql_ms_by_db]\nsnowflake = "slow"\n')
 
     with pytest.raises(ConfigError, match=r"tracepanel.toml: slow_sql_ms_by_db must be a mapping of database"):
-        conf.get_config()
+        loaded()
 
 
 def test_bad_file_values_name_the_file(project: Path) -> None:
     (project / "tracepanel.toml").write_text('slow_sql_ms = "fast"\nwidgets = true\n')
 
     with pytest.raises(ConfigError, match=r"tracepanel.toml: unknown settings widgets"):
-        conf.get_config()
+        loaded()
 
 
 def test_integrations_can_be_turned_off(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
