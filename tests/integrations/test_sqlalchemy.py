@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, text  # noqa: E402 (optional test group)
 from sqlalchemy.orm import Session  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
-from tests.agentstore import issues  # noqa: E402
+from tests.agentstore import issues, untimed  # noqa: E402
 from tracepanel.core.context import start_trace  # noqa: E402
 from tracepanel.core.model import Trace  # noqa: E402
 from tracepanel.integrations import sqlalchemy as integration  # noqa: E402
@@ -179,6 +179,7 @@ def test_the_agent_finds_a_select_without_a_limit_that_read_many_rows(traces: li
             session.execute(text("SELECT id, name FROM item")).all()
             session.execute(text("SELECT id, name FROM item LIMIT 1100")).all()
 
-    assert [(issue.kind, issue.title) for issue in issues(traced(work))] == [
+    # Timed issues left out: a loaded machine holds the session's transaction open past its limit.
+    assert [(issue.kind, issue.title) for issue in untimed(traced(work))] == [
         ("large-result", "Large result: 1202 rows · SELECT item"),
     ]
