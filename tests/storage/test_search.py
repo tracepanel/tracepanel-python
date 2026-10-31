@@ -2,7 +2,7 @@ import re
 from datetime import UTC, datetime
 
 import pytest
-from dirty_equals import Contains, IsInt, IsList, IsPartialDict, IsPositiveFloat, IsPositiveInt, IsStr
+from dirty_equals import Contains, IsInstance, IsInt, IsList, IsPartialDict, IsPositiveFloat, IsPositiveInt, IsStr
 from django.contrib.auth.models import User
 from django.test import Client
 
@@ -271,6 +271,9 @@ def test_known_values(client: Client, recorded: AgentStore) -> None:
             "in": ["view"],
             # Spans by name: the view that logged them, and from an agent after 0.2.0 every span that isn't a call.
             "span": Contains("tests.project.views.logs"),
+            # The apps with rows on each page (the App filter), and each page's slow limit: an agent after 0.9.4.
+            "apps": IsInstance(dict),
+            "slow": IsInstance(dict),
         },
     )
 

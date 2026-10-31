@@ -75,6 +75,12 @@ CASES: list[tuple[str, int, Callable[[Data], str]]] = [
     ("/traces", 400, lambda _: "traces?q=colour:red"),
     ("/traces/{id}", 200, lambda d: f"traces/{d['trace']}"),
     ("/traces/{id}", 404, lambda _: "traces/" + "0" * 26),
+    # Not stored (yet), to a client that waits for it: an agent after 0.9.1 answers 204.
+    *(
+        [("/traces/{id}", 204, lambda _: "traces/" + "0" * 26 + "?missing=no-content")]
+        if "204" in OPENAPI["paths"]["/traces/{id}"]["get"]["responses"]
+        else []
+    ),
     ("/traces/overview", 200, lambda _: "traces/overview"),
     ("/traces/overview", 200, lambda _: "traces/overview?q=route:/nope/"),
     ("/traces/overview", 400, lambda _: "traces/overview?q=since:yesterday"),
@@ -184,7 +190,10 @@ def test_responses_match_the_contract(
 
     assert response.status_code == status
 
-    if "text/plain" in OPENAPI["paths"][template]["get"]["responses"][str(status)].get("content", {}):
+    if status == 204:
+        # No Content: no body.
+        assert response.content == b""
+    elif "text/plain" in OPENAPI["paths"][template]["get"]["responses"][str(status)].get("content", {}):
         assert response["Content-Type"].startswith("text/plain")
         assert response.content
     else:

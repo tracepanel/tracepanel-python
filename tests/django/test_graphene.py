@@ -11,7 +11,7 @@ from django.contrib.auth.models import Group, User
 from django.test import Client
 from jsonschema import Draft202012Validator
 
-from tests.agentstore import AgentStore, issues
+from tests.agentstore import AgentStore, issues, newer
 from tracepanel.core.model import Trace
 from tracepanel.storage.transport import set_writer
 
@@ -206,20 +206,27 @@ def test_operations_page(client: Client, traces: list[Trace], store: AgentStore,
     post(client, "query Report { broken }")
     store.write(traces)
 
-    assert store.list_graphql() == IsList(
-        {
-            "operation": "query Team",
-            "type": "query",
-            "name": "Team",
-            "calls": 2,
-            "errors": 0,
-            "p50": IsInt(ge=0),
-            "p95": IsInt(ge=0),
-            "total": IsInt(ge=0),
-            "avg_queries": 1.0,
-            "with_issues": 0,
-            "last_seen": IsInt,
-        },
+    rows = store.list_graphql()
+    team = next(row for row in rows if row["operation"] == "query Team")
+    assert rows == IsList(
+        newer(
+            {
+                "operation": "query Team",
+                "type": "query",
+                "name": "Team",
+                "calls": 2,
+                "errors": 0,
+                "p50": IsInt(ge=0),
+                "p95": IsInt(ge=0),
+                "total": IsInt(ge=0),
+                "avg_queries": 1.0,
+                "with_issues": 0,
+                "last_seen": IsInt,
+            },
+            team,
+            # Of how many, with the Slower than filter on: an agent after 0.9.4.
+            {"all_calls": None},
+        ),
         IsPartialDict(operation="query Report", calls=1, errors=1),
         check_order=False,
     )
