@@ -42,7 +42,7 @@ from http.cookies import CookieError, SimpleCookie
 from types import CodeType, FrameType
 from typing import Literal, ParamSpec, TypeVar
 
-from tracepanel.core import conf, forks, memory, waits
+from tracepanel.core import conf, forks, memory, w3c, waits
 from tracepanel.core.frames import is_in_app, library_path, relative
 
 HEADER = "x-tracepanel-profile"
@@ -52,6 +52,10 @@ COOKIE = "tracepanel_profile"
 TIME = "1"
 MEMORY = "memory"
 Asked = Literal["1", "memory"]
+# Why a trace is profiled, as its root span's profile.reason says: the `profile` setting (every trace), a request's
+# X-Tracepanel-Profile header, the panel's cookie, the trace that called or queued it (a task's carried flag, the
+# header on a call that carries a traceparent), or code that started it profiled (start_trace(profile=True)).
+Reason = Literal["setting", "header", "cookie", "parent", "code"]
 # How deep a stack is walked: a recursion beyond it is cut, outermost frames kept.
 MAX_DEPTH = 128
 # Distinct stacks one trace keeps; the rest are counted as one "(other)" frame, so a profile stays small.
@@ -64,6 +68,15 @@ BUCKET_US = 10_000
 _OWN = "tracepanel"
 # GC pauses a trace lists, each with when it began; past it they're only counted.
 MAX_PAUSES = 1000
+
+
+@dataclass(frozen=True, slots=True)
+class Ask:
+    """What a trace asks for, and what asked it (requested(), asked_by_parent())."""
+
+    asked: Asked
+    reason: Reason
+
 
 # A function as the stacks name it: its code (None for a C call that waits, named by the module), the module it runs
 # in, the line it awaits at (the project's coroutines a Task waits in), and whether it waits though core.waits doesn't
@@ -129,7 +142,7 @@ class Sampler:
         self.running: tuple[Recording, ...] = ()
         self._collecting = 0
 
-    def start(self, *, asked: bool | str | None = None) -> Recording:
+    def start(self, *, asked: bool | str | Ask | None = None) -> Recording:
         """Begin recording the calling thread's stacks for a trace it starts; `asked`: what the trace asked for.
 
         Its memory too when it asked for it, or the `profile_memory` setting says so for every profiled trace.
@@ -566,7 +579,9 @@ def _place(filename: str, line: int) -> dict[str, object]:
 
 
 def asking(value: object) -> Asked | None:
-    """What a value asks for: TIME or MEMORY as they are, True (code that profiles a trace) TIME; else nothing."""
+    """What a value asks for: an Ask's, TIME or MEMORY as they are, True (code that profiles a trace) TIME."""
+    if isinstance(value, Ask):
+        return value.asked
     if value is True or value == TIME:
         return TIME
     if value == MEMORY:
@@ -574,13 +589,17 @@ def asking(value: object) -> Asked | None:
     return None
 
 
-def requested(header: str | None, cookies: str | None) -> Asked | None:
+def requested(header: str | None, cookies: str | None, traceparent: str | None = None) -> Ask | None:
     """What a request asks for: the X-Tracepanel-Profile header's, else the cookie's a browser sends; None if neither.
 
-    "1" is the profile, "memory" the profile with its memory; any other value asks for nothing.
+    "1" is the profile, "memory" the profile with its memory; any other value asks for nothing. The header on a
+    request that carries a `traceparent` is a profiled trace's call (http_clients sends both): asked by its parent.
     """
     asked = asking(header.strip()) if header is not None else None
-    return asked or by_cookie(cookies)
+    if asked is not None:
+        return Ask(asked, "parent" if w3c.incoming(traceparent) else "header")
+    cookie = by_cookie(cookies)
+    return Ask(cookie, "cookie") if cookie is not None else None
 
 
 def by_cookie(cookies: str | None) -> Asked | None:
@@ -606,7 +625,7 @@ def carry(carrier: MutableMapping[str, object], key: str) -> None:
         carrier[key] = recording.asked
 
 
-def asked_by_parent(flag: object) -> Asked | None:
+def asked_by_parent(flag: object) -> Ask | None:
     """What a run asks for: what the work it runs carries, as a profiled trace put it there (carry()).
 
     "1" is the profile, as an older SDK sends it too, "memory" the profile with its memory. Not a run inline in a
@@ -617,13 +636,28 @@ def asked_by_parent(flag: object) -> Asked | None:
             flag = flag.decode()
         except UnicodeDecodeError:
             return None
-    return asking(flag) if isinstance(flag, str) and current.get() is None else None
+    asked = asking(flag) if isinstance(flag, str) and current.get() is None else None
+    return Ask(asked, "parent") if asked is not None else None
 
 
-def wanted(*, asked: bool | str | None) -> bool:
-    """Whether to profile a trace: the setting profiles every one, a request may ask; nothing when profiling is off."""
+def reason(*, asked: bool | str | Ask | None) -> Reason | None:
+    """Why a trace is profiled, None if it isn't (or profiling is off).
+
+    The setting profiles every trace, so it wins over what one asked; else what asked.
+    """
     config = conf.get_config()
-    return config.profile_enabled and (config.profile or asking(asked) is not None)
+    if not config.profile_enabled:
+        return None
+    if config.profile:
+        return "setting"
+    if isinstance(asked, Ask):
+        return asked.reason
+    return "code" if asking(asked) is not None else None
+
+
+def wanted(*, asked: bool | str | Ask | None) -> bool:
+    """Whether to profile a trace: the setting profiles every one, a request may ask; nothing when profiling is off."""
+    return reason(asked=asked) is not None
 
 
 SAMPLER = Sampler()
