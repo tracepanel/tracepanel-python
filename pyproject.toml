@@ -110,6 +110,10 @@ dev = [
     "celery-types>=0.26.0",
     "import-linter>=2.15",
 ]
+# python-devtools: debug() calls as dump records.
+devtools = [
+    "devtools>=0.13.0",
+]
 django-tasks = [
     "django-tasks>=0.12.0",
     "django-tasks-db>=0.13.0",
