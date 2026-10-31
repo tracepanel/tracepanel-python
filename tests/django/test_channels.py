@@ -21,7 +21,7 @@ from dirty_equals import IsInstance, IsInt, IsList, IsPartialDict, IsPositiveInt
 from django.contrib.auth.models import User
 from jsonschema import Draft202012Validator
 
-from tests.agentstore import AgentStore, issues
+from tests.agentstore import AgentStore, issues, newer
 from tests.project import sockets
 from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, stopped, without_worker_events
 from tracepanel._compat import override
@@ -143,22 +143,28 @@ def test_consumers_page(traces: list[Trace], store: AgentStore, users: list[User
     async_to_sync(chat)({"text": "hi"}, {"text": "again"})
     store.write(traces)
 
-    assert store.list_websockets() == [
-        {
-            "consumer": "tests.project.sockets.ChatConsumer",
-            "connections": 2,
-            "received": 2,
-            "delivered": 4,
-            "disconnects": 2,
-            "errors": 0,
-            "p50": IsInt(ge=0),
-            "p95": IsInt(ge=0),
-            "total": IsInt(ge=0),
-            "avg_queries": 0.2,
-            "with_issues": 0,
-            "paths": ["/ws/chat/lobby/"],
-            "last_seen": IsInt,
-        }
+    rows = store.list_websockets()
+    assert rows == [
+        newer(
+            {
+                "consumer": "tests.project.sockets.ChatConsumer",
+                "connections": 2,
+                "received": 2,
+                "delivered": 4,
+                "disconnects": 2,
+                "errors": 0,
+                "p50": IsInt(ge=0),
+                "p95": IsInt(ge=0),
+                "total": IsInt(ge=0),
+                "avg_queries": 0.2,
+                "with_issues": 0,
+                "paths": ["/ws/chat/lobby/"],
+                "last_seen": IsInt,
+            },
+            rows[0],
+            # Of how many, with the Slower than filter on: an agent after 0.9.4.
+            {"all_connections": None},
+        )
     ]
     assert [row["received"] for row in store.list_websockets("event:receive")] == [2]
 

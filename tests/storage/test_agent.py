@@ -235,35 +235,40 @@ def test_the_agent_started_estimates_llm_costs_with_the_prices_file_of_the_setti
         store.write([trace])
 
         [call] = store.list_calls("llm")
-        # A million input tokens cost a dollar, a million output tokens two: a thousandth each.
-        assert call == {
-            "key": IsStr(),
-            "system": "llm",
-            "family": "llm",
-            "target": "openai",
-            "op": "chat",
-            "template": "house-model",
-            "name": "chat house-model",
-            "calls": 1,
-            "traces": 1,
-            "errors": 0,
-            "total": 10,
-            "slowest": 10,
-            "p95": 10,
-            "last_seen": IsPositiveInt,
-            "most_per_trace": 1,
-            "origin": None,
-            "sample_trace": trace.id,
-            "sample_span": trace.spans[-1].id,
-            "statement": None,
-            "vendor": None,
-            "hits": None,
-            "misses": None,
-            "via": None,
-            "tokens_in": 1000,
-            "tokens_out": 500,
-            "cost": 0.002,
-        }
+        # A million input tokens cost a dollar, a million output tokens two: a thousandth each. Of how many, with the
+        # Slower than filter on: an agent after 0.9.4.
+        assert call == newer(
+            {
+                "key": IsStr(),
+                "system": "llm",
+                "family": "llm",
+                "target": "openai",
+                "op": "chat",
+                "template": "house-model",
+                "name": "chat house-model",
+                "calls": 1,
+                "traces": 1,
+                "errors": 0,
+                "total": 10,
+                "slowest": 10,
+                "p95": 10,
+                "last_seen": IsPositiveInt,
+                "most_per_trace": 1,
+                "origin": None,
+                "sample_trace": trace.id,
+                "sample_span": trace.spans[-1].id,
+                "statement": None,
+                "vendor": None,
+                "hits": None,
+                "misses": None,
+                "via": None,
+                "tokens_in": 1000,
+                "tokens_out": 500,
+                "cost": 0.002,
+            },
+            call,
+            {"all_calls": None},
+        )
     finally:
         process.terminate()
         process.wait(timeout=10)
