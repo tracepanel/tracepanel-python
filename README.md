@@ -28,7 +28,7 @@ It runs while you develop, and everything stays on your machine.
 | **APIs** | Django REST framework, Django Ninja, Strawberry, Graphene (through graphene-django), htmx. |
 | **Background work** | Celery, Dramatiq, RQ, Huey, Taskiq, FastStream. In Django also django-q2, Django Tasks and Channels. |
 | **Clients** | requests and urllib3, httpx, aiohttp, Redis and Valkey, AWS through boto3 and aiobotocore, the OpenAI and Anthropic SDKs. Spans from OpenTelemetry instrumentations join the trace. |
-| **Logs** | The lines you write with `logging`, each on the request, task or command that wrote it. |
+| **Logs** | The lines you write with `logging`, each on the request, task or command that wrote it. python-devtools' `debug()` calls as dumps, in the call tree where they ran. |
 | **Profiling** | Where a request's or a task's time goes, and its memory when you ask for it. |
 | **Tests** | `pytest --tracepanel` fails a test that makes an N+1 or duplicate queries. |
 

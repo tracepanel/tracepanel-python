@@ -111,6 +111,8 @@ class Config:
     channels_enabled: bool = True
     # Database drivers used directly, without an ORM (statements an ORM runs are the ORM's).
     dbapi_enabled: bool = True
+    # python-devtools: each debug() call as a dump record of the trace (devtools prints as ever).
+    devtools_enabled: bool = True
     django_q_enabled: bool = True
     django_tasks_enabled: bool = True
     dramatiq_enabled: bool = True
@@ -213,6 +215,7 @@ class Settings(TypedDict, total=False):
     celery_enabled: bool
     channels_enabled: bool
     dbapi_enabled: bool
+    devtools_enabled: bool
     django_q_enabled: bool
     django_tasks_enabled: bool
     dramatiq_enabled: bool

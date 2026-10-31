@@ -14,7 +14,7 @@ from tracepanel.core import conf, errors
 from tracepanel.core.context import current_span, current_trace
 from tracepanel.core.frames import relative, safe_repr
 from tracepanel.core.masking import MASK, counted, sensitive
-from tracepanel.core.model import Attrs, Log
+from tracepanel.core.model import Attrs, Log, Trace
 from tracepanel.core.patching import patch, patched
 
 MAX_LOGS = 1000
@@ -86,15 +86,25 @@ def record_attrs(record: logging.LogRecord) -> Attrs:
     return attrs
 
 
+def keep(trace: Trace, log: Log) -> None:
+    """Add the record to the trace, or count it as dropped past MAX_LOGS."""
+    if len(trace.logs) >= MAX_LOGS:
+        dropped = trace.attrs.get("tracepanel.dropped_logs")
+        trace.attrs["tracepanel.dropped_logs"] = (dropped if isinstance(dropped, int) else 0) + 1
+        return
+    trace.logs.append(log)
+
+
 class TracepanelHandler(logging.Handler):
     @staticmethod
-    def _ignored(name: str) -> bool:
+    def ignored(name: str) -> bool:
+        """Left out by ignore_loggers (with its children)."""
         return any(name == prefix or name.startswith(f"{prefix}.") for prefix in conf.get_config().ignore_loggers)
 
     @override
     def emit(self, record: logging.LogRecord) -> None:
         trace = current_trace()
-        if trace is None or record.name.startswith(IGNORED) or self._ignored(record.name):
+        if trace is None or record.name.startswith(IGNORED) or self.ignored(record.name):
             return
         if len(trace.logs) >= MAX_LOGS:
             dropped = trace.attrs.get("tracepanel.dropped_logs")

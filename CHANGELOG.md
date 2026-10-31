@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- python-devtools: each `debug()` call is also a dump in the trace, a log
+  record on the span it ran in. It keeps what devtools prints, plain, and
+  each argument's expression, value, type and length. A value named like a
+  secret (`password`, `token`, `api_key`) is masked. `debug.timer()` times
+  its block as a span. devtools prints and returns as before.
+  `devtools_enabled = false` (`TRACEPANEL_DEVTOOLS_ENABLED=0`) turns it
+  off.
+
 ## 0.9.0 (2026-10-30)
 
 Needs `tracepanel-agent` 0.9.0 (installed with it). The agent links Apollo

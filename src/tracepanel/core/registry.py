@@ -103,6 +103,7 @@ INTEGRATIONS: tuple[Integration, ...] = (
     Integration("openai", "OpenAI", ("openai",), "tracepanel.integrations.openai"),
     Integration("anthropic", "Anthropic", ("anthropic",), "tracepanel.integrations.anthropic"),
     Integration("boto", "AWS (boto3)", ("botocore",), "tracepanel.integrations.boto"),
+    Integration("devtools", "devtools", ("devtools",), "tracepanel.integrations.devtools"),
     Integration("celery", "Celery", ("celery",), "tracepanel.integrations.celery"),
     Integration("dramatiq", "Dramatiq", ("dramatiq",), "tracepanel.integrations.dramatiq"),
     Integration("rq", "RQ", ("rq",), "tracepanel.integrations.rq"),
