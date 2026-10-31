@@ -20,9 +20,18 @@ from collections.abc import Awaitable, Callable, Generator, Iterator, Mapping
 from typing import Any, ParamSpec, TypeVar, overload
 
 from tracepanel.core import conf
-from tracepanel.core.context import current_span, current_trace, now_us, record_span, start_span, start_trace
+from tracepanel.core.context import (
+    current_span,
+    current_trace,
+    now_us,
+    profile_current,
+    record_span,
+    start_span,
+    start_trace,
+)
 from tracepanel.core.frames import safe_repr
 from tracepanel.core.model import Attrs, AttrValue, Span, Trace
+from tracepanel.core.profile import MEMORY, TIME
 from tracepanel.storage.transport import complete
 
 P = ParamSpec("P")
@@ -152,3 +161,13 @@ def set_attr(key: str, value: object, *, on_trace: bool = False) -> None:
 def event(name: str, *, attrs: Mapping[str, object] | None = None, **values: object) -> None:
     """Mark a moment on the timeline (an `event` span with no duration), e.g. "cache warmed"."""
     record_span("event", name, start=now_us(), duration=0, attrs=_attrs(attrs, values))
+
+
+def profile(*, memory: bool = False) -> bool:
+    """Profile the rest of the current trace, from here: a flame graph of where its time goes, as the header asks.
+
+    Called in the trace's own code (a view, a task, a command); the tasks it queues and the calls it makes to your
+    other services are profiled too. `memory=True` counts its memory as well. The root span's `profile.reason` is
+    "code". Whether the trace is profiled now: False outside a trace, or with `profile_enabled = false`.
+    """
+    return profile_current(MEMORY if memory else TIME)

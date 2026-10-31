@@ -64,6 +64,7 @@ urlpatterns = [
     path("same-group/", views.same_group),
     path("health/", views.health),
     path("instrumented/", views.instrumented),
+    path("profiled-by-code/", views.profiled_by_code),
     path("enqueue/", views.enqueue),
     path("run-eager/", views.run_eager),
     path("async/users/", views.async_users),

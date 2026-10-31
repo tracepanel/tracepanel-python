@@ -218,6 +218,14 @@ def instrumented(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"count": score(count)})
 
 
+def profiled_by_code(request: HttpRequest) -> JsonResponse:
+    import tracepanel  # noqa: PLC0415
+    from tests.profiles import sampled  # noqa: PLC0415
+
+    tracepanel.profile()
+    return JsonResponse({"turns": sampled(0.02)})
+
+
 def score(count: int) -> int:
     return count + 1
 

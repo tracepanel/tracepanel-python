@@ -21,9 +21,12 @@
   `slow_sql_ms_by_db` and `long_transaction_ms_by_db` as mappings in
   `pyproject.toml`, `tracepanel.toml` or Django's settings. They win over
   the limit for every database and the agent's own for a warehouse.
+- `tracepanel.profile()` profiles the rest of the current trace from code,
+  and the tasks it queues and the calls it makes from there.
+  `memory=True` counts its memory too.
 - A profiled trace's root span says why it was profiled in
-  `profile.reason`: `setting`, `header`, `cookie` or `parent`. The setting
-  wins when it profiles every trace anyway.
+  `profile.reason`: `setting`, `header`, `cookie`, `parent` or `code`. The
+  setting wins when it profiles every trace anyway.
 
 ### Fixed
 
