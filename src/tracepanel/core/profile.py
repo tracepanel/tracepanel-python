@@ -1,9 +1,10 @@
 """Where a trace's time goes in code: a sampling profiler (the trace's `profile`, a flame graph in the console).
 
 One daemon thread looks at the stacks of the threads running a profiled trace every `profile_interval_ms`, and counts
-each stack it sees, with the 10 ms stretch of the trace it was seen in (`bucket_us`, a stack's `at`). It starts with
-the first profiled trace and stops once none has run for a while. A frame that waits rather than computes (the event
-loop's select, a sleep, a socket read, a lock: core.waits) says so (`waiting`).
+each stack it sees, with the 10 ms stretch of the trace it was seen in (`bucket_us`, a stack's `at`). A stack seen
+late (the sampler waited for the GIL while the trace's code ran) counts for the ticks since the last one it counted.
+It starts with the first profiled trace and stops once none has run for a while. A frame that waits rather than
+computes (the event loop's select, a sleep, a socket read, a lock: core.waits) says so (`waiting`).
 
 Async code: a trace begun in an asyncio Task is that Task's. While the loop runs the Task, the thread's stack is the
 trace's, from the Task's coroutine on. While the Task waits, whatever the thread does (sits in select, runs another
@@ -15,6 +16,8 @@ as `dropped` for each.
 A trace's work can hop to another thread: an ASGI server runs a sync view through sync_to_async, a sync endpoint
 through run_in_threadpool, in a worker thread, while the event loop's thread waits in its selector. The hop follows it
 (`followed()`): the worker thread is sampled for the trace until the call returns, and the thread it came from is not.
+Hopped from a Task, its stack there is under the Task's coroutines that await it (`hopped()`): the ORM's time behind a
+task's `await Order.objects.aupdate()` is the task function's.
 
 A trace that asked to be profiled (a request's header or cookie) hands the request on with the work it starts: a
 task's message, a job's meta, a worker channel's message carries what it asked for next to its link (`carry()`), and
@@ -96,7 +99,10 @@ class Recording:
     interval_us: int
     # Each stack seen, with how many samples saw it in each BUCKET_US stretch of the trace.
     stacks: dict[tuple[Key, ...], Counter[int]] = field(default_factory=dict)
+    # The ticks its samples count for (`samples` in its profile), and the samples taken: fewer, where the sampler
+    # waited for the GIL.
     samples: int = 0
+    taken: int = 0
     # Calls running its work in other threads: meanwhile its own thread only waits for them, and is not sampled.
     away: int = 0
     # What the trace asked for (not only the setting): the work it hands off asks the same (carry()).
@@ -108,6 +114,10 @@ class Recording:
     task: "asyncio.Task[object] | None" = None
     # Ticks whose stack couldn't be told apart from another trace's on the same thread.
     dropped: int = 0
+    # Up to when the sampler has counted ticks of it (perf_counter_ns): the next sample stands for the ticks since.
+    ticked: int = 0
+    # Where its work entered each thread it hopped into (follow()): the frame its stack there starts below.
+    entered: dict[int, FrameType] = field(default_factory=dict)
     # What it allocated (core.memory); None when memory wasn't asked for, or tracemalloc couldn't trace.
     heap: memory.Memory | None = None
     # Another trace ran in the process meanwhile: its allocations and pauses are in this one's too.
@@ -227,11 +237,14 @@ class Sampler:
         with self._lock:
             recording.away += 1
             self._threads.setdefault(thread_id, []).append(recording)
+            # The frame the work runs under here: what the thread did to get to it (its pool's loop) isn't the trace's.
+            recording.entered[thread_id] = sys._getframe(2)  # noqa: SLF001
         try:
             yield
         finally:
             with self._lock:
                 recording.away -= 1
+                recording.entered.pop(thread_id, None)
                 running = self._threads.get(thread_id, [])
                 if recording in running:
                     running.remove(recording)
@@ -332,10 +345,10 @@ def _attribute(thread_id: int, frame: FrameType, recordings: list[Recording], no
     ]
     if not in_tasks:
         if len(recordings) == 1:
-            count(recordings[0], thread_stack(frame), now)
+            count(recordings[0], hopped(recordings[0], thread_id, frame), now, _ticks(recordings[0], now))
         else:
             for recording in recordings:
-                recording.dropped += 1
+                recording.dropped += _ticks(recording, now)
         return
     running = asyncio.current_task(in_tasks[0].loop)
     if running is None:
@@ -344,18 +357,33 @@ def _attribute(thread_id: int, frame: FrameType, recordings: list[Recording], no
     else:
         owners = _owners(running, in_tasks)
     if len(owners) == 1:
-        count(owners[0], thread_stack(frame, running), now)
+        count(owners[0], thread_stack(frame, running), now, _ticks(owners[0], now))
     else:
         for recording in owners:
-            recording.dropped += 1
+            recording.dropped += _ticks(recording, now)
     for recording in in_tasks:
         if recording in owners:
             continue
         if recording.task is running:
             # Its Task runs what another trace started inside it, not profiled on its own.
-            recording.dropped += 1
+            recording.dropped += _ticks(recording, now)
             continue
-        count(recording, awaiting(recording.task), now)
+        count(recording, awaiting(recording.task), now, _ticks(recording, now))
+
+
+def _ticks(recording: Recording, now: int) -> int:
+    """The ticks a sample of a trace taken `now` stands for: those since the sampler last counted one of it.
+
+    The sampler wakes every tick, but takes its sample only once it has the GIL: while the trace's thread runs Python
+    code, a tick or several later. Counted one each, the time the trace computed would be undercounted next to the
+    time it waited (the GIL free, the sampler on time), and a few milliseconds of its own code often not seen at all.
+    """
+    interval = recording.interval_us * 1000
+    since = max(recording.ticked, recording.started)
+    ticks = max(1, (now - since) // interval)
+    # What is left of a tick counts with the next sample: the sampler's sleep, a little over a tick, adds up.
+    recording.ticked = since + ticks * interval
+    return ticks
 
 
 def _owners(running: "asyncio.Task[object]", recordings: list[Recording]) -> list[Recording]:
@@ -388,7 +416,7 @@ def followed(func: Callable[P, R]) -> Callable[P, R]:
     return call
 
 
-def stack(frame: FrameType | None, root: CodeType | None = None) -> tuple[Key, ...]:
+def stack(frame: FrameType | None, root: CodeType | FrameType | None = None) -> tuple[Key, ...]:
     """A thread's stack, outermost frame first, without this package's frames; from `root`'s frame on, if given."""
     keys: list[Key] = []
     while frame is not None and len(keys) < MAX_DEPTH:
@@ -396,18 +424,41 @@ def stack(frame: FrameType | None, root: CodeType | None = None) -> tuple[Key, .
         code = frame.f_code
         if not (name or "").startswith(_OWN):
             keys.append((code, name, None, False))
-        if code is root:
+        if code is root or frame is root:
             break
         frame = frame.f_back
     keys.reverse()
     return tuple(keys)
 
 
-def thread_stack(frame: FrameType, task: "asyncio.Task[object] | None" = None) -> tuple[Key, ...]:
-    """What a thread runs: its stack, from the running Task's coroutine on, and the C call that waits, if any."""
-    keys = stack(frame, _code(task.get_coro()) if task is not None else None)
+def thread_stack(
+    frame: FrameType, task: "asyncio.Task[object] | None" = None, root: FrameType | None = None
+) -> tuple[Key, ...]:
+    """What a thread runs: its stack, from the running Task's coroutine (or `root`'s frame) on, and its waiting C call.
+
+    The C call that waits is there only when the innermost Python frame is making one.
+    """
+    keys = stack(frame, _code(task.get_coro()) if task is not None else root)
     waited = waits.calling(frame) if keys else None
     return (*keys, (None, waited, None, True)) if waited is not None else keys
+
+
+def hopped(recording: Recording, thread_id: int, frame: FrameType) -> tuple[Key, ...]:
+    """What a thread runs for a trace: its stack, under the trace's Task's coroutines where its work hopped from one.
+
+    An ORM call through sync_to_async, a sync endpoint run in a thread pool: the work is the time of the app's code
+    that awaits it, as if run in place. A task's `await Order.objects.aupdate()` is the task's function's time, not a
+    thread's of the framework's.
+    """
+    keys = thread_stack(frame, root=recording.entered.get(thread_id))
+    if thread_id == recording.thread_id or recording.task is None:
+        return keys
+    awaits = awaiting(recording.task)
+    if not awaits:
+        return keys
+    # The call it awaits runs here: no longer the frame that waits.
+    code, module, line, _ = awaits[-1]
+    return (*awaits[:-1], (code, module, line, False), *keys)
 
 
 def awaiting(task: "asyncio.Task[object] | None") -> tuple[Key, ...]:
@@ -459,21 +510,22 @@ def _code(awaitable: object) -> CodeType | None:
     return code if isinstance(code, CodeType) else None
 
 
-def count(recording: Recording, keys: tuple[Key, ...], now: int | None = None) -> None:
-    """Count one sample of a stack, seen `now` (perf_counter_ns; the trace's start if not given).
+def count(recording: Recording, keys: tuple[Key, ...], now: int | None = None, ticks: int = 1) -> None:
+    """Count a sample of a stack, seen `now` (perf_counter_ns; the trace's start if not given), as `ticks` ticks.
 
     Past MAX_STACKS distinct ones, a new stack counts as "(other)".
     """
     if not keys:
         return
-    recording.samples += 1
+    recording.samples += ticks
+    recording.taken += 1
     at = max(now - recording.started, 0) // (BUCKET_US * 1000) if now is not None else 0
     seen = recording.stacks.get(keys)
     if seen is None:
         if len(recording.stacks) >= MAX_STACKS:
             keys = (OTHER,)
         seen = recording.stacks.setdefault(keys, Counter())
-    seen[at] += 1
+    seen[at] += ticks
 
 
 def document(recording: Recording, measured: memory.Measured | None = None) -> dict[str, object]:

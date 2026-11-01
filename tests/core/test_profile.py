@@ -583,3 +583,54 @@ def test_a_sleep_in_sync_code_is_a_waiting_frame(monkeypatch: pytest.MonkeyPatch
 
     assert others <= {"test_a_sleep_in_sync_code_is_a_waiting_frame", "sleeper"}
     assert int(str(stack["count"])) > int(str(document["samples"])) / 2
+
+
+def test_a_sample_seen_late_stands_for_the_ticks_since_the_last_one() -> None:
+    # A tick every 1 ms. The sampler wakes a little late after each sleep, and 3.4 ms late while the trace's code held
+    # the GIL; two threads running its work are seen in one tick.
+    recording = Recording(thread_id=1, interval_us=1000, started=0)
+
+    ticks = [profile._ticks(recording, now) for now in (1_300_000, 2_600_000, 5_400_000, 5_400_000, 7_100_000)]  # noqa: SLF001
+
+    assert ticks == [1, 1, 3, 1, 1]
+    assert recording.ticked == 7_000_000
+
+
+async def update_orders() -> None:
+    # An ORM call awaited, as Django's aupdate() runs it: in a thread of the loop's executor.
+    await asyncio.get_running_loop().run_in_executor(None, profile.followed(busy), 0.3)
+
+
+async def profiled_hop() -> dict[str, object]:
+    with start_trace("task", "update_orders", profile=True) as trace:
+        await update_orders()
+    assert trace.profile is not None
+    return trace.profile
+
+
+def test_work_a_task_hands_to_a_thread_is_under_the_coroutine_that_awaits_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRACEPANEL_PROFILE_INTERVAL_MS", "1")
+    conf.reset()
+
+    document = asyncio.run(profiled_hop())
+    hopped = [stack for stack in stacks(document) if "busy" in frame_names(document, stack)]
+    under = [stack for stack in hopped if frame_names(document, stack)[-2:] == ["update_orders", "busy"]]
+
+    # The thread's own frames (its pool's loop) aren't the trace's: the work is the coroutine's that awaits it. A tick
+    # can land as the thread starts it, before the Task has got to its await.
+    assert not any("_worker" in frame_names(document, stack) for stack in hopped)
+    assert count(under) > 0.9 * count(hopped)
+    # It ran most of the time, counted for the ticks the sampler waited for the GIL meanwhile.
+    assert share_of(document, "busy") > 0.5
+
+
+def count(found: list[dict[str, object]]) -> int:
+    """The samples of some stacks of a profile."""
+    return sum(int(str(stack["count"])) for stack in found)
+
+
+def share_of(document: dict[str, object], function: str) -> float:
+    """The share of a profile's samples whose stack runs through the function."""
+    total = sum(int(str(stack["count"])) for stack in stacks(document))
+    inside = sum(int(str(stack["count"])) for stack in stacks(document) if function in frame_names(document, stack))
+    return inside / total

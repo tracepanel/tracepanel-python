@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A profiled async task shows its own code every time. The ORM call it
+  awaits (`await Order.objects.aupdate()`, run in a thread by
+  `sync_to_async`) was sampled in that thread as the thread pool's
+  code, never as the task's, and a stack the profiler saw late, having
+  waited for the GIL while the task's code ran, counted as one sample,
+  however long it waited. A Taskiq task that awaits a carrier's API and
+  updates its orders read "waiting 100%" with no code of yours in most
+  runs. Now the work a task hands to a thread is under the coroutine
+  that awaits it, and a sample seen late counts for the time since the
+  last one. The task's own code shows in every run, and its samples add
+  up to its duration.
+
 ## 0.10.1 (2026-11-01)
 
 ### Fixed

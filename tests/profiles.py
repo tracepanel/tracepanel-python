@@ -54,12 +54,12 @@ def sampled(seconds: float, *, samples: int = 20) -> int:
     However long a loaded machine keeps the sampler waiting. Just busy outside a profiled trace.
     """
     recording = profile.current.get()
-    start = recording.samples if recording is not None else 0
+    start = recording.taken if recording is not None else 0
     end = time.perf_counter() + seconds
     deadline = end + 10
     turns = 0
     while time.perf_counter() < end or (
-        recording is not None and recording.samples - start < samples and time.perf_counter() < deadline
+        recording is not None and recording.taken - start < samples and time.perf_counter() < deadline
     ):
         turns += 1
     return turns
