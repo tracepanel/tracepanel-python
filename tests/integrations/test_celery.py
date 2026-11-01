@@ -392,7 +392,7 @@ def test_eager_and_ignored_tasks_send_no_events(recorder: Recorder, settings: Se
     settings.TRACEPANEL = {"ignore_tasks": ["tests.project.jobs.count_users"]}
     jobs.count_users.delay("ignored")
 
-    assert recorder.events == []
+    assert without_worker_events(recorder.events) == []
 
 
 @pytest.mark.django_db
@@ -400,7 +400,7 @@ def test_arguments_are_left_out_of_the_events_too(recorder: Recorder, settings: 
     settings.TRACEPANEL = {"capture_task_args": False}
 
     jobs.count_users.delay("secret")
-    (event,) = recorder.events
+    (event,) = without_worker_events(recorder.events)
 
     assert {"args", "kwargs"} & event.keys() == set()
 
@@ -667,7 +667,7 @@ def test_a_task_killed_by_its_hard_time_limit_still_has_its_trace(recorder: Reco
     )
     assert task.links == [Link(kind="enqueued_by", trace_id="01TRACE", span_id="01SPAN")]
 
-    assert recorder.events == [
+    assert without_worker_events(recorder.events) == [
         {
             "event": "finished",
             "system": "celery",
@@ -700,7 +700,7 @@ def test_a_pool_process_that_died_leaves_its_runs_trace_to_the_main_process(reco
         [("billiard.exceptions.WorkerLostError", False)],
     )
 
-    assert recorder.events == [
+    assert without_worker_events(recorder.events) == [
         {
             "event": "finished",
             "system": "celery",
@@ -723,7 +723,7 @@ def test_a_failure_of_the_run_itself_is_left_to_its_own_trace(recorder: Recorder
 
     request.on_failure(einfo, return_ok=True)
 
-    assert (recorder.traces, recorder.events) == ([], [])
+    assert (recorder.traces, without_worker_events(recorder.events)) == ([], [])
 
 
 def cut_short_once(original: Callable[..., Any]) -> Callable[..., Any]:
