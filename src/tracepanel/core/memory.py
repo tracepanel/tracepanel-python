@@ -19,6 +19,7 @@ allocations in its numbers too.
 Nothing counts all a trace allocated (`allocated`): tracemalloc keeps what is live, not a running total.
 """
 
+import functools
 import sys
 import sysconfig
 import threading
@@ -47,6 +48,9 @@ IDLE_TICKS = 400
 # This package's own allocations are its own business: made in its code, or in the standard library's on its behalf.
 _OWN = str(Path(__file__).resolve().parents[1])
 _STDLIB = tuple({str(Path(sysconfig.get_paths()[key]).resolve()) for key in ("stdlib", "platstdlib")})
+# The installed packages, this one among them: inside the standard library's folders in a virtual environment
+# (.venv/lib/python3.14 is its platstdlib, site-packages under it) and in a system Python, never the library.
+_PACKAGES = tuple({str(Path(sysconfig.get_paths()[key]).resolve()) for key in ("purelib", "platlib")})
 # Files whose functions are kept by the lines they span, and lines looked up; past them the table starts again.
 _MAX_FILES = 256
 _MAX_PLACES = 20_000
@@ -345,9 +349,23 @@ def _function(functions: list[CodeType], inner: CodeType | None) -> CodeType | N
 def _own(traceback: tuple[Place, ...]) -> bool:
     """Whether this package made the allocation: the innermost frame outside the standard library is its own."""
     for filename, _ in traceback:
-        if not filename.startswith(_STDLIB):
-            return filename.startswith(_OWN)
+        path = _resolved(filename)
+        if not _in_stdlib(path):
+            return path.startswith(_OWN)
     return False
+
+
+@functools.lru_cache(maxsize=4096)
+def _resolved(filename: str) -> str:
+    """A file's path as the folders above are named: resolved, as a symlinked environment's files aren't."""
+    if filename.startswith("<"):
+        return filename
+    return str(Path(filename).resolve())
+
+
+def _in_stdlib(path: str) -> bool:
+    """The standard library's, not an installed package's in its folder (a virtual environment's site-packages)."""
+    return path.startswith(_STDLIB) and not path.startswith(_PACKAGES)
 
 
 def _at(place: Place, code: CodeType | None, module: str | None) -> SiteKey:

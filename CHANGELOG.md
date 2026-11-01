@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A profiled trace's memory no longer counts Tracepanel's own
+  allocations in a virtual environment. Its site-packages is inside
+  the environment's standard library folder, so the profiler's
+  allocations read as the standard library's made for the app: the
+  Memory view showed `tracepanel` 15% and `count` in
+  `tracepanel/core/profile.py` as a site.
+
 ## 0.10.0 (2026-10-31)
 
 ### Added

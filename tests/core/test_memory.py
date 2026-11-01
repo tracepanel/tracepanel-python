@@ -343,3 +343,20 @@ def test_a_trace_beside_others_says_its_numbers_are_shared() -> None:
     assert memory_of(alone)["shared"] is False
     assert memory_of(beside)["shared"] is True
     assert [memory_of(trace)["shared"] for trace in results] == [True, True]
+
+
+def test_the_packages_own_allocations_are_left_out_in_a_virtual_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A virtual environment's site-packages is inside its platstdlib: this package there isn't the standard library."""
+    venv = "/srv/shop/.venv/lib/python3.14"
+    python = "/srv/python/lib/python3.14"
+    monkeypatch.setattr(memory, "_STDLIB", (venv, python))
+    monkeypatch.setattr(memory, "_PACKAGES", (f"{venv}/site-packages",))
+    monkeypatch.setattr(memory, "_OWN", f"{venv}/site-packages/tracepanel")
+    sampler = ((f"{venv}/site-packages/tracepanel/core/profile.py", 476), (f"{python}/threading.py", 1012))
+    on_its_behalf = ((f"{python}/collections/__init__.py", 700), *sampler)
+    apps = ((f"{python}/json/encoder.py", 200), ("/srv/shop/shop/views.py", 12))
+    a_librarys = ((f"{venv}/site-packages/redis/client.py", 144), ("/srv/shop/shop/tasks.py", 30))
+
+    own = [memory._own(traceback) for traceback in (sampler, on_its_behalf, apps, a_librarys)]  # noqa: SLF001
+
+    assert own == [True, True, False, False]
