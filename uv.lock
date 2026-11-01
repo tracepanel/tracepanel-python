@@ -4952,7 +4952,7 @@ taskiq = [
 
 [[package]]
 name = "tracepanel-agent"
-version = "0.10.2"
+version = "0.10.3"
 source = { directory = "../tracepanel" }
 
 [[package]]
