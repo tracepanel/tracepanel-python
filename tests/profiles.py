@@ -48,12 +48,12 @@ def busy(seconds: float = 0.05) -> int:
     return turns
 
 
-def sampled(seconds: float, *, samples: int = 20) -> int:
-    """Busy for a while, and until the profiler has sampled the current trace that many times since.
+def sampled(seconds: float, *, samples: int = 20, recording: profile.Recording | None = None) -> int:
+    """Busy for a while, and until the profiler has sampled the current trace (or `recording`) that many times since.
 
     However long a loaded machine keeps the sampler waiting. Just busy outside a profiled trace.
     """
-    recording = profile.current.get()
+    recording = recording or profile.current.get()
     start = recording.taken if recording is not None else 0
     end = time.perf_counter() + seconds
     deadline = end + 10

@@ -22,8 +22,9 @@ from huey.exceptions import CancelExecution
 from pytest_django.fixtures import Settings
 
 from tests.agentstore import AgentStore
-from tests.profiles import busy, share
+from tests.profiles import busy, sampled, share
 from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, stopped, without_worker_events
+from tracepanel.core import profile
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Link, Span, Trace
 from tracepanel.integrations import huey as integration
@@ -46,6 +47,17 @@ def count_users(limit: int) -> int:
 @huey.task()
 def crunch(label: str) -> str:
     busy()
+    return label
+
+
+# The profiled trace that runs `crunch_for_caller` in immediate mode: the task's own trace isn't profiled.
+caller: list[profile.Recording] = []
+
+
+@huey.task()
+def crunch_for_caller(label: str) -> str:
+    # Until the caller's profile has samples of it, however long a loaded machine keeps the sampler waiting.
+    sampled(0.05, recording=caller[0])
     return label
 
 
@@ -714,7 +726,10 @@ def test_a_task_a_profiled_request_enqueues_is_profiled_too(traces: list[Trace])
 def test_an_immediate_task_is_in_its_profiled_callers_profile(traces: list[Trace]) -> None:
     huey.immediate = True
     with start_trace("http", "POST /reports", profile=True) as request:
-        crunch("immediate")
+        recording = profile.current.get()
+        assert recording is not None
+        caller[:] = [recording]
+        crunch_for_caller("immediate")
 
     assert profiled(traces) == {"('immediate',)": False}
-    assert share(request, "busy") > 0
+    assert share(request, "crunch_for_caller") > 0

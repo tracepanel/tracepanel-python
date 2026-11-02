@@ -19,8 +19,10 @@ import django
 import pytest
 import yaml
 from dirty_equals import IsList, IsPartialDict, IsPositiveInt, IsStr
+from django.conf import settings as django_settings
 from django.contrib.auth.models import User
 from django.test import Client
+from pytest_django.fixtures import Settings
 
 from tests.agentstore import AGENT_SCHEMAS, AgentStore, newer
 from tracepanel.console import proxy
@@ -394,6 +396,20 @@ def django_app(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runtime, "_framework", None)
     monkeypatch.setattr(runtime, "_named", None)
     runtime.set_framework("Django")
+
+
+def test_the_hello_reads_the_settings_without_djangos_cache(
+    tmp_path: Path, django_app: None, settings: Settings
+) -> None:
+    # The writer's thread says hello. A value django.conf.settings kept from there, read as a test's override began,
+    # would be the value from before it, in the test's own thread too.
+    settings.EMAIL_HOST = "mail.example.com"
+    hello = _hello(tmp_path, conf.get_config())
+    app = hello["app"]
+    assert isinstance(app, dict)
+
+    assert app["settings"]["EMAIL_HOST"] == '"mail.example.com"'
+    assert vars(django_settings).keys() & {"EMAIL_HOST", "SECRET_KEY", "PASSWORD_HASHERS"} == set()
 
 
 def test_the_hello_carries_the_apps_settings_masked_and_its_versions(tmp_path: Path, django_app: None) -> None:
