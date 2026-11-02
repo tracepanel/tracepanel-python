@@ -13,6 +13,10 @@
 
 ### Fixed
 
+- PostgreSQL plans nest right. A first-level node no longer sits at
+  the root's depth with its details two levels below it: each "->"
+  level adds one, and a node's details sit one level below it. MySQL's
+  EXPLAIN ANALYZE tree nests by its own indent too.
 - EXPLAIN ANALYZE runs inside a transaction that is always rolled back:
   a volatile function the query calls leaves nothing behind. Under
   Django it is an atomic block, a savepoint when the app is already in

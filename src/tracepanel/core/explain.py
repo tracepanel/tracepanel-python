@@ -356,14 +356,24 @@ def _sqlite(rows: list[tuple[object, ...]]) -> list[PlanLine]:
 
 
 def _postgres(rows: list[tuple[object, ...]]) -> list[PlanLine]:
+    """A plan as text (PostgreSQL's, MySQL's ANALYZE): a line sits a level below the nearest node above, indented less.
+
+    Nodes are the "->" lines and the top ones. PostgreSQL indents a level by 6 and a node's details (Filter:, Hash
+    Cond:) by 6 past its arrow; MySQL's tree, a single row, indents a level by 4.
+    """
     lines: list[PlanLine] = []
+    nodes: list[tuple[int, int]] = []  # The open nodes, outermost first: (indent, depth).
     for (row,) in rows:
-        text = str(row)
-        indent = len(text) - len(text.lstrip())
-        body = text.strip().removeprefix("->").strip()
-        # Nodes are "->" lines indented 6 per level; their detail lines (Filter:, Buffers:) sit 2 deeper.
-        depth = (indent + 2) // 6 if text.strip().startswith("->") else (indent + 4) // 6
-        lines.append(PlanLine(depth, body, _postgres_warning(body)))
+        for text in str(row).splitlines():
+            indent = len(text) - len(text.lstrip())
+            node = text.strip().startswith("->")
+            body = text.strip().removeprefix("->").strip()
+            while nodes and nodes[-1][0] >= indent:
+                nodes.pop()
+            depth = nodes[-1][1] + 1 if nodes else 0
+            if node or indent == 0:
+                nodes.append((indent, depth))
+            lines.append(PlanLine(depth, body, _postgres_warning(body)))
     return lines
 
 
