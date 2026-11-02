@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- EXPLAIN takes a query with CTEs (`WITH ... SELECT`, `WITH RECURSIVE`),
+  by the rule the agent and every SDK share: a CTE that changes data
+  (`WITH gone AS (DELETE ... RETURNING id) SELECT ...`) or a
+  `SELECT ... INTO` is refused with the reason, and a `FOR UPDATE` /
+  `FOR SHARE` query is explained but not analyzed. Keywords inside
+  strings, quoted names and comments don't count.
+
+### Fixed
+
+- EXPLAIN ANALYZE runs inside a transaction that is always rolled back:
+  a volatile function the query calls leaves nothing behind. Under
+  Django it is an atomic block, a savepoint when the app is already in
+  a transaction.
+
 ## 0.11.0 (2026-11-02)
 
 ### Fixed

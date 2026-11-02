@@ -232,13 +232,19 @@ _ASYNCPG: dict[str, _core.Reads] = {
 def _asyncpg_explainer(params: dict[str, Any]) -> _core.plans.Execute:
     import asyncpg  # noqa: PLC0415
 
-    # PostgreSQL's EXPLAIN takes no session around it.
-    def execute(sql_text: str, values: object, _session: _core.plans.Session) -> tuple[_core.plans.Rows, list[str]]:
+    # The session around it is EXPLAIN ANALYZE's transaction, rolled back whatever happens.
+    def execute(sql_text: str, values: object, session: _core.plans.Session) -> tuple[_core.plans.Rows, list[str]]:
         async def explain() -> tuple[_core.plans.Rows, list[str]]:
             connection = await asyncpg.connect(**params)
             try:
-                args = list(values.values()) if isinstance(values, dict) else list(_core.params_of(values) or ())
-                records = await connection.fetch(sql_text, *args)
+                if session is not None:
+                    await connection.execute(session[0])
+                try:
+                    args = list(values.values()) if isinstance(values, dict) else list(_core.params_of(values) or ())
+                    records = await connection.fetch(sql_text, *args)
+                finally:
+                    if session is not None:
+                        await connection.execute(session[1])
                 columns = list(records[0].keys()) if records else ["QUERY PLAN"]
                 return [tuple(record.values()) for record in records], columns
             finally:

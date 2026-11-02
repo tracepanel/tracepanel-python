@@ -2,8 +2,9 @@
 
 The framework runs the statement on the database the query came from (Django: tracepanel.django.explain).
 
-Only statements captured with their parameters (see `capture_sql_params`) and starting with SELECT are explained.
-`analyze` (PostgreSQL, MySQL) executes the query to measure it, which is why writes are never accepted.
+Only statements captured with their parameters (see `capture_sql_params`) that only read are explained: a SELECT, or
+a WITH whose CTEs and final statement only read (`refusal`, the rule the agent and every SDK share). `analyze`
+(PostgreSQL, MySQL) executes the query to measure it, inside a transaction that is always rolled back.
 
 SQL Server has no EXPLAIN: its session is set to show plans (SET SHOWPLAN_ALL ON) for the statement, on the same
 connection, then set back. Its plan is estimated only, and its parameters are written into the statement as literals:
@@ -18,7 +19,6 @@ from typing import Any
 from tracepanel.core.model import Scalar
 from tracepanel.core.services import system
 
-_SELECT = re.compile(r"^\s*SELECT\b", re.IGNORECASE)
 # What a placeholder can't be inside: quoted strings and names (SQL Server's [names] too, not an ARRAY[%s]), and
 # comments.
 _QUOTED = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|`[^`]*`|\[[^\W\d][^\]]*\]|--[^\n]*|/\*.*?\*/", re.DOTALL)
@@ -39,6 +39,191 @@ _MSSQL_NAME = re.compile(r"\[([^\]]+)\]")
 _MSSQL_PARAM = re.compile(r"%%|%s|%\((\w+)\)s|\?")
 # The statements around a SQL Server EXPLAIN, on its connection.
 MSSQL_SESSION = ("SET SHOWPLAN_ALL ON", "SET SHOWPLAN_ALL OFF")
+# The transaction around an EXPLAIN ANALYZE, which runs the query: whatever it did is rolled back. A framework with
+# transactions of its own (Django's atomic) runs it in one of those instead.
+ROLLBACK_SESSIONS: dict[str, tuple[str, str]] = {
+    "postgresql": ("BEGIN", "ROLLBACK"),
+    "mysql": ("START TRANSACTION", "ROLLBACK"),
+}
+
+
+# ---------- which statements are explained: the rule the agent and every SDK share ----------
+
+NOT_SELECT = "Only SELECT statements can be explained."
+_ONE_STATEMENT = "Only one statement can be explained at a time."
+_CHANGING = frozenset({"INSERT", "UPDATE", "DELETE", "MERGE"})
+# What can follow a WITH's CTEs: the statement they are for.
+_MAIN = frozenset({"SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "VALUES", "TABLE"})
+
+
+@dataclass(slots=True, frozen=True)
+class _Token:
+    """A word (upper-cased) or any other token (a quoted string or name, a number, a sign), at its depth in ()."""
+
+    text: str
+    word: bool
+    depth: int
+
+
+def refusal(statement: str, *, analyze: bool = False) -> str | None:
+    """Why a statement isn't explained (with `analyze`, analyzed), or None when it is.
+
+    - It starts (after its comments) with SELECT, or with WITH and ends in a SELECT.
+    - It is one statement: nothing follows a `;` but comments.
+    - No INSERT, UPDATE, DELETE or MERGE anywhere (a data-modifying CTE), no INTO (`SELECT ... INTO` makes a table).
+    - ANALYZE runs it: a SELECT that locks rows (FOR UPDATE, FOR SHARE, LOCK IN SHARE MODE) is explained, not analyzed.
+
+    Its words are read outside quoted strings and names and comments: a keyword in a string changes nothing.
+    """
+    tokens = _tokens(statement)
+    words = [token.text if token.word else "" for token in tokens]
+    first = words[0] if words else ""
+    if first not in {"SELECT", "WITH"}:
+        return NOT_SELECT
+    end = next(
+        (at for at, token in enumerate(tokens) if token.depth == 0 and token.text == ";" and not token.word), None
+    )
+    if end is not None and end + 1 < len(tokens):
+        return _ONE_STATEMENT
+    # The statement a WITH's CTEs are for: the first of its words outside them.
+    main = (
+        next((at for at, token in enumerate(tokens) if token.word and token.depth == 0 and token.text in _MAIN), None)
+        if first == "WITH"
+        else 0
+    )
+    if (why := _changing(words, main)) is not None:
+        return why
+    if main is None or words[main] != "SELECT":
+        return NOT_SELECT
+    return _locking(words) if analyze else None
+
+
+def _previous(words: list[str], at: int) -> str:
+    return words[at - 1] if at > 0 else ""
+
+
+def _locks(words: list[str], at: int) -> bool:
+    """Whether UPDATE or SHARE at `at` is a lock's: FOR UPDATE, FOR NO KEY UPDATE, FOR (KEY) SHARE."""
+    return _previous(words, at) in {"FOR", "KEY"}
+
+
+def _changing(words: list[str], main: int | None) -> str | None:
+    """Why a statement that writes isn't explained: an INSERT, UPDATE, DELETE or MERGE (a CTE's?), or an INTO."""
+    for at, word in enumerate(words):
+        if word in _CHANGING and not (word == "UPDATE" and _locks(words, at)):
+            inside = " inside WITH" if words[0] == "WITH" and (main is None or at < main) else ""
+            return _changes(f"{word}{inside}")
+    return _changes("SELECT INTO") if "INTO" in words else None
+
+
+def _locking(words: list[str]) -> str | None:
+    """Why a SELECT that locks rows isn't analyzed."""
+    for at, word in enumerate(words):
+        if word == "UPDATE" and _locks(words, at):
+            locks = "FOR UPDATE"
+        elif word == "SHARE" and _locks(words, at):
+            locks = "FOR SHARE"
+        elif word == "SHARE" and _previous(words, at) == "IN" and _previous(words, at - 1) == "LOCK":
+            locks = "LOCK IN SHARE MODE"
+        else:
+            continue
+        return f"This query locks rows ({locks}): it can be explained, not analyzed."
+    return None
+
+
+def _changes(what: str) -> str:
+    return f"This query changes data ({what}): it isn't explained."
+
+
+def _tokens(statement: str) -> list[_Token]:  # noqa: C901, PLR0912 (one branch per kind of token)
+    """The statement's tokens, without its comments and spaces.
+
+    A quoted string or name ('...' with '', E'...' with backslashes too, "...", `...`, [...], PostgreSQL's
+    $tag$...$tag$) is one token whose text is never read. The inside of MySQL's /*! ... */, which MySQL runs, is read.
+    """
+    chars = statement
+    tokens: list[_Token] = []
+    depth = 0
+    at = 0
+    size = len(chars)
+    while at < size:
+        char = chars[at]
+        following = chars[at + 1] if at + 1 < size else ""
+        if char.isspace():
+            at += 1
+            continue
+        if char == "-" and following == "-":
+            at = _past(chars, at + 2, "\n")
+            continue
+        if char == "/" and following == "*":
+            at = at + 3 if chars[at + 2 : at + 3] == "!" else _past(chars, at + 2, "*/")
+            continue
+        if char == "'":
+            # E'...' (PostgreSQL's escape string): a backslash escapes the next character.
+            escapes = at > 0 and chars[at - 1] in "Ee" and bool(tokens) and tokens[-1].word and tokens[-1].text == "E"
+            at = _quoted(chars, at, "'", escapes=escapes)
+            text, word = "'", False
+        elif char in '"`':
+            at = _quoted(chars, at, char, escapes=False)
+            text, word = char, False
+        elif char == "[" and (following.isalpha() or following == "_"):
+            at = _past(chars, at + 1, "]")
+            text, word = "[", False
+        elif char == "$" and (tag := _dollar_tag(chars, at)) is not None:
+            at = _past(chars, at + len(tag), tag)
+            text, word = "$", False
+        elif char.isalpha() or char == "_":
+            start = at
+            while at < size and (chars[at].isalnum() or chars[at] in "_$"):
+                at += 1
+            text, word = chars[start:at].upper(), True
+        elif "0" <= char <= "9":
+            while at < size and (chars[at].isalnum() or chars[at] in "_."):
+                at += 1
+            text, word = "0", False
+        else:
+            at += 1
+            text, word = char, False
+        if text == ")" and not word:
+            depth = max(depth - 1, 0)
+        tokens.append(_Token(text, word, depth))
+        if text == "(" and not word:
+            depth += 1
+    return tokens
+
+
+def _quoted(chars: str, at: int, quote: str, *, escapes: bool) -> int:
+    """Where a quote opened at `at` ends: past its closing `quote` (doubled, it is one inside), or the end."""
+    at += 1
+    while at < len(chars):
+        char = chars[at]
+        if (escapes and char == "\\") or (char == quote and chars[at + 1 : at + 2] == quote):
+            at += 2
+        elif char == quote:
+            return at + 1
+        else:
+            at += 1
+    return len(chars)
+
+
+def _past(chars: str, start: int, end: str) -> int:
+    """Past the first `end` from `start` on, or the statement's end."""
+    found = chars.find(end, start)
+    return len(chars) if found < 0 else found + len(end)
+
+
+def _dollar_tag(chars: str, at: int) -> str | None:
+    """PostgreSQL's dollar quote opening at `at`: $$ or $tag$ (not a $1 parameter)."""
+    end = at + 1
+    while end < len(chars):
+        char = chars[end]
+        if char == "$":
+            return chars[at : end + 1]
+        first = end == at + 1
+        if not (char.isalpha() or char == "_" or (not first and "0" <= char <= "9")):
+            return None
+        end += 1
+    return None
 
 
 class ExplainError(ValueError):
@@ -249,7 +434,7 @@ def cursor_rows(cursor: Any, sql_text: str, values: object, session: Session = N
             cursor.execute(session[1])
 
 
-def explain(  # noqa: PLR0913 (the statement, where it ran, how to run it)
+def explain(  # noqa: C901, PLR0912, PLR0913 (the statement, where it ran, how to run it: a branch per database)
     statement: str,
     params: Sequence[Scalar] | Mapping[str, Scalar] | None,
     *,
@@ -258,9 +443,8 @@ def explain(  # noqa: PLR0913 (the statement, where it ran, how to run it)
     execute: Execute,
     analyze: bool = False,
 ) -> Plan:
-    if not _SELECT.match(statement):
-        msg = "Only SELECT statements can be explained."
-        raise ExplainError(msg)
+    if (why := refusal(statement)) is not None:
+        raise ExplainError(why)
     if params is None and _PLACEHOLDER.search(_QUOTED.sub("", statement)):
         msg = "Parameters of this query were not captured (capture_sql_params is off, or a value was too large)."
         raise ExplainError(msg)
@@ -276,8 +460,12 @@ def explain(  # noqa: PLR0913 (the statement, where it ran, how to run it)
         prefix = "EXPLAIN ANALYZE " if analyze else "EXPLAIN "
     else:
         prefix, analyze = "EXPLAIN ", False
+    if analyze:
+        if (why := refusal(statement, analyze=True)) is not None:
+            raise ExplainError(why)
+        session = ROLLBACK_SESSIONS[vendor]
     rows, columns = execute(prefix + statement, params, session)
-    if session is not None:
+    if session is MSSQL_SESSION:
         lines = _mssql(columns, rows)
     elif vendor == "sqlite":
         lines = _sqlite(rows)

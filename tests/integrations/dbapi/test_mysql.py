@@ -1,12 +1,14 @@
 import asyncio
-from collections.abc import Callable
+import uuid
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
-from dirty_equals import IsPartialDict, IsStr
+from dirty_equals import IsList, IsPartialDict, IsStr
 
 from tests.integrations.dbapi.conftest import explained_meanwhile, my, my_url, mysql, sql_spans, statements, traced
 from tracepanel.integrations import dbapi
+from tracepanel.integrations import sqlalchemy as sqlalchemy_integration
 
 pytestmark = mysql
 
@@ -246,3 +248,111 @@ def test_a_connection_the_driver_opens_is_a_connect_span(driver: str) -> None:
             },
         )
     ]
+
+
+# ---------- EXPLAIN ANALYZE runs the query: whatever it does is rolled back ----------
+
+
+@pytest.fixture
+def side_effect() -> Iterator[tuple[str, Callable[[], int]]]:
+    """A CTE whose SELECT inserts a row (a function that modifies data), and how many rows its table holds."""
+    pymysql = pytest.importorskip("pymysql")
+    name = f"explained_{uuid.uuid4().hex[:12]}"
+    connection = pymysql.connect(**my(), autocommit=True)
+    try:
+        with connection.cursor() as cursor:
+            # With the binary log on, MySQL takes a function that writes only from a trusted creator.
+            cursor.execute("SET GLOBAL log_bin_trust_function_creators = 1")
+            cursor.execute(f"CREATE TABLE {name} (id INT AUTO_INCREMENT PRIMARY KEY) ENGINE=InnoDB")
+            cursor.execute(
+                f"CREATE FUNCTION {name}_add() RETURNS INT NOT DETERMINISTIC MODIFIES SQL DATA "
+                f"BEGIN INSERT INTO {name} () VALUES (); RETURN 1; END"
+            )
+
+        def rows() -> int:
+            with connection.cursor() as cursor:
+                cursor.execute(f"SELECT count(*) FROM {name}")
+                (count,) = cursor.fetchone()
+                return int(count)
+
+        yield f"WITH added AS (SELECT {name}_add() AS n) SELECT n FROM added", rows
+        with connection.cursor() as cursor:
+            cursor.execute(f"DROP FUNCTION {name}_add")
+            cursor.execute(f"DROP TABLE {name}")
+    finally:
+        connection.close()
+
+
+ANALYZED = {
+    "vendor": "mysql",
+    "alias": IsStr(),
+    "analyzed": True,
+    "lines": IsList(
+        IsPartialDict(depth=0, text=IsStr(regex=r"(?s)Table scan on added .*actual time.*")), length=(1, ...)
+    ),
+}
+
+
+@pytest.mark.parametrize("driver", DRIVERS)
+def test_analyze_of_a_cte_is_rolled_back(driver: str, side_effect: tuple[str, Callable[[], int]]) -> None:
+    statement, rows = side_effect
+    connection = DRIVERS[driver]()
+
+    def work() -> None:
+        cursor = connection.cursor()
+        cursor.execute("SELECT 1")
+        cursor.fetchall()
+        cursor.close()
+
+    try:
+        trace = traced(work)
+    finally:
+        connection.close()
+
+    plan = dbapi.explain(statement, [], str(statements(trace)[0].attrs["db.alias"]), analyze=True)
+
+    assert plan.to_dict() == ANALYZED
+    assert rows() == 0
+
+
+@pytest.mark.parametrize("dialect", ["pymysql", "mysqldb"])
+def test_sqlalchemy_analyze_is_rolled_back(dialect: str, side_effect: tuple[str, Callable[[], int]]) -> None:
+    sqlalchemy = pytest.importorskip("sqlalchemy")
+    pytest.importorskip("MySQLdb" if dialect == "mysqldb" else dialect)
+    statement, rows = side_effect
+    engine = sqlalchemy.create_engine(my_url(dialect))
+    try:
+        with engine.connect() as connection:
+            connection.execute(sqlalchemy.text("SELECT 1"))
+
+        plan = sqlalchemy_integration.explain(statement, [], sqlalchemy_integration.engine_alias(engine), analyze=True)
+    finally:
+        engine.dispose()
+
+    assert plan.to_dict() == ANALYZED
+    assert rows() == 0
+
+
+@pytest.mark.parametrize("dialect", ["aiomysql", "asyncmy"])
+def test_async_sqlalchemy_analyze_is_rolled_back(dialect: str, side_effect: tuple[str, Callable[[], int]]) -> None:
+    pytest.importorskip(dialect)
+    pytest.importorskip("greenlet")  # SQLAlchemy's asyncio
+    from sqlalchemy import text  # noqa: PLC0415
+    from sqlalchemy.ext.asyncio import create_async_engine  # noqa: PLC0415
+
+    statement, rows = side_effect
+    plan: dict[str, object] = {}
+
+    async def work() -> None:
+        engine = create_async_engine(my_url(dialect))
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+            alias = sqlalchemy_integration.engine_alias(engine.sync_engine)
+            explained = await asyncio.to_thread(sqlalchemy_integration.explain, statement, [], alias, analyze=True)
+            plan.update(explained.to_dict())
+        await engine.dispose()
+
+    asyncio.run(work())
+
+    assert plan == ANALYZED
+    assert rows() == 0

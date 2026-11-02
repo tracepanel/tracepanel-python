@@ -1,9 +1,10 @@
 import threading
+from collections.abc import Iterator
 
 import pytest
 from dirty_equals import IsInt, IsList, IsPartialDict, IsStr
 from django.contrib.auth.models import User
-from django.db import connection
+from django.db import connection, transaction
 from django.test import Client
 from pytest_django.fixtures import Settings
 
@@ -63,6 +64,12 @@ def test_explain_api(client: Client, traces: list[Trace], users: list[User], sto
     ("statement", "params", "message"),
     [
         ("UPDATE auth_user SET username = %s", ["x"], "Only SELECT statements can be explained."),
+        (
+            "WITH gone AS (DELETE FROM auth_user RETURNING id) SELECT * FROM gone",
+            [],
+            r"This query changes data \(DELETE inside WITH\): it isn't explained\.",
+        ),
+        ("SELECT * INTO copied FROM auth_user", [], r"This query changes data \(SELECT INTO\)"),
         ("SELECT * FROM auth_user WHERE id = %s", None, "Parameters of this query were not captured"),
         ("SELECT * FROM missing_table", [], "The database could not explain this query"),
     ],
@@ -79,6 +86,8 @@ def test_explain_refuses(statement: str, params: list[Scalar] | None, message: s
         "SELECT username FROM auth_user WHERE username IN ('ann', 'bob?') ORDER BY username",
         "SELECT username FROM auth_user WHERE username = ':name' -- by %s",
         "SELECT id::text FROM auth_user" if connection.vendor == "postgresql" else "SELECT id FROM auth_user",
+        "WITH named AS (SELECT username FROM auth_user WHERE username <> 'DELETE') SELECT username FROM named",
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 3) SELECT i FROM n",
     ],
 )
 def test_a_query_with_no_parameters_explains_with_none_captured(statement: str) -> None:
@@ -161,6 +170,20 @@ def test_the_agent_asks_for_an_explain_and_the_app_runs_it_in_a_thread_of_its_ow
 
 
 @pytest.mark.django_db
+def test_the_agent_s_explain_of_a_cte_that_changes_data_is_refused() -> None:
+    request: dict[str, object] = {
+        "sql": "EXPLAIN (ANALYZE, BUFFERS) WITH gone AS (DELETE FROM auth_user RETURNING id) SELECT * FROM gone",
+        "params": [],
+        "alias": "default",
+        "analyze": True,
+    }
+
+    answered = agent.ANSWERS["explain"](request)
+
+    assert answered == {"error": "This query changes data (DELETE inside WITH): it isn't explained."}
+
+
+@pytest.mark.django_db
 def test_explain_of_another_services_trace_is_the_agents(client: Client, store: AgentStore) -> None:
     # A linked trace of a call chain, recorded by a JavaScript BFF: its database isn't this app's.
     trace, span = other_services_query("bff")
@@ -173,3 +196,59 @@ def test_explain_of_another_services_trace_is_the_agents(client: Client, store: 
     assert response.json() == OTHER_APPS_PLAN
 
     assert asked == [IsPartialDict(id=IsInt, explain=IsPartialDict(sql="EXPLAIN QUERY PLAN SELECT * FROM orders"))]
+
+
+@pytest.fixture
+def side_effect() -> Iterator[str]:
+    """A CTE whose SELECT inserts a row: a volatile function, on a table of its own."""
+    with connection.cursor() as cursor:
+        cursor.execute("CREATE TABLE explained (id serial)")
+        cursor.execute(
+            "CREATE FUNCTION explained_add() RETURNS int LANGUAGE sql VOLATILE "
+            "AS $$ INSERT INTO explained DEFAULT VALUES RETURNING 1 $$"
+        )
+    try:
+        yield "WITH added AS (SELECT explained_add() AS n) SELECT n FROM added"
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("DROP FUNCTION explained_add(); DROP TABLE explained")
+
+
+def explained_rows() -> int:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT count(*) FROM explained")
+        (count,) = cursor.fetchone()
+    return int(count)
+
+
+ANALYZED = {
+    "vendor": "postgresql",
+    "alias": "default",
+    "analyzed": True,
+    "lines": IsList(IsPartialDict(depth=0, text=IsStr(regex=r"CTE Scan on added .*actual time.*")), length=(1, ...)),
+}
+
+
+@POSTGRES
+@pytest.mark.django_db(transaction=True)
+def test_analyze_is_rolled_back(side_effect: str) -> None:
+    plan = explain.explain(side_effect, [], "default", analyze=True)
+
+    assert plan.to_dict() == ANALYZED
+    assert explained_rows() == 0
+
+
+@POSTGRES
+@pytest.mark.django_db(transaction=True)
+def test_analyze_inside_the_app_s_transaction_rolls_back_to_a_savepoint(side_effect: str) -> None:
+    # An ATOMIC_REQUESTS view's console: its own writes stay, the query's go.
+    with transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute("INSERT INTO explained DEFAULT VALUES")
+
+        plan = explain.explain(side_effect, [], "default", analyze=True)
+
+        assert plan.to_dict() == ANALYZED
+        assert explained_rows() == 1
+
+    assert explained_rows() == 1
