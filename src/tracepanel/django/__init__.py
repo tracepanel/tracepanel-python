@@ -15,6 +15,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.core.signals import setting_changed
+from django.utils.functional import empty
 
 from tracepanel.core import conf
 
@@ -24,13 +25,24 @@ MIDDLEWARE = "tracepanel.django.middleware.TracepanelMiddleware"
 WATCHED = frozenset({"TRACEPANEL", "DEBUG", "BASE_DIR", "INSTALLED_APPS"})
 
 
+def uncached() -> object:
+    """The settings behind django.conf.settings, for a read from any thread (the writer's, as it connects).
+
+    django.conf.settings keeps each value it reads. A read racing override_settings (a test's `settings`) in another
+    thread would keep the value from before the override, and the code under test would go on seeing that one.
+    """
+    wrapped = settings._wrapped  # noqa: SLF001 (the settings object itself: nothing public reads it uncached)
+    return settings if wrapped is empty else wrapped
+
+
 def settings_source() -> Mapping[str, object]:
     """Django's settings for the core: DEBUG turns tracepanel on, BASE_DIR is the project; TRACEPANEL wins over both."""
-    root = getattr(settings, "BASE_DIR", None)
+    found = uncached()
+    root = getattr(found, "BASE_DIR", None)
     return {
-        "enabled": bool(settings.DEBUG) and APP in settings.INSTALLED_APPS,
+        "enabled": bool(getattr(found, "DEBUG", False)) and APP in getattr(found, "INSTALLED_APPS", []),
         **({"root": str(root)} if root else {}),
-        **getattr(settings, "TRACEPANEL", {}),
+        **getattr(found, "TRACEPANEL", {}),
     }
 
 

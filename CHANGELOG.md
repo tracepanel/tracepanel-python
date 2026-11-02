@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A test that overrides a Django setting (`override_settings`,
+  pytest-django's `settings`) no longer sees the value from before it
+  now and then. The app's settings, read for the agent from tracepanel's
+  own thread, are read without `django.conf.settings` keeping them: a
+  read racing the override could keep the old value for every thread.
+
 ## 0.12.0 (2026-11-02)
 
 ### Added

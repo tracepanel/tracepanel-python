@@ -1,3 +1,5 @@
+import socket
+
 import pytest
 from dirty_equals import IsInt, IsStr
 from django.db import connection, connections
@@ -32,19 +34,31 @@ def test_calls_carry_their_service(client: Client, traces: list[Trace]) -> None:
     assert (multi.attrs["service.name"], multi.attrs["service.role"]) == ("tracepanel-python", "web")
 
 
+@pytest.fixture
+def closed_port() -> int:
+    """A local port nothing listens on, so a connection to it is refused at once: one just bound and let go."""
+    with socket.socket() as bound:
+        bound.bind(("127.0.0.1", 0))
+        return bound.getsockname()[1]
+
+
 @pytest.mark.django_db
-def test_smtp_server(traces: list[Trace], settings: Settings) -> None:
+def test_smtp_server(traces: list[Trace], settings: Settings, closed_port: int) -> None:
     settings.EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-    settings.EMAIL_HOST, settings.EMAIL_PORT, settings.EMAIL_TIMEOUT = "smtp.invalid", 2525, 0.01
+    settings.EMAIL_HOST, settings.EMAIL_PORT, settings.EMAIL_TIMEOUT = "127.0.0.1", closed_port, 1
 
     Client(raise_request_exception=False).get("/welcome-email/")
     (sent,) = [span for span in traces[0].spans if span.kind == "mail"]
 
-    assert {key: sent.attrs[key] for key in ("mail.system", "server.address", "server.port")} == {
+    # The server it was sent to, though it refused the connection.
+    assert {key: sent.attrs.get(key) for key in ("mail.system", "server.address", "server.port", "mail.sent")} == {
         "mail.system": "smtp",
-        "server.address": "smtp.invalid",
-        "server.port": 2525,
+        "server.address": "127.0.0.1",
+        "server.port": closed_port,
+        "mail.sent": None,
     }
+
+    assert (sent.status, traces[0].status) == ("error", "error")
 
 
 @pytest.mark.django_db(databases=DATABASES)

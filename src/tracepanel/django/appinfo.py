@@ -11,22 +11,29 @@ from collections.abc import Callable, Iterable
 from contextvars import ContextVar
 from importlib import metadata
 
+from django import conf
 from django.apps import apps
-from django.conf import settings
 from django.db.backends.base.base import BaseDatabaseWrapper
 from django.db.models.query import QuerySet
 from django.utils.functional import Promise
 
 from tracepanel.core import appinfo, values
 from tracepanel.core.patching import patch, patched
+from tracepanel.django import uncached
+
+# Django 6.1's EMAIL_* settings that MAILERS replaces: django.conf.settings has none of them once MAILERS is set.
+REPLACED_BY_MAILERS = frozenset(getattr(conf, "DEPRECATED_EMAIL_SETTINGS", ()))
 
 
 def _settings() -> dict[str, object]:
+    """Every setting, read from the writer's thread without django.conf.settings keeping what it read (uncached)."""
+    source = uncached()
+    replaced = REPLACED_BY_MAILERS if hasattr(source, "MAILERS") else frozenset()
     found: dict[str, object] = {}
-    for name in dir(settings):
-        if name.isupper():
+    for name in dir(source):
+        if name.isupper() and name not in replaced:
             with contextlib.suppress(Exception):
-                found[name] = getattr(settings, name)
+                found[name] = getattr(source, name)
     return found
 
 
