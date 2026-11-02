@@ -1,9 +1,12 @@
 import asyncio
+import uuid
+from collections.abc import Callable, Iterator
 
 import pytest
-from dirty_equals import IsPartialDict, IsStr
+from dirty_equals import IsList, IsPartialDict, IsStr
 
 from tests.integrations.dbapi.conftest import explained_meanwhile, pg, pg_url, postgres, sql_spans, statements, traced
+from tracepanel.core import explain as plans
 from tracepanel.core.model import Attrs, Trace
 from tracepanel.integrations import dbapi
 from tracepanel.integrations import sqlalchemy as sqlalchemy_integration
@@ -528,3 +531,132 @@ def test_a_connection_async_sqlalchemy_opens_is_one_span(dialect: str) -> None:
     trace = traced(lambda: asyncio.run(work()))
 
     assert connections(trace) == [IsPartialDict({"db.client": "sqlalchemy", "db.connection.pool": "sqlalchemy"})]
+
+
+# ---------- EXPLAIN ANALYZE runs the query: whatever it does is rolled back ----------
+
+
+@pytest.fixture
+def side_effect() -> Iterator[tuple[str, Callable[[], int]]]:
+    """A CTE whose SELECT inserts a row (a volatile function), and how many rows its table holds."""
+    psycopg = pytest.importorskip("psycopg")
+    name = f"explained_{uuid.uuid4().hex[:12]}"
+    with psycopg.connect(dsn(), autocommit=True) as connection:
+        connection.execute(f"CREATE TABLE {name} (id serial)")
+        connection.execute(
+            f"CREATE FUNCTION {name}_add() RETURNS int LANGUAGE sql VOLATILE "
+            f"AS $$ INSERT INTO {name} DEFAULT VALUES RETURNING 1 $$"
+        )
+
+    def rows() -> int:
+        with psycopg.connect(dsn()) as connection:
+            (count,) = connection.execute(f"SELECT count(*) FROM {name}").fetchone() or (0,)
+            return int(count)
+
+    try:
+        yield f"WITH added AS (SELECT {name}_add() AS n) SELECT n FROM added", rows
+    finally:
+        with psycopg.connect(dsn(), autocommit=True) as connection:
+            connection.execute(f"DROP FUNCTION {name}_add(); DROP TABLE {name}")
+
+
+def driver_alias(driver: str) -> str:
+    """The alias of a statement each driver ran: EXPLAIN opens a connection of its own there."""
+    if driver == "asyncpg":
+        asyncpg = pytest.importorskip("asyncpg")
+
+        async def work() -> None:
+            connection = await asyncpg.connect(**asyncpg_params())
+            try:
+                await connection.fetch("SELECT 1")
+            finally:
+                await connection.close()
+
+        trace = traced(lambda: asyncio.run(work()))
+    else:
+        module = pytest.importorskip(driver)
+        connection = module.connect(dsn())
+        try:
+            trace = traced(lambda: connection.cursor().execute("SELECT 1"))
+        finally:
+            connection.close()
+    return str(statements(trace)[0].attrs["db.alias"])
+
+
+ANALYZED = {
+    "vendor": "postgresql",
+    "alias": IsStr(),
+    "analyzed": True,
+    "lines": IsList(IsPartialDict(depth=0, text=IsStr(regex=r"CTE Scan on added .*actual time.*")), length=(1, ...)),
+}
+
+
+@pytest.mark.parametrize("driver", ["psycopg", "psycopg2", "asyncpg"])
+def test_analyze_of_a_cte_is_rolled_back(driver: str, side_effect: tuple[str, Callable[[], int]]) -> None:
+    statement, rows = side_effect
+    alias = driver_alias(driver)
+
+    plan = dbapi.explain(statement, [], alias, analyze=True)
+
+    assert plan.to_dict() == ANALYZED
+    assert rows() == 0
+
+
+@pytest.mark.parametrize("dialect", ["psycopg", "psycopg2"])
+def test_sqlalchemy_analyze_is_rolled_back(dialect: str, side_effect: tuple[str, Callable[[], int]]) -> None:
+    sqlalchemy = pytest.importorskip("sqlalchemy")
+    pytest.importorskip(dialect)
+    statement, rows = side_effect
+    engine = sqlalchemy.create_engine(pg_url(dialect))
+    try:
+        with engine.connect() as connection:
+            connection.execute(sqlalchemy.text("SELECT 1"))
+
+        plan = sqlalchemy_integration.explain(statement, [], sqlalchemy_integration.engine_alias(engine), analyze=True)
+    finally:
+        engine.dispose()
+
+    assert plan.to_dict() == ANALYZED
+    assert rows() == 0
+
+
+@pytest.mark.parametrize("dialect", ["asyncpg", "psycopg"])
+def test_async_sqlalchemy_analyze_is_rolled_back(dialect: str, side_effect: tuple[str, Callable[[], int]]) -> None:
+    pytest.importorskip(dialect)
+    pytest.importorskip("greenlet")  # SQLAlchemy's asyncio
+    from sqlalchemy import text  # noqa: PLC0415
+    from sqlalchemy.ext.asyncio import create_async_engine  # noqa: PLC0415
+
+    statement, rows = side_effect
+    plan: dict[str, object] = {}
+
+    async def work() -> None:
+        engine = create_async_engine(pg_url(dialect))
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+            alias = sqlalchemy_integration.engine_alias(engine.sync_engine)
+            explained = await asyncio.to_thread(sqlalchemy_integration.explain, statement, [], alias, analyze=True)
+            plan.update(explained.to_dict())
+        await engine.dispose()
+
+    asyncio.run(work())
+
+    assert plan == ANALYZED
+    assert rows() == 0
+
+
+def test_a_cte_that_changes_data_is_never_run(side_effect: tuple[str, Callable[[], int]]) -> None:
+    statement, rows = side_effect
+    alias = driver_alias("psycopg")
+    changing = statement.replace("WITH added AS (", "WITH gone AS (DELETE FROM pg_temp.none RETURNING 1), added AS (")
+
+    with pytest.raises(
+        plans.ExplainError, match=r"^This query changes data \(DELETE inside WITH\): it isn't explained\.$"
+    ):
+        dbapi.explain(changing, [], alias)
+
+    assert dbapi.explain(statement, [], alias).to_dict() == ANALYZED | {
+        "analyzed": False,
+        "lines": IsList(IsPartialDict(depth=0, text=IsStr(regex=r"CTE Scan on added .*")), length=(1, ...)),
+    }
+    assert rows() == 0
