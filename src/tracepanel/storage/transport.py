@@ -110,20 +110,29 @@ class BatchWriter:
 
 
 _writer: Writer | None = None
+# Made once: two threads' first traces would make two writers, and a writer made while another is set (a test's)
+# would replace it as it is done.
+_writer_lock = forks.lock()
 
 
 def get_writer() -> Writer:
     global _writer  # noqa: PLW0603 (lazy process-wide singleton)
-    if _writer is None:
-        from tracepanel.storage import agent  # noqa: PLC0415 (agent imports this module)
+    writer = _writer
+    if writer is not None:
+        return writer
+    with _writer_lock:
+        writer = _writer
+        if writer is None:
+            from tracepanel.storage import agent  # noqa: PLC0415 (agent imports this module)
 
-        _writer = agent.AgentWriter(conf.get_config())
-    return _writer
+            writer = _writer = agent.AgentWriter(conf.get_config())
+    return writer
 
 
 def set_writer(writer: Writer | None) -> None:
     global _writer  # noqa: PLW0603
-    _writer = writer
+    with _writer_lock:
+        _writer = writer
 
 
 def send_event(event: Event) -> None:

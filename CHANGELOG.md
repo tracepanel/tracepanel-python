@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The process's writer is made once, under a lock. A worker's heartbeat
+  thread making it while the app (or a test) set its own writer no
+  longer replaces that writer as it is done, and two threads' first
+  traces no longer make two writers.
+
 ## 0.13.0 (2026-11-03)
 
 ### Fixed

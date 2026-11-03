@@ -25,6 +25,7 @@ from django.test import Client
 from pytest_django.fixtures import Settings
 
 from tests.agentstore import AGENT_SCHEMAS, AgentStore, newer
+from tests.tasklive import Recorder
 from tracepanel.console import proxy
 from tracepanel.core import appinfo, conf, runtime
 from tracepanel.core.context import record_span, start_trace
@@ -109,6 +110,31 @@ def test_the_apps_console_is_the_agents(store: AgentStore, client: Client, users
     # The agent gone: the console says why instead of an empty page.
     store.stop()
     assert client.get(f"/__tracepanel__/api/traces/{trace.id}").status_code == 503
+
+
+def test_a_writer_set_while_the_first_one_is_made_is_the_one_kept(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A worker's heartbeat thread makes the process's writer while a test sets its own: the test's stays.
+    monkeypatch.setattr(transport, "_writer", None)
+    making, made = threading.Event(), threading.Event()
+    settings = conf.get_config()
+
+    def slow_config() -> conf.Config:
+        making.set()
+        made.wait(5)
+        return settings
+
+    monkeypatch.setattr(conf, "get_config", slow_config)
+    first = threading.Thread(target=transport.get_writer)
+    first.start()
+    making.wait(5)
+    collector = Recorder()
+    setting = threading.Thread(target=set_writer, args=(collector,))
+    setting.start()
+    made.set()
+    first.join(5)
+    setting.join(5)
+
+    assert transport.get_writer() is collector
 
 
 def test_a_trace_still_on_its_way_is_waited_for(store: AgentStore, client: Client) -> None:
