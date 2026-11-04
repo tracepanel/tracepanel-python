@@ -634,3 +634,43 @@ def share_of(document: dict[str, object], function: str) -> float:
     total = sum(int(str(stack["count"])) for stack in stacks(document))
     inside = sum(int(str(stack["count"])) for stack in stacks(document) if function in frame_names(document, stack))
     return inside / total
+
+
+def test_a_late_sample_stands_for_the_ticks_it_missed_only_where_it_saw_the_same_stack() -> None:
+    # A tick every 1 ms. The loop waits at a thread hop (A), the sampler misses 3 ticks and sees A again: A ran on.
+    # Then it misses 31 and sees the loop waiting elsewhere (B): which ran then can't be told, neither gets them.
+    recording = Recording(thread_id=1, interval_us=1000, started=0)
+    waiting_at_hop = ((None, "anyio", None, True),)
+    waiting_elsewhere = ((None, "contextlib", None, True),)
+
+    for now, keys in (
+        (1_000_000, waiting_at_hop),
+        (5_000_000, waiting_at_hop),
+        (37_000_000, waiting_elsewhere),
+    ):
+        profile._count(recording, keys, now)  # noqa: SLF001
+
+    assert dict(recording.stacks) == {waiting_at_hop: {0: 5}, waiting_elsewhere: {3: 1}}
+    assert recording.samples == 6
+    assert recording.dropped == 0
+
+
+def test_the_ticks_a_sample_stands_for_count_in_the_stretches_they_were_in() -> None:
+    recording = Recording(thread_id=1, interval_us=1000, started=0)
+    busy_stack = ((None, "shop.tasks", None, False),)
+
+    profile._count(recording, busy_stack, 1_000_000)  # noqa: SLF001
+    profile._count(recording, busy_stack, 35_000_000)  # noqa: SLF001
+
+    # 1 ms, then 34 ticks up to 35 ms: 2 to 9 ms, 10 to 19, 20 to 29, 30 to 35.
+    assert dict(recording.stacks[busy_stack]) == {0: 9, 1: 10, 2: 10, 3: 6}
+    assert recording.dropped == 0
+
+
+def test_a_sample_whose_work_left_the_thread_under_the_walk_counts_nothing() -> None:
+    recording = Recording(thread_id=1, interval_us=1000, started=0)
+
+    profile._count(recording, (), 9_000_000)  # noqa: SLF001
+
+    assert recording.samples == 0
+    assert recording.ticked == 0
