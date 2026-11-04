@@ -31,9 +31,9 @@ from taskiq.schedule_sources import LabelScheduleSource
 from taskiq.scheduler.scheduled_task import ScheduledTask
 
 from tests.agentstore import AgentStore
-from tests.profiles import busy, share
+from tests.profiles import busy, sampled, share
 from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, stopped, without_worker_events
-from tracepanel.core import conf
+from tracepanel.core import conf, profile
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Link, Span, Trace
 from tracepanel.integrations import taskiq as integration
@@ -122,9 +122,14 @@ async def count_now(limit: int) -> int:
     return limit
 
 
+# The profiled trace that runs `crunch_now` on the in-memory broker: the task's own trace isn't profiled.
+caller: list[profile.Recording] = []
+
+
 @memory.task
 def crunch_now(label: str) -> str:
-    busy()
+    # Until the caller's profile has samples of it, however long a loaded machine keeps the sampler waiting.
+    sampled(0.05, recording=caller[0])
     return label
 
 
@@ -657,6 +662,9 @@ def test_an_async_task_awaiting_a_sleep_is_profiled_down_to_it(traces: list[Trac
 def test_an_in_memory_task_is_in_its_profiled_callers_profile(traces: list[Trace]) -> None:
     async def main() -> Trace:
         with start_trace("http", "POST /reports", profile=True) as request:
+            recording = profile.current.get()
+            assert recording is not None
+            caller[:] = [recording]
             await crunch_now.kiq("inline")
         return request
 
