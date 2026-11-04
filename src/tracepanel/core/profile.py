@@ -2,9 +2,12 @@
 
 One daemon thread looks at the stacks of the threads running a profiled trace every `profile_interval_ms`, and counts
 each stack it sees, with the 10 ms stretch of the trace it was seen in (`bucket_us`, a stack's `at`). A stack seen
-late (the sampler waited for the GIL while the trace's code ran) counts for the ticks since the last one it counted.
-It starts with the first profiled trace and stops once none has run for a while. A frame that waits rather than
-computes (the event loop's select, a sleep, a socket read, a lock: core.waits) says so (`waiting`).
+late (the sampler waited for the GIL while the trace's code ran) counts for the ticks since the last one it counted,
+each in the stretch it was in, where it is the stack the last sample saw too: the code ran on there. Where the stack
+changed meanwhile, which ran when can't be told, and those ticks count for neither (the console fills a stretch
+without samples from the ones around it). It starts with the first profiled trace and stops once none has run for a
+while. A frame that waits rather than computes (the event loop's select, a sleep, a socket read, a lock: core.waits)
+says so (`waiting`).
 
 Async code: a trace begun in an asyncio Task is that Task's. While the loop runs the Task, the thread's stack is the
 trace's, from the Task's coroutine on. While the Task waits, whatever the thread does (sits in select, runs another
@@ -114,6 +117,8 @@ class Recording:
     task: "asyncio.Task[object] | None" = None
     # Ticks whose stack couldn't be told apart from another trace's on the same thread.
     dropped: int = 0
+    # The stack its last sample saw: a late sample stands for the ticks it missed only where it saw the same.
+    last: "tuple[Key, ...] | None" = None
     # Up to when the sampler has counted ticks of it (perf_counter_ns): the next sample stands for the ticks since.
     ticked: int = 0
     # Where its work entered each thread it hopped into (follow()): the frame its stack there starts below.
@@ -345,7 +350,7 @@ def _attribute(thread_id: int, frame: FrameType, recordings: list[Recording], no
     ]
     if not in_tasks:
         if len(recordings) == 1:
-            count(recordings[0], hopped(recordings[0], thread_id, frame), now, _ticks(recordings[0], now))
+            _count(recordings[0], hopped(recordings[0], thread_id, frame), now)
         else:
             for recording in recordings:
                 recording.dropped += _ticks(recording, now)
@@ -357,7 +362,7 @@ def _attribute(thread_id: int, frame: FrameType, recordings: list[Recording], no
     else:
         owners = _owners(running, in_tasks)
     if len(owners) == 1:
-        count(owners[0], thread_stack(frame, running), now, _ticks(owners[0], now))
+        _count(owners[0], thread_stack(frame, running), now)
     else:
         for recording in owners:
             recording.dropped += _ticks(recording, now)
@@ -368,7 +373,7 @@ def _attribute(thread_id: int, frame: FrameType, recordings: list[Recording], no
             # Its Task runs what another trace started inside it, not profiled on its own.
             recording.dropped += _ticks(recording, now)
             continue
-        count(recording, awaiting(recording.task), now, _ticks(recording, now))
+        _count(recording, awaiting(recording.task), now)
 
 
 def _ticks(recording: Recording, now: int) -> int:
@@ -384,6 +389,23 @@ def _ticks(recording: Recording, now: int) -> int:
     # What is left of a tick counts with the next sample: the sampler's sleep, a little over a tick, adds up.
     recording.ticked = since + ticks * interval
     return ticks
+
+
+def _count(recording: Recording, keys: tuple[Key, ...], now: int) -> None:
+    """Count a sample of a trace's stack taken `now`, for the ticks since its last one where they were the same stack's.
+
+    A sample late by several ticks (the sampler waited for the GIL) stands for them where it saw the stack the last
+    one did: the code ran on there meanwhile. Where the stack changed, the ticks between can't be told apart (the
+    event loop waiting at a thread hop, then the thread's query): the sample counts once, the rest for neither. A
+    sample with no stack (its walk found the work gone) counts nothing, its ticks left to the next.
+    """
+    if not keys:
+        return
+    ticks = _ticks(recording, now)
+    if ticks > 1 and keys != recording.last:
+        ticks = 1
+    recording.last = keys
+    count(recording, keys, now, ticks)
 
 
 def _owners(running: "asyncio.Task[object]", recordings: list[Recording]) -> list[Recording]:
@@ -450,7 +472,12 @@ def hopped(recording: Recording, thread_id: int, frame: FrameType) -> tuple[Key,
     that awaits it, as if run in place. A task's `await Order.objects.aupdate()` is the task's function's time, not a
     thread's of the framework's.
     """
-    keys = thread_stack(frame, root=recording.entered.get(thread_id))
+    root = recording.entered.get(thread_id)
+    if thread_id != recording.thread_id and (root is None or not _reaches(frame, root)):
+        # The frames were taken before the walk: the call returned meanwhile (its thread then ran something else, or
+        # the next call the Task awaits), and what the Task awaits now isn't what that thread was running.
+        return ()
+    keys = thread_stack(frame, root=root)
     if thread_id == recording.thread_id or recording.task is None:
         return keys
     awaits = awaiting(recording.task)
@@ -459,6 +486,15 @@ def hopped(recording: Recording, thread_id: int, frame: FrameType) -> tuple[Key,
     # The call it awaits runs here: no longer the frame that waits.
     code, module, line, _ = awaits[-1]
     return (*awaits[:-1], (code, module, line, False), *keys)
+
+
+def _reaches(frame: FrameType | None, root: FrameType) -> bool:
+    """Whether a thread's stack runs under `root`: the frame its hopped work entered at is still on it."""
+    while frame is not None:
+        if frame is root:
+            return True
+        frame = frame.f_back
+    return False
 
 
 def awaiting(task: "asyncio.Task[object] | None") -> tuple[Key, ...]:
@@ -513,19 +549,26 @@ def _code(awaitable: object) -> CodeType | None:
 def count(recording: Recording, keys: tuple[Key, ...], now: int | None = None, ticks: int = 1) -> None:
     """Count a sample of a stack, seen `now` (perf_counter_ns; the trace's start if not given), as `ticks` ticks.
 
-    Past MAX_STACKS distinct ones, a new stack counts as "(other)".
+    The ticks are the last ones up to `now`, each in the stretch of the trace (`at`) it was in. Past MAX_STACKS
+    distinct ones, a new stack counts as "(other)".
     """
     if not keys:
         return
     recording.samples += ticks
     recording.taken += 1
-    at = max(now - recording.started, 0) // (BUCKET_US * 1000) if now is not None else 0
     seen = recording.stacks.get(keys)
     if seen is None:
         if len(recording.stacks) >= MAX_STACKS:
             keys = (OTHER,)
         seen = recording.stacks.setdefault(keys, Counter())
-    seen[at] += ticks
+    if now is None:
+        seen[0] += ticks
+        return
+    # Each tick in the stretch it was in: the last `ticks` ticks up to `now`.
+    interval = recording.interval_us * 1000
+    for tick in range(ticks):
+        at = now - (ticks - 1 - tick) * interval
+        seen[max(at - recording.started, 0) // (BUCKET_US * 1000)] += 1
 
 
 def document(recording: Recording, measured: memory.Measured | None = None) -> dict[str, object]:

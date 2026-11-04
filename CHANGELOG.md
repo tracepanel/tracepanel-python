@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A profile no longer hands the ticks its sampler missed to whatever
+  stack it saw next. A sample seen late stands for the ticks since the
+  last one only where it saw the same stack (the code ran on there), and
+  each of those ticks counts in the 10 ms stretch it was in, not all in
+  the last: a FastAPI sync endpoint's profile had 32 ms in one 10 ms
+  stretch, all of the event loop waiting at its thread hop, while the
+  worker thread's query ran. Where the stack changed meanwhile, those
+  ticks count for neither.
+- Work a trace hands to a worker thread (a sync endpoint, sync_to_async)
+  is sampled under the call that awaits it only while that call runs
+  there. Frames taken before the call returned, and walked after it,
+  no longer show the thread's whole stack (Thread._bootstrap, the pool's
+  loop) under whatever the Task awaited next (FastAPI's
+  serialize_response under a sync endpoint's get_author).
+
 ## 0.13.1 (2026-11-03)
 
 ### Fixed
