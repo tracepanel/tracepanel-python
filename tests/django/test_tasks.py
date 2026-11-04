@@ -19,7 +19,7 @@ from tests.tasklive import GOODBYE, Recorder, heartbeats, left, live, live_when,
 from tracepanel.core.context import current_span, current_trace, start_trace
 from tracepanel.core.ids import new_id
 from tracepanel.core.model import Link, Span, Trace
-from tracepanel.storage import agent, transport
+from tracepanel.storage import agent
 from tracepanel.storage.transport import set_writer
 
 
@@ -135,13 +135,6 @@ def test_store_links_runs_to_enqueues_in_any_order(store: AgentStore, run_first:
     assert store.related(run.id)["enqueued_by"] == IsPartialDict(id=request.id)
     assert [item["id"] for item in store.related(request.id)["enqueued"]] == [run.id]
     assert store.related(request.id)["via"] == {run.id: request.spans[1].id}
-
-
-@pytest.fixture
-def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
-    recorded = Recorder()
-    monkeypatch.setattr(transport, "_writer", recorded)
-    return recorded
 
 
 def work(worker: str = "worker-1") -> None:

@@ -9,6 +9,7 @@ from django.db import connections
 from jsonschema import Draft202012Validator
 
 from tests.agentstore import AGENT_SCHEMAS, AgentStore
+from tests.tasklive import Recorder, use_writer
 from tracepanel.core import appinfo, conf, runtime
 from tracepanel.core.model import Trace
 from tracepanel.storage import agent, transport
@@ -55,12 +56,20 @@ def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[AgentSto
 
 
 @pytest.fixture
-def app_console(store: AgentStore, monkeypatch: pytest.MonkeyPatch) -> AgentStore:
+def app_console(store: AgentStore, request: pytest.FixtureRequest) -> AgentStore:
     """The store's agent, and this app connected to it: what the app's console offers comes from its hello."""
     if not store.offers_at_app_consoles():
         pytest.skip("the released agent offers nothing an app answers at its console: a newer one does")
-    monkeypatch.setattr(transport, "_writer", agent.AgentWriter(store.config()))
+    use_writer(request, agent.AgentWriter(store.config()))
     return store
+
+
+@pytest.fixture
+def recorder(request: pytest.FixtureRequest) -> Recorder:
+    """The traces and task events this test sends, kept: the process's writer meanwhile."""
+    recorded = Recorder()
+    use_writer(request, recorded)
+    return recorded
 
 
 @pytest.fixture

@@ -24,7 +24,7 @@ from tracepanel.core.context import current_trace, start_trace
 from tracepanel.core.model import Link, Span, Trace
 from tracepanel.integrations import celery as celery_integration
 from tracepanel.integrations._tasks import TaskRun
-from tracepanel.storage import agent, transport
+from tracepanel.storage import agent
 from tracepanel.storage.transport import set_writer
 
 pytest.importorskip("celery")
@@ -273,10 +273,8 @@ def test_ignored_tasks(traces: list[Trace], settings: Settings) -> None:
 
 
 @pytest.fixture
-def recorder(monkeypatch: pytest.MonkeyPatch) -> Generator[Recorder, None, None]:
-    recorded = Recorder()
-    monkeypatch.setattr(transport, "_writer", recorded)
-    yield recorded
+def recorder(recorder: Recorder) -> Generator[Recorder, None, None]:
+    yield recorder
     # What a test enqueued and no worker ran would run in the next test's worker.
     jobs.app.control.purge()
 

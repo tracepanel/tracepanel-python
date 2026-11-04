@@ -28,7 +28,7 @@ from tracepanel.core import profile
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Link, Span, Trace
 from tracepanel.integrations import huey as integration
-from tracepanel.storage import agent, transport
+from tracepanel.storage import agent
 from tracepanel.storage.transport import complete, set_writer
 
 integration.install()
@@ -243,13 +243,6 @@ def test_ignored_tasks(traces: list[Trace], monkeypatch: pytest.MonkeyPatch) -> 
     work()
 
     assert (tasks(traces), enqueues(request)) == ([], [])
-
-
-@pytest.fixture
-def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
-    recorded = Recorder()
-    monkeypatch.setattr(transport, "_writer", recorded)
-    return recorded
 
 
 def test_a_queued_task_tells_the_agent_each_step(recorder: Recorder) -> None:
