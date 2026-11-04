@@ -37,7 +37,7 @@ from tracepanel.core import conf
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Link, Span, Trace
 from tracepanel.integrations import taskiq as integration
-from tracepanel.storage import agent, transport
+from tracepanel.storage import agent
 from tracepanel.storage.transport import complete, set_writer
 
 integration.install()
@@ -143,13 +143,6 @@ async def work(instance: ListBroker = broker) -> None:
 def fresh() -> None:
     broker.sent.clear()
     retrying.sent.clear()
-
-
-@pytest.fixture
-def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
-    recorded = Recorder()
-    monkeypatch.setattr(transport, "_writer", recorded)
-    return recorded
 
 
 def tasks(traces: list[Trace]) -> list[Trace]:

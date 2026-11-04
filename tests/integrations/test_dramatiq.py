@@ -38,7 +38,7 @@ from tracepanel._compat import override  # noqa: E402
 from tracepanel.core.context import current_trace, start_trace  # noqa: E402
 from tracepanel.core.model import Link, Span, Trace  # noqa: E402
 from tracepanel.integrations import dramatiq as integration  # noqa: E402
-from tracepanel.storage import agent, transport  # noqa: E402
+from tracepanel.storage import agent  # noqa: E402
 from tracepanel.storage.transport import complete, set_writer  # noqa: E402
 
 integration.install()
@@ -154,13 +154,6 @@ def test_ignored_tasks(broker: StubBroker, traces: list[Trace], monkeypatch: pyt
     run(broker)
 
     assert [trace for trace in traces if trace.kind == "task"] == []
-
-
-@pytest.fixture
-def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
-    recorded = Recorder()
-    monkeypatch.setattr(transport, "_writer", recorded)
-    return recorded
 
 
 # The worker a test's Worker speaks for: this process.

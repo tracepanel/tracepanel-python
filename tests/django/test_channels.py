@@ -28,7 +28,7 @@ from tracepanel._compat import override
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Link, Trace
 from tracepanel.django import channels as integration
-from tracepanel.storage import agent, transport
+from tracepanel.storage import agent
 from tracepanel.storage.transport import set_writer
 
 APP = URLRouter(sockets.urls)
@@ -308,13 +308,6 @@ def test_a_handler_that_raises_fails_its_run(traces: list[Trace]) -> None:
         ("builtins.ValueError", "no such image", False)
     ]
     assert [issue.kind for issue in issues(failed)] == ["error"]
-
-
-@pytest.fixture
-def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
-    recorded = Recorder()
-    monkeypatch.setattr(transport, "_writer", recorded)
-    return recorded
 
 
 class Waiting(BaseChannelLayer):

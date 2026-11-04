@@ -25,7 +25,7 @@ from django.test import Client
 from pytest_django.fixtures import Settings
 
 from tests.agentstore import AGENT_SCHEMAS, AgentStore, newer
-from tests.tasklive import Recorder
+from tests.tasklive import Recorder, use_writer
 from tracepanel.console import proxy
 from tracepanel.core import appinfo, conf, runtime
 from tracepanel.core.context import record_span, start_trace
@@ -521,7 +521,7 @@ FOUND: dict[str, object] = {
 
 
 def test_the_checks_run_off_the_connection_and_the_agent_connected_then_is_told(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     # Slow checks (a database that takes its time): the hello doesn't wait for them.
     release = threading.Event()
@@ -551,7 +551,7 @@ def test_the_checks_run_off_the_connection_and_the_agent_connected_then_is_told(
     thread.start()
     host, port = listener.getsockname()
     writer = agent.AgentWriter(dataclasses.replace(conf.get_config(), agent=f"tcp:{host}:{port}", dir=str(tmp_path)))
-    monkeypatch.setattr(transport, "_writer", writer)
+    use_writer(request, writer)
 
     assert writer.connected()
 
@@ -569,7 +569,7 @@ def test_the_checks_run_off_the_connection_and_the_agent_connected_then_is_told(
 
 
 def test_the_agent_serves_what_the_checks_found(
-    store: AgentStore, django_app: None, monkeypatch: pytest.MonkeyPatch
+    store: AgentStore, django_app: None, request: pytest.FixtureRequest
 ) -> None:
     schema = yaml.safe_load((AGENT_SCHEMAS / "openapi.yaml").read_text())["components"]["schemas"]["App"]
     if "checks" not in schema["properties"]:
@@ -582,7 +582,7 @@ def test_the_agent_serves_what_the_checks_found(
 
     appinfo.add_checks(slow)
     writer = agent.AgentWriter(dataclasses.replace(store.config(), service="shop"))
-    monkeypatch.setattr(transport, "_writer", writer)
+    use_writer(request, writer)
 
     assert writer.connected()
 

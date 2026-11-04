@@ -30,9 +30,10 @@ from tests.profiles import busy
 from tests.tasklive import Recorder, live, live_when, named, setenv, without_worker_events
 from tracepanel.core import conf
 from tracepanel.core.context import start_trace
+from tracepanel.core.ids import new_id
 from tracepanel.core.model import Link, Span, Trace
 from tracepanel.integrations import faststream as integration
-from tracepanel.storage import agent, transport
+from tracepanel.storage import agent
 from tracepanel.storage.transport import set_writer
 
 integration.install()
@@ -80,13 +81,6 @@ BROKERS: dict[str, Callable[[], tuple[Any, Any]]] = {
     "redis": lambda: (RedisBroker, TestRedisBroker),
 }
 SYSTEMS = {"kafka": "kafka", "confluent": "kafka", "rabbitmq": "rabbitmq", "nats": "nats", "redis": "redis"}
-
-
-@pytest.fixture
-def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
-    recorded = Recorder()
-    monkeypatch.setattr(transport, "_writer", recorded)
-    return recorded
 
 
 def tasks(recorder: Recorder) -> list[Trace]:
@@ -320,11 +314,14 @@ def test_a_nacked_message_waits_for_its_next_delivery(recorder: Recorder) -> Non
     broker = RabbitBroker()
     broker.subscriber("crm", ack_policy=AckPolicy.NACK_ON_ERROR)(sync_crm)
 
+    # A task id of its own: the process counts each message's failed deliveries, and a run before would count too.
+    task_id = new_id()
+
     async def send(tested: RabbitBroker) -> None:
         # The broker delivers it again: the in-memory one does not, so it is published again with its task id.
         for _ in range(2):
             with pytest.raises(ConnectionError):
-                await tested.publish({"id": 7}, "crm", headers={"tracepanel-task-id": "order-7"})
+                await tested.publish({"id": 7}, "crm", headers={"tracepanel-task-id": task_id})
 
     handle(broker, TestRabbitBroker, send)
     attempts = tasks(recorder)

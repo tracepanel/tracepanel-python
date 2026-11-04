@@ -32,7 +32,7 @@ from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv,
 from tracepanel.core import patching, profile
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Link, Span, Trace
-from tracepanel.storage import agent, transport
+from tracepanel.storage import agent
 from tracepanel.storage.transport import complete, set_writer
 
 logger = logging.getLogger("tests.jobs")
@@ -264,13 +264,6 @@ def test_ignored_tasks(traces: list[Trace], monkeypatch: pytest.MonkeyPatch) -> 
     work()
 
     assert tasks(traces) == []
-
-
-@pytest.fixture
-def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
-    recorded = Recorder()
-    monkeypatch.setattr(transport, "_writer", recorded)
-    return recorded
 
 
 @pytest.mark.django_db(transaction=True)

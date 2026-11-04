@@ -9,6 +9,7 @@ import pytest
 from tests.agentstore import AGENT_SCHEMAS, AgentStore
 from tracepanel.core import conf
 from tracepanel.core.model import Trace
+from tracepanel.storage import transport
 
 Event = dict[str, Any]
 # An agent that knows `worker_stopped` drops a worker that says it stopped at once; one before it (CI's, until the
@@ -31,6 +32,17 @@ class Recorder:
 
     def flush(self, timeout: float = 5.0) -> None:
         pass
+
+
+def use_writer(request: pytest.FixtureRequest, writer: transport.Writer) -> None:
+    """The process's writer for this test, set as the SDK sets one (set_writer, under its lock), then the one before.
+
+    Not monkeypatch.setattr: a thread an earlier test left (a worker's heartbeat) may be making the process's writer as
+    the test begins, and would put it over one set without the lock: the test's traces would go to the agent.
+    """
+    previous = transport._writer  # noqa: SLF001
+    transport.set_writer(writer)
+    request.addfinalizer(lambda: transport.set_writer(previous))
 
 
 def setenv(monkeypatch: pytest.MonkeyPatch, name: str, value: str) -> None:

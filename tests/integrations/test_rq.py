@@ -38,7 +38,7 @@ from tests.tasklive import (  # noqa: E402
 from tracepanel.core.context import start_trace  # noqa: E402
 from tracepanel.core.model import Link, Span, Trace  # noqa: E402
 from tracepanel.integrations import rq as integration  # noqa: E402
-from tracepanel.storage import agent, transport  # noqa: E402
+from tracepanel.storage import agent  # noqa: E402
 from tracepanel.storage.transport import complete, set_writer  # noqa: E402
 
 integration.install()
@@ -203,13 +203,6 @@ def test_ignored_tasks(queue: Queue, traces: list[Trace], monkeypatch: pytest.Mo
     work(queue)
 
     assert [trace for trace in traces if trace.kind == "task"] == []
-
-
-@pytest.fixture
-def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
-    recorded = Recorder()
-    monkeypatch.setattr(transport, "_writer", recorded)
-    return recorded
 
 
 def test_a_queued_job_tells_the_agent_each_step(queue: Queue, recorder: Recorder) -> None:
