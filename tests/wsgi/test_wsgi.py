@@ -9,7 +9,7 @@ import pytest
 from dirty_equals import IsInt, IsStr
 
 import tracepanel.wsgi
-from tests.agentstore import AgentStore, issues
+from tests.agentstore import AgentStore, untimed
 from tracepanel.core import conf
 from tracepanel.core.model import Trace
 
@@ -179,7 +179,7 @@ def test_htmx_gets_a_whole_page(wrapped: tracepanel.wsgi.WSGIApp, traces: list[T
         "htmx.target": "rows",
         "htmx.full_page": True,
     }
-    assert [issue.title for issue in issues(trace)] == ["Whole page sent to htmx · GET /page"]
+    assert [issue.title for issue in untimed(trace)] == ["Whole page sent to htmx · GET /page"]
 
 
 def test_writes_through_the_console_come_from_this_machine_only(

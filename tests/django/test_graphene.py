@@ -11,7 +11,7 @@ from django.contrib.auth.models import Group, User
 from django.test import Client
 from jsonschema import Draft202012Validator
 
-from tests.agentstore import AgentStore, issues, newer
+from tests.agentstore import AgentStore, newer, untimed
 from tracepanel.core.model import Trace
 from tracepanel.storage.transport import set_writer
 
@@ -115,14 +115,17 @@ def test_mutation(client: Client, traces: list[Trace]) -> None:
 def test_n_plus_one_in_a_resolver_suggests_a_dataloader(client: Client, traces: list[Trace], users: list[User]) -> None:
     post(client, "{ users { groups } }")
     (trace,) = traces
-    (issue,) = issues(trace)
 
-    assert (trace.name, issue.kind, issue.culprit) == (
-        "GraphQL query { users }",
-        "n+1",
-        IsStr(regex=r"tests/project/graphene_schema\.py:\d+ in resolve_groups"),
-    )
-    assert "DataLoader" in (issue.hint or "")
+    # A loaded machine may add a slow query: the N+1 is the one issue besides.
+    assert trace.name == "GraphQL query { users }"
+    assert [(issue.kind, issue.title, issue.culprit, issue.hint) for issue in untimed(trace)] == [
+        (
+            "n+1",
+            "N+1: 5 similar queries · SELECT auth_group",
+            IsStr(regex=r"tests/project/graphene_schema\.py:\d+ in resolve_groups"),
+            IsStr(regex=r".*DataLoader.*"),
+        )
+    ]
 
 
 @pytest.mark.django_db
@@ -133,7 +136,7 @@ def test_resolver_error_comes_back_as_200(client: Client, traces: list[Trace]) -
     assert result == IsPartialDict({"data": None, "errors": [IsPartialDict(message="the reporting service is down")]})
     assert (trace.status, trace.attrs["http.status_code"], trace.attrs["graphql.errors"]) == ("error", 200, 1)
     assert [(error.type, error.handled) for error in trace.errors] == [("builtins.RuntimeError", False)]
-    assert [issue.kind for issue in issues(trace)] == ["error"]
+    assert [issue.kind for issue in untimed(trace)] == ["error"]
 
 
 @pytest.mark.django_db

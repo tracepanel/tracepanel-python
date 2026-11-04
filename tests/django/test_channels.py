@@ -21,7 +21,7 @@ from dirty_equals import IsInstance, IsInt, IsList, IsPartialDict, IsPositiveInt
 from django.contrib.auth.models import User
 from jsonschema import Draft202012Validator
 
-from tests.agentstore import AgentStore, issues, newer
+from tests.agentstore import AgentStore, newer, untimed
 from tests.project import sockets
 from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, stopped, without_worker_events
 from tracepanel._compat import override
@@ -115,7 +115,7 @@ def test_handler_error_is_recorded(traces: list[Trace]) -> None:
     assert [(error.type, error.message) for error in failed.errors] == [
         ("builtins.ValueError", "cannot post to this room")
     ]
-    assert [issue.kind for issue in issues(failed)] == ["error"]
+    assert [issue.kind for issue in untimed(failed)] == ["error"]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -307,7 +307,7 @@ def test_a_handler_that_raises_fails_its_run(traces: list[Trace]) -> None:
     assert [(error.type, error.message, error.handled) for error in failed.errors] == [
         ("builtins.ValueError", "no such image", False)
     ]
-    assert [issue.kind for issue in issues(failed)] == ["error"]
+    assert [issue.kind for issue in untimed(failed)] == ["error"]
 
 
 class Waiting(BaseChannelLayer):

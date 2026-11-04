@@ -5,7 +5,7 @@ from django.db import connection, transaction
 from django.test import Client
 from pytest_django.fixtures import Settings
 
-from tests.agentstore import issues
+from tests.agentstore import issues, untimed
 from tracepanel.core.model import Span, Trace
 from tracepanel.django import services as django_services
 
@@ -58,7 +58,7 @@ def test_work_that_belongs_after_commit(client: Client, traces: list[Trace]) -> 
     client.get("/place-order/")
     (trace,) = traces
 
-    assert [(issue.kind, issue.title, issue.culprit) for issue in issues(trace)] == [
+    assert [(issue.kind, issue.title, issue.culprit) for issue in untimed(trace)] == [
         (
             "in-transaction",
             "Email sent inside a transaction · mail Order placed",
@@ -74,7 +74,12 @@ def test_long_transaction(client: Client, traces: list[Trace], settings: Setting
     client.get("/place-order/")
     (trace,) = traces
 
-    assert sorted(issue.kind for issue in issues(trace)) == ["in-transaction", "long-transaction", "long-transaction"]
+    # A loaded machine may add a slow query.
+    assert sorted(issue.kind for issue in issues(trace) if issue.kind != "slow-sql") == [
+        "in-transaction",
+        "long-transaction",
+        "long-transaction",
+    ]
     assert [issue.title for issue in issues(trace) if issue.kind == "long-transaction"] == [
         IsStr(regex=r"Long transaction: \d+ ms on default")
     ] * 2

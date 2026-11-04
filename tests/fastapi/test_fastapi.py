@@ -26,8 +26,8 @@ from tests.agentstore import (  # noqa: E402
     OTHER_APPS_PLAN,
     OTHER_APPS_ROWS,
     AgentStore,
-    issues,
     other_services_query,
+    untimed,
 )
 from tests.profiles import sampled, share_meanwhile  # noqa: E402
 from tracepanel._compat import override  # noqa: E402
@@ -155,10 +155,12 @@ def test_request_is_a_trace_named_after_its_route(client: TestClient, traces: li
     (transaction,) = [span for span in trace.spans if span.kind == "transaction"]
     assert (transaction.parent_id, transaction.attrs["db.transaction.outcome"]) == (view.id, "rollback")
     assert {span.parent_id for span in sql} == {transaction.id}
-    (issue,) = issues(trace)
-    assert (issue.kind, issue.count) == ("n+1", 5)
-    # The fix in SQLAlchemy's words, not Django's select_related().
-    assert issue.hint == IsStr(regex=r".*`joinedload\(\)`.*`selectinload\(\)`.*")
+
+    # The fix in SQLAlchemy's words, not Django's select_related(). A loaded machine may add a slow query: the N+1 is
+    # the one issue besides.
+    assert [(issue.kind, issue.count, issue.hint) for issue in untimed(trace)] == [
+        ("n+1", 5, IsStr(regex=r".*`joinedload\(\)`.*`selectinload\(\)`.*"))
+    ]
 
     assert response.headers["Tracepanel-Id"] == trace.id
     assert response.headers["Server-Timing"] == IsStr(
@@ -214,7 +216,7 @@ def test_strawberry_names_the_request(client: TestClient, traces: list[Trace]) -
     assert response.json()["data"]["roster"][0] == "player0 (team0)"
     assert trace.name == "GraphQL query Roster"
     assert response.headers["Tracepanel-Name"] == "GraphQL query Roster"
-    assert [issue.kind for issue in issues(trace)] == ["n+1"]
+    assert [issue.kind for issue in untimed(trace)] == ["n+1"]
 
 
 def test_console_is_served(client: TestClient, store: AgentStore) -> None:
@@ -324,7 +326,7 @@ def test_a_transaction_opened_in_a_dependency_holds_the_endpoint_calls(traces: l
         ("sql", "SELECT", "transaction"),
     ]
 
-    assert [issue.kind for issue in issues(trace)] == ["in-transaction"]
+    assert [issue.kind for issue in untimed(trace)] == ["in-transaction"]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -366,7 +368,7 @@ def test_a_django_atomic_block_around_the_endpoint_holds_its_calls(traces: list[
     # It ended where Django committed it, in another thread than the one it began in.
     assert (block.attrs["db.transaction.outcome"], block.duration > 0) == ("commit", True)
 
-    assert [issue.kind for issue in issues(trace)] == ["in-transaction"]
+    assert [issue.kind for issue in untimed(trace)] == ["in-transaction"]
 
 
 def test_an_async_session_in_an_async_endpoint_names_the_endpoint_and_explains(
