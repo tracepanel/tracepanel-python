@@ -2,6 +2,7 @@ import asyncio
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import FrameType
 
@@ -674,3 +675,28 @@ def test_a_sample_whose_work_left_the_thread_under_the_walk_counts_nothing() -> 
 
     assert recording.samples == 0
     assert recording.ticked == 0
+
+
+def entered_then(work: Callable[[], FrameType]) -> tuple[FrameType, FrameType]:
+    """The frame a hop's work entered at (this one) and the frame its work then ran in."""
+    return sys._getframe(), work()  # noqa: SLF001
+
+
+def test_a_hopped_threads_stack_is_the_traces_only_while_its_call_runs_there() -> None:
+    entered, running = entered_then(outer)
+    elsewhere = inner()
+    recording = Recording(thread_id=1, interval_us=1000, started=0)
+    hop = threading.get_ident()
+
+    # Not followed into this thread (yet, or any more): the frames taken are nobody's.
+    assert profile.hopped(recording, hop, running) == ()
+
+    recording.entered[hop] = entered
+
+    assert [key[0].co_name for key in profile.hopped(recording, hop, running) if key[0]] == [
+        "entered_then",
+        "outer",
+        "inner",
+    ]
+    # Frames taken before its call returned, walked after the thread entered another: not this call's work.
+    assert profile.hopped(recording, hop, elsewhere) == ()

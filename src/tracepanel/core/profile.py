@@ -472,7 +472,12 @@ def hopped(recording: Recording, thread_id: int, frame: FrameType) -> tuple[Key,
     that awaits it, as if run in place. A task's `await Order.objects.aupdate()` is the task's function's time, not a
     thread's of the framework's.
     """
-    keys = thread_stack(frame, root=recording.entered.get(thread_id))
+    root = recording.entered.get(thread_id)
+    if thread_id != recording.thread_id and (root is None or not _reaches(frame, root)):
+        # The frames were taken before the walk: the call returned meanwhile (its thread then ran something else, or
+        # the next call the Task awaits), and what the Task awaits now isn't what that thread was running.
+        return ()
+    keys = thread_stack(frame, root=root)
     if thread_id == recording.thread_id or recording.task is None:
         return keys
     awaits = awaiting(recording.task)
@@ -481,6 +486,15 @@ def hopped(recording: Recording, thread_id: int, frame: FrameType) -> tuple[Key,
     # The call it awaits runs here: no longer the frame that waits.
     code, module, line, _ = awaits[-1]
     return (*awaits[:-1], (code, module, line, False), *keys)
+
+
+def _reaches(frame: FrameType | None, root: FrameType) -> bool:
+    """Whether a thread's stack runs under `root`: the frame its hopped work entered at is still on it."""
+    while frame is not None:
+        if frame is root:
+            return True
+        frame = frame.f_back
+    return False
 
 
 def awaiting(task: "asyncio.Task[object] | None") -> tuple[Key, ...]:

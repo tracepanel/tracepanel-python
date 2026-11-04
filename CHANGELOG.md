@@ -12,6 +12,12 @@
   stretch, all of the event loop waiting at its thread hop, while the
   worker thread's query ran. Where the stack changed meanwhile, those
   ticks count for neither.
+- Work a trace hands to a worker thread (a sync endpoint, sync_to_async)
+  is sampled under the call that awaits it only while that call runs
+  there. Frames taken before the call returned, and walked after it,
+  no longer show the thread's whole stack (Thread._bootstrap, the pool's
+  loop) under whatever the Task awaited next (FastAPI's
+  serialize_response under a sync endpoint's get_author).
 
 ## 0.13.1 (2026-11-03)
 
