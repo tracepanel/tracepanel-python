@@ -27,9 +27,9 @@ from django_q.worker import worker
 from jsonschema import Draft202012Validator
 
 from tests.agentstore import AgentStore, issues
-from tests.profiles import busy, share
+from tests.profiles import busy, sampled, share
 from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, stopped, without_worker_events
-from tracepanel.core import patching
+from tracepanel.core import patching, profile
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Link, Span, Trace
 from tracepanel.storage import agent, transport
@@ -46,6 +46,16 @@ def count_users(label: str) -> str:
 
 def crunch(label: str) -> str:
     busy()
+    return label
+
+
+# The profiled trace that runs `crunch_for_caller` with sync=True: the task's own trace isn't profiled.
+caller: list[profile.Recording] = []
+
+
+def crunch_for_caller(label: str) -> str:
+    # Until the caller's profile has samples of it, however long a loaded machine keeps the sampler waiting.
+    sampled(0.05, recording=caller[0])
     return label
 
 
@@ -639,7 +649,10 @@ def test_a_task_a_profiled_request_enqueues_is_profiled_too(traces: list[Trace])
 @pytest.mark.django_db(transaction=True)
 def test_a_sync_task_is_in_its_profiled_callers_profile(traces: list[Trace]) -> None:
     with start_trace("http", "POST /reports", profile=True) as request:
-        async_task(crunch, "sync", sync=True)
+        recording = profile.current.get()
+        assert recording is not None
+        caller[:] = [recording]
+        async_task(crunch_for_caller, "sync", sync=True)
 
     assert profiled(traces) == {"('sync',)": False}
-    assert share(request, "busy") > 0
+    assert share(request, "crunch_for_caller") > 0
