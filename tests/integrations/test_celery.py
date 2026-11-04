@@ -16,7 +16,7 @@ from django.test import Client
 from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
-from tests.agentstore import AgentStore, issues, newer
+from tests.agentstore import AgentStore, newer, untimed
 from tests.profiles import share
 from tests.tasklive import Recorder, live, live_when, named, without_worker_events
 from tracepanel.core import profile
@@ -164,7 +164,7 @@ def test_failed_task(traces: list[Trace]) -> None:
         ("builtins.ValueError", "boom", False)
     ]
     assert task.errors[0].frames[-1].locals == {"message": "'boom'"}
-    assert [issue.kind for issue in issues(task)] == ["error"]
+    assert [issue.kind for issue in untimed(task)] == ["error"]
 
 
 @pytest.mark.django_db
@@ -184,7 +184,7 @@ def test_issues_inside_a_task(traces: list[Trace], users: list[User]) -> None:
     jobs.groups_per_user.apply()
     (task,) = traces
 
-    assert [issue.kind for issue in issues(task)] == ["n+1"]
+    assert [issue.kind for issue in untimed(task)] == ["n+1"]
 
 
 @pytest.mark.django_db

@@ -2,7 +2,7 @@ import pytest
 from dirty_equals import IsStr
 from django.test import Client
 
-from tests.agentstore import issues
+from tests.agentstore import untimed
 from tracepanel.core.model import Trace
 
 pytestmark = pytest.mark.django_db
@@ -33,7 +33,7 @@ def test_htmx_request_and_response_headers(client: Client, traces: list[Trace]) 
         "htmx.trigger": "save",
         "htmx.response.trigger": "rowSaved",
     }
-    assert issues(trace) == []
+    assert untimed(trace) == []
 
 
 def test_redirect_then_whole_page(client: Client, traces: list[Trace]) -> None:
@@ -41,11 +41,11 @@ def test_redirect_then_whole_page(client: Client, traces: list[Trace]) -> None:
     client.get("/htmx/login-needed/", headers=HTMX, follow=True)
 
     redirected, page = traces
-    assert [(issue.kind, issue.title, issue.hint) for issue in issues(redirected)] == [
+    assert [(issue.kind, issue.title, issue.hint) for issue in untimed(redirected)] == [
         ("htmx", "htmx request redirected · 302 to /html-page/", IsStr(regex=".*HX-Redirect.*")),
     ]
 
-    assert [(issue.kind, issue.title, issue.hint) for issue in issues(page)] == [
+    assert [(issue.kind, issue.title, issue.hint) for issue in untimed(page)] == [
         ("htmx", "Whole page sent to htmx · GET /html-page/", IsStr(regex=".*fragment.*")),
     ]
 
@@ -54,7 +54,7 @@ def test_boosted_page_is_fine(client: Client, traces: list[Trace]) -> None:
     client.get("/html-page/", headers={**HTMX, "HX-Boosted": "true"})
 
     (trace,) = traces
-    assert (trace.attrs["htmx.boosted"], issues(trace)) == (True, [])
+    assert (trace.attrs["htmx.boosted"], untimed(trace)) == (True, [])
 
 
 def test_plain_requests_have_no_htmx_attrs(client: Client, traces: list[Trace]) -> None:

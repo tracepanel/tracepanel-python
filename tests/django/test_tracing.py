@@ -3,14 +3,14 @@ import subprocess
 import sys
 
 import pytest
-from dirty_equals import IsPartialDict, IsStr
+from dirty_equals import IsOneOf, IsPartialDict, IsStr
 from django.contrib.auth.models import User
 from django.db import connection
 from django.test import Client
 from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
-from tests.agentstore import AgentStore, issues
+from tests.agentstore import AgentStore, issues, untimed
 from tracepanel.core import conf
 from tracepanel.core.conf import ConfigError
 from tracepanel.core.model import Trace
@@ -65,14 +65,14 @@ def test_n_plus_one_with_hints(client: Client, traces: list[Trace], users: list[
 def test_fixed_queries_have_no_issues(client: Client, traces: list[Trace], users: list[User]) -> None:
     client.get("/fixed/")
     trace = only(traces)
-    assert issues(trace) == []
+    assert untimed(trace) == []
     # permissions + content types in one JOIN, users, groups prefetch
     assert sum(1 for s in trace.spans if s.kind == "sql") == 3
 
 
 def test_duplicates(client: Client, traces: list[Trace], db: None) -> None:
     client.get("/duplicates/")
-    assert kinds(only(traces)) == {"duplicates"}
+    assert {issue.kind for issue in untimed(only(traces))} == {"duplicates"}
 
 
 def test_slow_sql(client: Client, traces: list[Trace], db: None, settings: Settings) -> None:
@@ -252,15 +252,17 @@ def test_queries_a_template_makes_name_it_and_their_line(
         *[("SELECT auth_group", "tests/groups.html", 4, rendered_from)] * len(users),
     ]
 
-    (issue,) = issues(trace)
     lead = "The template `tests/groups.html` makes these queries as it renders (line 4), one per row it shows. "
 
-    assert (issue.kind, issue.culprit) == (
-        "n+1",
-        IsStr(regex=r"tests/groups\.html \(rendered from tests/project/views\.py:\d+ in groups_page\)"),
-    )
-    # The released agent's hint, or a newer one's that opens with the template and its line.
-    assert issue.hint in {PREFETCH_RELATED, lead + PREFETCH_RELATED}
+    # A loaded machine may add a slow query: the N+1 is the one issue besides. The released agent's hint, or a newer
+    # one's that opens with the template and its line.
+    assert [(issue.kind, issue.culprit, issue.hint) for issue in untimed(trace)] == [
+        (
+            "n+1",
+            IsStr(regex=r"tests/groups\.html \(rendered from tests/project/views\.py:\d+ in groups_page\)"),
+            IsOneOf(PREFETCH_RELATED, lead + PREFETCH_RELATED),
+        )
+    ]
 
 
 @pytest.mark.django_db
@@ -310,7 +312,7 @@ def test_a_500_behind_a_logged_exception_is_its_error(client: Client, traces: li
         "error",
         [("builtins.ZeroDivisionError", False)],
     )
-    assert [issue.kind for issue in issues(failed)] == ["error"]
+    assert [issue.kind for issue in untimed(failed)] == ["error"]
     assert (fine.status, fine.errors) == ("ok", [])
 
 

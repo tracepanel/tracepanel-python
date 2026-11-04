@@ -22,7 +22,7 @@ from werkzeug.test import Client  # noqa: E402
 
 import tracepanel.flask  # noqa: E402
 import tracepanel.wsgi  # noqa: E402
-from tests.agentstore import AgentStore, issues  # noqa: E402
+from tests.agentstore import AgentStore, untimed  # noqa: E402
 from tests.profiles import share  # noqa: E402
 from tracepanel.core import appinfo, conf  # noqa: E402
 from tracepanel.core.model import Trace  # noqa: E402
@@ -133,12 +133,14 @@ def test_request_is_a_trace_named_after_its_rule(client: FlaskClient, traces: li
 
     (view,) = [span for span in trace.spans if span.kind == "view"]
     sql = [span for span in trace.spans if span.kind == "sql"]
-    (issue,) = issues(trace)
 
     assert view.name == "tests.flask.test_flask.make_app.<locals>.roster"
     assert [span.name for span in sql] == ["SELECT player", *["SELECT team"] * 5]
-    assert (issue.kind, issue.count) == ("n+1", 5)
-    assert issue.hint == IsStr(regex=r".*`joinedload\(\)`.*")
+
+    # A loaded machine may add a slow query: the N+1 is the one issue besides.
+    assert [(issue.kind, issue.count, issue.hint) for issue in untimed(trace)] == [
+        ("n+1", 5, IsStr(regex=r".*`joinedload\(\)`.*"))
+    ]
 
     assert response.headers["Tracepanel-Id"] == trace.id
     assert response.headers["Server-Timing"] == IsStr(

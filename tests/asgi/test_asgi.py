@@ -17,7 +17,7 @@ from starlette.routing import Mount, Route  # noqa: E402
 from starlette.testclient import TestClient  # noqa: E402
 
 import tracepanel.asgi  # noqa: E402
-from tests.agentstore import AgentStore, issues  # noqa: E402
+from tests.agentstore import AgentStore, untimed  # noqa: E402
 from tracepanel._compat import override  # noqa: E402
 from tracepanel.core import conf  # noqa: E402
 from tracepanel.core.model import Trace  # noqa: E402
@@ -201,7 +201,7 @@ def test_htmx_gets_a_whole_page(client: TestClient, traces: list[Trace]) -> None
         "htmx.trigger": "load",
         "htmx.full_page": True,
     }
-    assert [issue.title for issue in issues(trace)] == ["Whole page sent to htmx · GET /page"]
+    assert [issue.title for issue in untimed(trace)] == ["Whole page sent to htmx · GET /page"]
 
 
 def test_writes_through_the_console_come_from_this_machine_only(

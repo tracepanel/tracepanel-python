@@ -5,7 +5,7 @@ from dirty_equals import IsPartialDict, IsStr
 from django.contrib.auth.models import Group, User
 from django.db import connections, transaction
 
-from tests.agentstore import issues
+from tests.agentstore import untimed
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Span, Trace
 from tracepanel.django import explain
@@ -45,7 +45,7 @@ def test_queries_are_recorded_once_and_repeats_found() -> None:
             "db.response.returned_rows": 1,
         }
     )
-    assert [issue.kind for issue in issues(done)] == ["n+1"]
+    assert [issue.kind for issue in untimed(done)] == ["n+1"]
 
 
 def test_atomic_blocks_are_transactions() -> None:

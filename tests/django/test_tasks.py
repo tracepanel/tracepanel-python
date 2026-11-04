@@ -13,7 +13,7 @@ from django.utils import timezone
 from jsonschema import Draft202012Validator
 from pytest_django.fixtures import Settings
 
-from tests.agentstore import AgentStore, issues
+from tests.agentstore import AgentStore, untimed
 from tests.project import django_jobs
 from tests.tasklive import GOODBYE, Recorder, heartbeats, left, live, live_when, named, stopped, without_worker_events
 from tracepanel.core.context import current_span, current_trace, start_trace
@@ -421,7 +421,7 @@ def test_issues_inside_a_task(traces: list[Trace], users: list[User]) -> None:
     django_jobs.groups_per_user.enqueue()
     (run,) = by_kind(traces, "task")
 
-    assert [issue.kind for issue in issues(run)] == ["n+1"]
+    assert [issue.kind for issue in untimed(run)] == ["n+1"]
 
 
 @pytest.mark.django_db

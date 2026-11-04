@@ -1,7 +1,7 @@
 import pytest
 from django.contrib.auth.models import Group
 
-from tests.agentstore import issues
+from tests.agentstore import untimed
 from tracepanel.core.context import start_trace
 from tracepanel.core.model import Span, Trace
 from tracepanel.integrations.dbapi import _core
@@ -36,7 +36,7 @@ def test_the_agent_finds_a_select_that_read_a_whole_table() -> None:
         # Bounded: as many rows as asked for, however many.
         list(Group.objects.all()[:1100])
 
-    assert [(issue.kind, issue.title) for issue in issues(complete(trace))] == [
+    assert [(issue.kind, issue.title) for issue in untimed(complete(trace))] == [
         ("large-result", "Large result: 1200 rows · SELECT auth_group"),
     ]
 

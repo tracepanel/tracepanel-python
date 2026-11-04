@@ -26,7 +26,7 @@ from django_q.tasks import Chain, async_chain, async_task, schedule
 from django_q.worker import worker
 from jsonschema import Draft202012Validator
 
-from tests.agentstore import AgentStore, issues
+from tests.agentstore import AgentStore, untimed
 from tests.profiles import busy, sampled, share
 from tests.tasklive import Recorder, heartbeats, live, live_when, named, setenv, stopped, without_worker_events
 from tracepanel.core import patching, profile
@@ -585,7 +585,7 @@ def test_issues_inside_a_task(traces: list[Trace], users: list[User]) -> None:
     async_task(groups_per_user, sync=True)
     (run,) = tasks(traces)
 
-    assert [issue.kind for issue in issues(run)] == ["n+1"]
+    assert [issue.kind for issue in untimed(run)] == ["n+1"]
 
 
 @pytest.mark.django_db(transaction=True)

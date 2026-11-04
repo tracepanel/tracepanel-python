@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from django.http import HttpRequest, HttpResponse
 from django.test import AsyncClient
 
-from tests.agentstore import AgentStore, issues, newer
+from tests.agentstore import AgentStore, newer, untimed
 from tracepanel.core.model import Trace
 from tracepanel.django.middleware import TracepanelMiddleware
 
@@ -76,7 +76,7 @@ def test_async_view_error(traces: list[Trace]) -> None:
     assert [(error.type, error.message) for error in trace.errors] == [
         ("builtins.ValueError", "failed after counting 0 users")
     ]
-    assert [issue.kind for issue in issues(trace)] == ["error"]
+    assert [issue.kind for issue in untimed(trace)] == ["error"]
 
 
 @pytest.mark.django_db
@@ -104,4 +104,4 @@ def test_async_orm_keeps_the_place_in_project_code(traces: list[Trace]) -> None:
     origins = [span.attrs["code.origin"] for span in trace.spans if span.kind == "sql"]
 
     assert origins == [IsStr(regex=r"tests/project/views\.py:\d+ in async_n_plus_one")] * 18
-    assert sorted(issue.kind for issue in issues(trace)) == ["duplicates", "n+1"]
+    assert sorted(issue.kind for issue in untimed(trace)) == ["duplicates", "n+1"]
