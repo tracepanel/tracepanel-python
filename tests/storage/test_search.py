@@ -142,41 +142,53 @@ def test_traces_overview(client: Client, recorded: AgentStore) -> None:
         "slow": 0,
     }
 
-    assert recorded.traces_overview() == {
-        "summary": {
-            "calls": 6,
-            "errors": 1,
-            "slow": 0,
-            "p50": IsPositiveInt,
-            "p75": IsPositiveInt,
-            "p90": IsPositiveInt,
-            "p95": IsPositiveInt,
-            "p99": IsPositiveInt,
-            "max": IsPositiveInt,
-            "avg_queries": IsPositiveFloat,
-            "avg_db_time": IsPositiveInt,
-            # Findings only: the failing request counts in `errors`.
-            "with_issues": 2,
-            "first_seen": IsPositiveInt,
-            "last_seen": IsPositiveInt,
+    overview = recorded.traces_overview()
+    # An agent from 0.15 says how slow is told (slow_rule).
+    assert overview == newer(
+        {
+            "summary": {
+                "calls": 6,
+                "errors": 1,
+                "slow": 0,
+                "p50": IsPositiveInt,
+                "p75": IsPositiveInt,
+                "p90": IsPositiveInt,
+                "p95": IsPositiveInt,
+                "p99": IsPositiveInt,
+                "max": IsPositiveInt,
+                "avg_queries": IsPositiveFloat,
+                "avg_db_time": IsPositiveInt,
+                # Findings only: the failing request counts in `errors`.
+                "with_issues": 2,
+                "first_seen": IsPositiveInt,
+                "last_seen": IsPositiveInt,
+            },
+            "series": IsList(length=60),
+            "histogram": IsList(length=(1, ...)),
+            "slow_threshold": 1_000_000,
+            "kinds": [{"kind": "http", "calls": 6, "errors": 1, "p95": IsPositiveInt, "slow": 0}],
+            "slowest": IsList(*[operation] * 6),
+            "failing": [operation | {"name": "GET /error/", "route": "/error/", "errors": 1}],
         },
-        "series": IsList(length=60),
-        "histogram": IsList(length=(1, ...)),
-        "slow_threshold": 500_000,
-        "kinds": [{"kind": "http", "calls": 6, "errors": 1, "p95": IsPositiveInt, "slow": 0}],
-        "slowest": IsList(*[operation] * 6),
-        "failing": [operation | {"name": "GET /error/", "route": "/error/", "errors": 1}],
-    }
+        overview,
+        {"slow_rule": IsStr},
+    )
     assert recorded.traces_overview("route:/n-plus-one/")["summary"] == IsPartialDict(calls=1, errors=0)
-    assert recorded.traces_overview("route:/nope/") == {
-        "summary": None,
-        "series": IsList,
-        "histogram": [],
-        "slow_threshold": 500_000,
-        "kinds": [],
-        "slowest": [],
-        "failing": [],
-    }
+    overview = recorded.traces_overview("route:/nope/")
+    # An agent from 0.15 says how slow is told (slow_rule).
+    assert overview == newer(
+        {
+            "summary": None,
+            "series": IsList,
+            "histogram": [],
+            "slow_threshold": 1_000_000,
+            "kinds": [],
+            "slowest": [],
+            "failing": [],
+        },
+        overview,
+        {"slow_rule": None},
+    )
     assert client.get("/__tracepanel__/api/traces/overview", {"q": "status>=500"}).json()["summary"] == IsPartialDict(
         calls=1, errors=1
     )
@@ -284,15 +296,21 @@ def test_known_values(client: Client, recorded: AgentStore) -> None:
 @pytest.mark.django_db
 def test_overview_spans_the_searched_window(recorded: AgentStore) -> None:
     # The overview's 60 buckets span the window searched, here an empty one.
-    assert recorded.traces_overview("since:2h until:1h") == {
-        "summary": None,
-        "series": [IsPartialDict(calls=0, errors=0, p50=None, p95=None)] * 60,
-        "histogram": [],
-        "slow_threshold": 500_000,
-        "kinds": [],
-        "slowest": [],
-        "failing": [],
-    }
+    overview = recorded.traces_overview("since:2h until:1h")
+    # An agent from 0.15 says how slow is told (slow_rule).
+    assert overview == newer(
+        {
+            "summary": None,
+            "series": [IsPartialDict(calls=0, errors=0, p50=None, p95=None)] * 60,
+            "histogram": [],
+            "slow_threshold": 1_000_000,
+            "kinds": [],
+            "slowest": [],
+            "failing": [],
+        },
+        overview,
+        {"slow_rule": None},
+    )
 
 
 @pytest.mark.django_db

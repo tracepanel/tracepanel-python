@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.15.0 (2026-11-06)
+
+Needs `tracepanel-agent` 0.15.0 (installed with it).
+
+### Changed
+
+- Runs `tracepanel-agent` 0.15.0: the panel is one list, the open record's
+  call tree with the row picked and its details beside it. Slow is by what a
+  trace is, and a record's Error tab has the errors down its chain.
+
 ## 0.14.0 (2026-11-04)
 
 ### Fixed
