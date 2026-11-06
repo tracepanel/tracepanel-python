@@ -165,7 +165,7 @@ def test_traces_overview(client: Client, recorded: AgentStore) -> None:
             },
             "series": IsList(length=60),
             "histogram": IsList(length=(1, ...)),
-            "slow_threshold": 500_000,
+            "slow_threshold": 1_000_000,
             "kinds": [{"kind": "http", "calls": 6, "errors": 1, "p95": IsPositiveInt, "slow": 0}],
             "slowest": IsList(*[operation] * 6),
             "failing": [operation | {"name": "GET /error/", "route": "/error/", "errors": 1}],
@@ -181,13 +181,13 @@ def test_traces_overview(client: Client, recorded: AgentStore) -> None:
             "summary": None,
             "series": IsList,
             "histogram": [],
-            "slow_threshold": 500_000,
+            "slow_threshold": 1_000_000,
             "kinds": [],
             "slowest": [],
             "failing": [],
         },
         overview,
-        {"slow_rule": IsStr},
+        {"slow_rule": None},
     )
     assert client.get("/__tracepanel__/api/traces/overview", {"q": "status>=500"}).json()["summary"] == IsPartialDict(
         calls=1, errors=1
@@ -303,13 +303,13 @@ def test_overview_spans_the_searched_window(recorded: AgentStore) -> None:
             "summary": None,
             "series": [IsPartialDict(calls=0, errors=0, p50=None, p95=None)] * 60,
             "histogram": [],
-            "slow_threshold": 500_000,
+            "slow_threshold": 1_000_000,
             "kinds": [],
             "slowest": [],
             "failing": [],
         },
         overview,
-        {"slow_rule": IsStr},
+        {"slow_rule": None},
     )
 
 
