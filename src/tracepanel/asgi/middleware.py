@@ -236,6 +236,7 @@ class TracepanelMiddleware:
             content_type=headers.get(b"content-type", b"").decode("latin-1"),
             local=is_local(str(client[0])),
             too_large=too_large,
+            accept=headers.get(b"accept", b"").decode("latin-1"),
         )
         # The console reads SQLite (and may wait for the writer): off the event loop.
         response = await asyncio.to_thread(console.dispatch, request)

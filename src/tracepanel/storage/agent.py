@@ -34,7 +34,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, NamedTuple
 
 if sys.platform == "win32":
     import msvcrt
@@ -219,6 +219,55 @@ def unavailable(config: conf.Config) -> str:
             "there is no console. Use an agent on another machine: TRACEPANEL_AGENT=tcp:HOST:PORT."
         )
     return f"the agent isn't running (see {store_dir(config) / LOG_FILE}): traces aren't kept until it is."
+
+
+class NoConsole(NamedTuple):
+    """Why the console doesn't answer, and what to do: the console's 503 (console.app), in the other SDKs' words."""
+
+    title: str
+    detail: str
+
+
+def no_console(config: conf.Config) -> NoConsole:
+    """What keeps the project's console from answering, as far as this process can tell."""
+    if config.agent == "off":
+        return NoConsole(
+            "Tracepanel's agent is off",
+            "Tracepanel's agent is off (the agent setting, TRACEPANEL_AGENT=off): traces aren't kept and there is no "
+            "console. Set it to auto to have the app start it.",
+        )
+    if config.agent != "auto":
+        return NoConsole(
+            "The console doesn't answer",
+            f"No console answers at {config.console_url} (the console_url setting) for the agent at {config.agent}. "
+            "Start that agent with --serve, or correct the address.",
+        )
+    directory = store_dir(config)
+    if answers(address(config)):
+        # The agent writes its console's address before its own: one that answers without a console was started so.
+        return NoConsole(
+            "Tracepanel's agent runs without its console",
+            "The project's agent runs without its console (it was started without --serve). Stop it: the next "
+            f"request starts one with its console. Store: {directory}.",
+        )
+    explicit = os.environ.get("TRACEPANEL_AGENT_BIN")
+    if explicit and not Path(explicit).is_file():
+        return NoConsole(
+            "No tracepanel-agent to start",
+            f"TRACEPANEL_AGENT_BIN names {explicit}, which isn't there. Set it to the tracepanel-agent binary's path.",
+        )
+    if binary() is None:
+        return NoConsole(
+            "No tracepanel-agent to start",
+            f"No tracepanel-agent binary to start for this platform ({sys.platform}, {platform.machine()}): set "
+            "TRACEPANEL_AGENT_BIN to the agent's path, or use an agent on another machine: "
+            "TRACEPANEL_AGENT=tcp:HOST:PORT.",
+        )
+    return NoConsole(
+        "Tracepanel's agent didn't start",
+        f"Tracepanel's agent didn't start: {directory / LOG_FILE} says why. It is tried again within "
+        f"{RESTART_S:.0f} seconds.",
+    )
 
 
 _start_lock = forks.lock()
