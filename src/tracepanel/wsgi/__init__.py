@@ -299,6 +299,7 @@ def _console(environ: dict[str, Any], path: str, start_response: StartResponse) 
         content_type=str(environ.get("CONTENT_TYPE", "")) if readable else "",
         local=is_local(str(environ.get("REMOTE_ADDR", ""))),
         too_large=too_large,
+        accept=str(environ.get("HTTP_ACCEPT", "")),
     )
     response = console.dispatch(request)
     status = f"{response.status} {http.HTTPStatus(response.status).phrase}"

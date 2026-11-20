@@ -46,7 +46,7 @@ def explain_handler(run: ExplainRunner) -> Handler:
         document = proxy.trace(trace_id) if trace_id else None
         if _service(document) not in {"", conf.get_config().service}:
             forwarded = proxy.forward(request, request.path, timeout=proxy.EXPLAIN_TIMEOUT_S)
-            return forwarded or _no_agent(api=True)
+            return forwarded or _no_console(request)
         span = _span(document, request.query.get("span", ""))
         attrs = span.get("attrs") if span else None
         if span is None or span.get("kind") != "sql" or not isinstance(attrs, dict):
@@ -136,7 +136,7 @@ def dispatch(request: Request) -> Response:
         connected = getattr(transport.get_writer(), "connected", None)
         if callable(connected):
             connected()
-    return proxy.forward(request, request.path) or _no_agent(api=path is not None)
+    return proxy.forward(request, request.path) or _no_console(request)
 
 
 def _refused_write(request: Request) -> Response | None:
@@ -148,14 +148,52 @@ def _refused_write(request: Request) -> Response | None:
     return None
 
 
-def _no_agent(*, api: bool) -> Response:
-    """The console without an agent: why, and what to do."""
-    reason = agent.unavailable(conf.get_config())
-    if api:
-        return json_response({"error": f"No tracepanel agent: {reason}"}, status=SERVICE_UNAVAILABLE)
-    page = (
-        "<!doctype html><meta charset=utf-8><title>tracepanel</title>"
-        "<body style='font-family: system-ui; max-width: 40rem; margin: 4rem auto; line-height: 1.5'>"
-        f"<h1>tracepanel</h1><p>The console comes from the tracepanel agent, and {html.escape(reason)}</p>"
-    )
-    return Response(status=SERVICE_UNAVAILABLE, content_type="text/html; charset=utf-8", body=page.encode())
+# While the console doesn't answer: the browser asks again this often, and the page reloads itself as often.
+RETRY_S = 2
+
+
+def _no_console(request: Request) -> Response:
+    """No console: 503 with why and what to do.
+
+    A browser's page (it accepts HTML) gets a small page that reloads itself until the console answers; the console's
+    API calls and its files get `{"error": ...}`.
+    """
+    why = agent.no_console(conf.get_config())
+    headers = {"Retry-After": str(RETRY_S), "Cache-Control": "no-store"}
+    if "text/html" in request.accept:
+        body = page(why).encode()
+        return Response(status=SERVICE_UNAVAILABLE, content_type="text/html; charset=utf-8", body=body, headers=headers)
+    body = json.dumps({"error": why.detail}, separators=(",", ":")).encode()
+    return Response(status=SERVICE_UNAVAILABLE, body=body, headers=headers)
+
+
+def page(why: agent.NoConsole) -> str:
+    """The page in the console's look (its dark tokens), with nothing to load: the console is the thing missing."""
+    title, detail = (html.escape(text, quote=True) for text in why)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="{RETRY_S}">
+<title>Tracepanel: {title}</title>
+<style>
+:root {{ color-scheme: dark; }}
+body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0a0c11; color: #eceef3;
+  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }}
+main {{ box-sizing: border-box; max-width: 38rem; margin: 2rem 1rem; padding: 1.5rem 1.75rem; border: 1px solid #2a3040;
+  border-radius: 12px; background: rgb(245 181 68 / 0.06); }}
+h1 {{ margin: 0 0 0.75rem; font-size: 1.05rem; font-weight: 600; color: #f5b544; }}
+p {{ margin: 0.5rem 0; overflow-wrap: anywhere; }}
+.muted {{ color: #8c93a6; font-size: 13px; }}
+</style>
+</head>
+<body>
+<main>
+<h1>{title}</h1>
+<p>{detail}</p>
+<p class="muted">This page reloads itself every {RETRY_S} seconds and shows the console once it answers.</p>
+</main>
+</body>
+</html>
+"""

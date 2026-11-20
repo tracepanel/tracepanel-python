@@ -50,6 +50,7 @@ def dispatch(request: HttpRequest, path: str) -> HttpResponseBase:
             content_type=request.content_type or "" if body else "",
             local=from_this_machine(request),
             too_large=too_large,
+            accept=request.headers.get("Accept", ""),
         )
     )
     if isinstance(response.native, HttpResponseBase):

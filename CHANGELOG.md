@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Without the agent's console, the console says why for each case (one
+  running without `--serve` too), as a 503 with `Retry-After`. Its page
+  reloads itself.
+
 ## 0.16.0 (2026-11-10)
 
 Needs `tracepanel-agent` 0.16.0 (installed with it).

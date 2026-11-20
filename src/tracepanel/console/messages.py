@@ -29,6 +29,8 @@ class Request:
     local: bool = False
     # Its body was over MAX_BODY: not read, answered 413.
     too_large: bool = False
+    # Its Accept header: a browser's page (text/html) gets a page that says why when there is no console.
+    accept: str = ""
 
 
 @dataclass(slots=True)

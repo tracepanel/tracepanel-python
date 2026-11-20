@@ -58,13 +58,13 @@ def test_widget_can_be_disabled(client: Client, traces: list[Trace], db: None, s
 def test_without_an_agent_no_script_and_the_console_says_why(client: Client, traces: list[Trace], db: None) -> None:
     # The panel is the agent's: without one (the tests turn it off) the page gets the headers, not the script.
     body = client.get("/html/").content.decode()
-    console = client.get("/__tracepanel__/")
+    console = client.get("/__tracepanel__/", headers={"Accept": "text/html"})
     api = client.get("/__tracepanel__/api/counts")
 
     assert "<script" not in body
 
-    assert (console.status_code, "the agent is off" in console.content.decode()) == (503, True)
-    assert (api.status_code, api.json()) == (503, {"error": IsStr(regex="No tracepanel agent: the agent is off.*")})
+    assert (console.status_code, "agent is off" in console.content.decode()) == (503, True)
+    assert (api.status_code, api.json()) == (503, {"error": IsStr(regex="Tracepanel's agent is off .*")})
 
 
 def test_a_pages_redirect_is_named_for_the_page_it_leads_to(client: Client, traces: list[Trace]) -> None:
