@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.17.0 (2026-11-20)
+
+Needs `tracepanel-agent` 0.17.0 (installed with it).
+
+### Changed
+
+- Runs `tracepanel-agent` 0.17.0: a trace's DB, Cache and HTTP tabs show
+  share bars, totals and a section per call, and an N+1's time is its time
+  on the clock everywhere. The request list loads fast on a big store.
 
 ### Fixed
 
